@@ -8,7 +8,7 @@
 .act/
 .secrets
 
-# secrets never live in a project repo: they are in ~/.secrets (see secrets.schema)
+# secrets never live in a project repo: they are in the owner's secrets repo (see secrets.schema)
 .env
 .env.*
 .dev.vars

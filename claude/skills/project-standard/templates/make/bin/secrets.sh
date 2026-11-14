@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
-# secrets.sh: the secrets engine. One private git repo (SECRETS_DIR) holds every project's secrets,
-# encrypted with sops + age. Values reach processes through the environment only; nothing is ever
+# secrets.sh: the secrets engine. One private git repo per GitHub owner (SECRETS_DIR, cloned from SECRETS_REMOTE;
+# make/common.mk picks the project's) holds the secrets of that owner's projects, encrypted with sops + age. Values reach processes through the environment only; nothing is ever
 # written to disk in plain text (with-file uses a mode-600 file in a mode-700 dir, removed on exit).
 #
 # Usage: secrets.sh SUBCOMMAND [--project P] [--env E] [options] [NAME] [-- cmd args...]
@@ -10,8 +10,8 @@
 #   init [--gen]   set NAME --env E   unset NAME --env E   import [NAME] --file F [--env E]   edit --env local|common   list   check
 #   keygen NAME --type T   rotate NAME --env E   ci   enroll   recovery   add-machine HOST
 #   remove-machine HOST   sync   doctor
-# Environment: PROJECT, SECRETS_DIR, STD_CONFIG, SECRETS_REMOTE, SOPS_AGE_KEY (CI),
-#   STD_SE_IDENTITY, SECRETS_SCHEMA, STD_NO_SYNC.
+# Environment: PROJECT, SECRETS_DIR, STD_CONFIG, SECRETS_REMOTE, SOPS_AGE_KEY (CI), SECRETS_DEFAULT_DIR,
+#   GITHUB_OWNER, STD_OWNER_FROM, STD_SE_IDENTITY, SECRETS_SCHEMA, STD_NO_SYNC.
 # Plain text never reaches disk, except the mode-600 temp key of `with-file`. That includes the temp files
 # bash 3.2 makes for here-documents and here-strings, so a value is never fed to a loop that way.
 # Needs bash 3.2+, sops 3.10+, age, jq; age-plugin-se, gh and gitleaks where noted.
@@ -27,6 +27,9 @@ SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$SELF_DIR/secret-patterns.sh"
 
 SECRETS_DIR="${SECRETS_DIR:-$HOME/.secrets}"
+# the user config's owner's secrets repo (~/.secrets-<owner>): the first place a new repo copies the Macs' public
+# recipients from; the other ~/.secrets-* on this Mac come after it
+SECRETS_DEFAULT_DIR="${SECRETS_DEFAULT_DIR:-}"
 STD_CONFIG="${STD_CONFIG:-$HOME/.config/project-standard}"
 SE_IDENTITY="${STD_SE_IDENTITY:-$STD_CONFIG/age/se.txt}"
 KEYCHAIN_SERVICE="project-standard-age-dev"
@@ -166,8 +169,31 @@ decrypt_env_file() { # KIND REL
 
 # --- the secrets repo ---
 
+# legacy_dir   the pre-1.8 checkout ~/.secrets when it still waits to become ~/.secrets-<owner> of the user config's
+# owner (STD_CONFIG_OWNER, from make): prints the new path, fails when there is nothing to move.
+legacy_dir() {
+  local owner="${STD_CONFIG_OWNER:-}"
+  [ -n "$owner" ] && [ -d "$HOME/.secrets/.git" ] && [ ! -e "$HOME/.secrets-$owner" ] || return 1
+  [ "$SECRETS_DIR" != "$HOME/.secrets" ] || return 1
+  printf '%s\n' "$HOME/.secrets-$owner"
+}
+
+# legacy_hint   say how to move ~/.secrets to its 1.8 place, by hand; never moves anything.
+legacy_hint() {
+  local new
+  new="$(legacy_dir)" || return 0
+  log_warn "$HOME/.secrets is the pre-1.8 checkout of ${STD_CONFIG_OWNER}'s secrets repo; since 1.8 it is $new. Move it yourself (nothing is moved for you):"
+  printf '  mv "$HOME/.secrets" "$HOME/.secrets-%s"\n' "$STD_CONFIG_OWNER" >&2
+  printf '  git -C "$HOME/.secrets-%s" config core.hooksPath "$HOME/.secrets-%s/.git/hooks"\n' "$STD_CONFIG_OWNER" "$STD_CONFIG_OWNER" >&2
+}
+
+# require_repo   the repo exists; a core.hooksPath left pointing elsewhere (the repo was moved) is pinned again.
 require_repo() {
-  [ -d "$SECRETS_DIR/.git" ] || die "no secrets repo at $SECRETS_DIR; run: make secrets-enroll (new Mac) or make secrets-init"
+  if [ ! -d "$SECRETS_DIR/.git" ]; then
+    legacy_hint
+    die "no secrets repo at $SECRETS_DIR; run: make secrets-init (clones ${SECRETS_REMOTE:-SECRETS_REMOTE}, or starts it when that is empty) or make secrets-enroll (new Mac)"
+  fi
+  if [ "$(git -C "$SECRETS_DIR" config core.hooksPath 2>/dev/null || true)" != "$SECRETS_DIR/.git/hooks" ]; then install_repo_hook; fi
 }
 
 git_s() { git -C "$SECRETS_DIR" "$@"; }
@@ -209,7 +235,7 @@ sync_secrets() {
 repo_hook_body() {
   cat <<'HOOK'
 #!/usr/bin/env bash
-# project-standard v1.7 secrets-repo pre-commit hook: refuses anything that is not SOPS-encrypted
+# project-standard v1.8 secrets-repo pre-commit hook: refuses anything that is not SOPS-encrypted
 set -euo pipefail
 bad=0
 while IFS= read -r -d '' f; do
@@ -275,12 +301,65 @@ remote_url() {
   esac
 }
 
-# ensure_repo   clone SECRETS_REMOTE when there is one, otherwise git init; add the origin remote.
+# seed_source   the secrets repo on this Mac a new SECRETS_DIR copies its recipients from: SECRETS_DEFAULT_DIR (the user
+# config's owner's) when it has Mac recipients, else the first other ~/.secrets-* that has. Fails when there is none.
+seed_source() {
+  local d here
+  here="$(cd "$SECRETS_DIR" && pwd -P)"
+  for d in ${SECRETS_DEFAULT_DIR:+"$SECRETS_DEFAULT_DIR"} "$HOME"/.secrets-*; do
+    [ -d "$d/recipients" ] || continue
+    [ "$(cd "$d" && pwd -P)" != "$here" ] || continue
+    if [ -n "$(find "$d/recipients/se" "$d/recipients/dev" -name '*.txt' 2>/dev/null | head -n 1)" ]; then
+      printf '%s\n' "$d"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# seed_recipients   copy the Macs' public recipients (recipients/se/*.txt, recipients/dev/*.txt) and the recovery
+# recipient (recipients/recovery.txt) from seed_source into a new SECRETS_DIR. Never the CI keys of its projects,
+# never a private key (a file that holds one is skipped). Fails when nothing was copied.
+seed_recipients() {
+  local src f rel n=0 hosts=""
+  src="$(seed_source)" || return 1
+  for f in "$src"/recipients/se/*.txt "$src"/recipients/dev/*.txt "$src/recipients/recovery.txt"; do
+    [ -f "$f" ] || continue
+    rel="${f#"$src"/}"
+    if grep -q -i -E 'age-secret-key-1|age-plugin-[a-z]*-1' "$f"; then
+      log_warn "skipped $rel: it holds a private key; recipients take public keys only"
+      continue
+    fi
+    mkdir -p "$SECRETS_DIR/$(dirname "$rel")"
+    cp "$f" "$SECRETS_DIR/$rel"
+    n=$((n + 1))
+    case "$rel" in recipients/se/*) hosts="$hosts $(basename "$rel" .txt)" ;; esac
+  done
+  [ "$n" -gt 0 ] || return 1
+  log_ok "copied $n public recipient(s) from $src: Macs:${hosts:- none}$([ -f "$SECRETS_DIR/recipients/recovery.txt" ] && printf '; the recovery key')"
+}
+
+# ensure_repo   clone SECRETS_REMOTE when there is one, otherwise git init; add the origin remote. A repo that did not
+# exist here and whose remote is empty (or that has no remote) is a new secrets repo: it gets the Macs' and the
+# recovery recipients of the default owner's repo, its .sops.yaml, a first commit, and is pushed.
 ensure_repo() {
   need_cmd git
+  local fresh=0
   if [ ! -d "$SECRETS_DIR/.git" ]; then
+    # a pre-1.8 ~/.secrets is moved by hand first: a new checkout beside it would leave its unpushed work behind
+    if [ ! -e "$SECRETS_DIR" ] && legacy_dir >/dev/null; then
+      legacy_hint
+      die "move ~/.secrets first (the commands above), then run this again"
+    fi
+    [ -e "$SECRETS_DIR" ] || fresh=1
     if [ -n "$SECRETS_REMOTE" ] && [ ! -e "$SECRETS_DIR" ]; then
-      git clone -q "$(remote_url "$SECRETS_REMOTE")" "$SECRETS_DIR" || die "cannot clone $SECRETS_REMOTE"
+      GIT_TERMINAL_PROMPT=0 git clone -q "$(remote_url "$SECRETS_REMOTE")" "$SECRETS_DIR" ||
+        die "cannot clone $SECRETS_REMOTE into $SECRETS_DIR: create it first as an empty private repository (gh repo create <owner>/secrets --private), check access (gh auth status), then run this again"
+      if git_s rev-parse -q --verify HEAD >/dev/null 2>&1; then
+        fresh=0
+      else
+        git_s symbolic-ref HEAD refs/heads/main
+      fi
     else
       mkdir -p "$SECRETS_DIR"
       git -C "$SECRETS_DIR" init -q -b main
@@ -291,6 +370,16 @@ ensure_repo() {
     git_s remote add origin "$(remote_url "$SECRETS_REMOTE")"
   fi
   ensure_repo_files
+  if [ "$fresh" = 1 ]; then
+    log_info "new secrets repo at $SECRETS_DIR${SECRETS_REMOTE:+ (origin $SECRETS_REMOTE)}"
+    if seed_recipients; then
+      gen_sops_yaml
+      commit_push "new secrets repo: the Macs and the recovery key"
+      log_ok "secrets repo $SECRETS_DIR started${SECRETS_REMOTE:+ and pushed to $SECRETS_REMOTE}"
+    else
+      log_warn "no other secrets repo on this Mac (~/.secrets-*) to copy the Macs from: enroll this Mac in the new repo (make secrets-enroll), then make secrets-recovery"
+    fi
+  fi
 }
 
 # --- recipients and .sops.yaml ---
@@ -495,7 +584,7 @@ is_blocked_var() {
     LD_* | DYLD_* | GIT_* | SSH_* | SOPS_* | STD_* | PYTHON* | NODE_OPTIONS | NODE_PATH | NODE_EXTRA_CA_CERTS) return 0 ;;
     npm_config_* | NPM_CONFIG_* | PERL5OPT | PERL5LIB | RUBYOPT | RUBYLIB | GOFLAGS | CURL_CA_BUNDLE | SSL_CERT_FILE | SSL_CERT_DIR) return 0 ;;
     MAKEFLAGS | MAKELEVEL | MAKEOVERRIDES | MFLAGS | CONFIRM | CF_SH_INNER | CF_API_BASE | CLOUDFLARE_API_BASE* | CLOUDFLARE_INCLUDE_PROCESS_ENV) return 0 ;;
-    PROJECT | PORT_BASE | SECRETS_DIR | SECRETS_REMOTE | SECRETS_SCHEMA | CI | GITHUB_ACTIONS | GITHUB_REF_NAME | GITHUB_REF_TYPE) return 0 ;;
+    PROJECT | PORT_BASE | SECRETS_DIR | SECRETS_DEFAULT_DIR | SECRETS_REMOTE | SECRETS_SCHEMA | CI | GITHUB_ACTIONS | GITHUB_REF_NAME | GITHUB_REF_TYPE) return 0 ;;
   esac
   return 1
 }
@@ -570,6 +659,7 @@ cmd_exec() {
   local kind e rel text="" out allowed=""
   kind="$(identity_kind "$OPT_ENV")"
   if [ ! -d "$SECRETS_DIR/$PROJECT" ] && [ "$OPT_ENV" = local ]; then
+    legacy_hint
     log_warn "no secrets for $PROJECT in $SECRETS_DIR; running without them (make secrets-init)"
   else
     case "$OPT_ENV" in
@@ -890,7 +980,7 @@ cmd_list() {
   parse_args "$@"
   need_project
   local name envs used gen e rel status shown=""
-  [ -d "$SECRETS_DIR/$PROJECT" ] || log_warn "no $SECRETS_DIR/$PROJECT yet (make secrets-init)"
+  [ -d "$SECRETS_DIR/$PROJECT" ] || { legacy_hint; log_warn "no $SECRETS_DIR/$PROJECT yet (make secrets-init)"; }
   printf '%-28s %-11s %-12s %s\n' NAME ENV USED-BY STATE
   while IFS='|' read -r name envs used gen; do
     [ -n "$name" ] || continue
@@ -1208,8 +1298,19 @@ cmd_doctor() {
   elif command -v security >/dev/null 2>&1; then
     if security find-generic-password -s "$KEYCHAIN_SERVICE" -a "${USER:-$(id -un)}" >/dev/null 2>&1; then log_ok "dev identity in the Keychain"; else log_warn "no dev identity in the Keychain (make secrets-enroll)"; fi
   fi
+  if [ -n "$GITHUB_OWNER" ]; then
+    case "${STD_OWNER_FROM:-}" in
+      origin) log_ok "owner $GITHUB_OWNER (the project's git remote origin)" ;;
+      ci) log_ok "owner $GITHUB_OWNER (GitHub Actions)" ;;
+      config) log_warn "owner $GITHUB_OWNER from the user config: the project has no GitHub remote origin yet; its secrets repo follows the origin's owner once it has one" ;;
+      *) log_info "owner $GITHUB_OWNER" ;;
+    esac
+  elif [ -n "${STD_OWNER_FROM+x}" ]; then
+    log_warn "no GitHub owner: no remote origin on github.com and no GITHUB_OWNER in the user config"
+  fi
+  legacy_hint
   if [ -d "$SECRETS_DIR/.git" ]; then
-    log_ok "secrets repo $SECRETS_DIR"
+    log_ok "secrets repo $SECRETS_DIR${SECRETS_REMOTE:+ ($SECRETS_REMOTE)}"
     git_s remote | grep -q . || log_warn "the secrets repo has no remote (SECRETS_REMOTE)"
     if [ -x "$SECRETS_DIR/.git/hooks/pre-commit" ] && [ "$(git_s config core.hooksPath || true)" = "$SECRETS_DIR/.git/hooks" ]; then
       log_ok "secrets repo pre-commit hook"

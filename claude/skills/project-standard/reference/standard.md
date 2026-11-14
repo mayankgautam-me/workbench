@@ -1,4 +1,4 @@
-# The project standard, v1.7
+# The project standard, v1.8
 
 One set of commands for every stage of work, the same in every project: firmware, boards,
 Cloudflare services, apps and containers alike. The tools stay what they are (west, idf.py, pio,
@@ -74,7 +74,7 @@ second part of a kind arrives, the first moves into its own subfolder in the sam
 that name it).
 
 "Managed" files start with the line
-`# project-standard v1.7 (managed: ...)` and are refreshed by the skill's update mode; never edit
+`# project-standard v1.8 (managed: ...)` and are refreshed by the skill's update mode; never edit
 them in a project. Your own targets go in `make/local.mk`, written like this, and show under
 "project" in `make help`:
 
@@ -359,7 +359,7 @@ means a new Worker, so they keep their names.
 
 | Command | Does |
 |---|---|
-| `make secrets-init` | Creates `~/.secrets/<project>/` from `secrets.schema` and asks for each missing value; `GEN=1` generates those the schema allows. |
+| `make secrets-init` | Creates `<project>/` in the project's secrets repo (5.1; `~/.secrets` for the default owner, `~/.secrets-<owner>` for another) from `secrets.schema` and asks for each missing value; `GEN=1` generates those the schema allows. Clones the repo when it is not here, and starts it when its remote is empty (5.2). |
 | `make secrets-set NAME= ENV=` | Hidden prompt (or stdin when not a terminal), `sops set`, commit and push of the secrets repo. |
 | `make secrets-edit ENV=` | `sops edit` for `ENV=local` and `ENV=common` only, commit and push. sops writes the plain text to a temp file and editors keep more copies (swap, undo, backup, viminfo), so vim and neovim are started with `-n -i NONE` and swap/undo/backup switched off, in a private temp folder that is removed afterwards; any other editor is used as it is, with a warning. Staging and production refuse: use `secrets-set` or `secrets-import`. |
 | `make secrets-list` | Names, envs and users from the schema and which are present; never values. |
@@ -391,7 +391,7 @@ means a new Worker, so they keep their names.
 | `make ci-status` / `make ci-logs` | `gh run list` for the current branch / `gh run view --log-failed` of its last failed run. |
 | `make ci-run` | `gh workflow run checks.yml` on the current branch (the workflow has a manual trigger). |
 | `make ci-local JOB=<job>` | Runs one job of `checks.yml` here, in Docker, with `act`; without `JOB` it lists the jobs. Jobs run as linux/amd64 like GitHub's Linux runners (`CI_LOCAL_PLATFORM=` for the machine's own). Partial: the reusable workflows come from the public `CI_TEMPLATES_REPO` with no token (`GITHUB_TOKEN` in the environment only for a private one, or a step that calls the GitHub API), and some steps may not run here. Run it from a normal clone, not a git worktree. |
-| `make ci-setup` | Sets up CI once the GitHub repository exists: the CI age key (`secrets-ci`), the read-only deploy keys (made in `~/.ssh` when missing, added to the secrets repo and, with a hardware part, the KiCad library when not there yet), their repository secrets, and the variables `SECRETS_REPO` and `KICAD_LIBRARY_REPO`. Safe to run again. Prints no values. |
+| `make ci-setup` | Sets up CI once the GitHub repository exists: the CI age key (`secrets-ci`), the read-only deploy keys (made in `~/.ssh` when missing, added to the project's secrets repo and, with a hardware part, the KiCad library when not there yet), their repository secrets, and the variables `SECRETS_REPO` (the `owner/name` of `SECRETS_REMOTE`) and `KICAD_LIBRARY_REPO`. Safe to run again. Prints no values. |
 | `make ci-setup-help` | Prints the commands `ci-setup` runs, for you to run by hand. Prints no values. |
 
 ### 4.9 Firmware (every firmware kind)
@@ -567,12 +567,14 @@ part's `<part>-production` job in `release.yml` stays for a hotfix by hand (belo
 
 ### Design
 
-All projects share one private secrets repo, checked out at `~/.secrets` (`SECRETS_DIR`). Files are
-encrypted with [sops](https://github.com/getsops/sops) and [age](https://age-encryption.org); a value
-is plain text only inside the process that needs it.
+There is one private secrets repo per GitHub owner (1.8): the projects of one account or organization share its
+`<owner>/secrets`, and a project of another owner never sees them. The secrets repo follows the project's owner, read
+from its git remote `origin` (section 5.1). Files are encrypted with [sops](https://github.com/getsops/sops) and
+[age](https://age-encryption.org); a value is plain text only inside the process that needs it.
 
 ```
-~/.secrets/
+~/.secrets-<owner>/    one per owner, for example ~/.secrets-fabrolabs-innovations, ~/.secrets-mayankgautam-me,
+                       each laid out the same (before 1.8 the one repo was ~/.secrets: see 5.4):
   .sops.yaml                  generated from recipients/ by secrets.sh; never edit it by hand
   recipients/se/<host>.txt    a Mac's Secure Enclave key (public half)
   recipients/dev/<host>.txt   a Mac's dev key (public half)
@@ -606,6 +608,88 @@ is plain text only inside the process that needs it.
 
 A leaked CI key reaches staging and production, because the key is the same today. A stolen laptop without your
 fingerprint still opens only local development values.
+
+### 5.1 Which secrets repo a project uses
+
+`make/common.mk` works it out once per `make` run (one `git remote get-url origin`, run only when the project root
+holds `.git`):
+
+1. The owner, `GITHUB_OWNER`: in GitHub Actions `GITHUB_REPOSITORY_OWNER` (or the owner part of `GITHUB_REPOSITORY`);
+   else the owner of the remote `origin` when it is on github.com (`https://github.com/<owner>/<repo>[.git]`,
+   `git@github.com:<owner>/<repo>[.git]`, `ssh://git@github.com/<owner>/<repo>`); else, with no GitHub origin yet,
+   the user config's `GITHUB_OWNER` (`make doctor` says so). The user config's owner is the *default owner*.
+2. `SECRETS_REMOTE`: `https://github.com/<owner>/secrets.git`. The user config's `SECRETS_REMOTE` is the default
+   owner's repo (say, its SSH address): it applies only to that owner's projects, never to a project of another owner.
+3. `SECRETS_DIR`: `~/.secrets-<owner>`, the same rule for every owner, the default owner included. The user config's
+   `SECRETS_DIR` is used only for a project with no owner at all (no GitHub origin, no `GITHUB_OWNER`), else `~/.secrets`.
+
+So a `fabrolabs-innovations` project uses `~/.secrets-fabrolabs-innovations` and the configured remote, and
+`ai-trade`, whose origin is `github.com/mayankgautam-me/ai-trade`, uses `~/.secrets-mayankgautam-me`, cloned from
+`https://github.com/mayankgautam-me/secrets.git`. A last-resort override for one project, in `make/project.mk`
+(`?=`, so CI's own `SECRETS_DIR` in the environment still wins; `:=` would beat it):
+
+```make
+SECRETS_DIR    ?= $(HOME)/.secrets-vault
+SECRETS_REMOTE ?= https://github.com/<owner>/vault.git
+```
+
+The environment and the command line win over all of this. `make ci-setup` puts the deploy key on the project's
+secrets repo and sets the CI variable `SECRETS_REPO` to its `owner/name` (from `SECRETS_REMOTE`, which must be on
+GitHub), so the CI jobs clone the same repo.
+
+### 5.2 Starting the secrets repo of a new owner
+
+Create the empty private repository once (`gh repo create <owner>/secrets --private`), then, in a project of that
+owner (its origin set):
+
+```bash
+make secrets-init
+```
+
+When `SECRETS_DIR` does not exist yet and the remote is empty, `secrets-init` (and `secrets-enroll`) starts the repo:
+it clones the empty remote into `SECRETS_DIR` (branch `main`, `origin` = `SECRETS_REMOTE`), installs the pre-commit
+hook and pins `core.hooksPath`, copies from another secrets repo on this Mac (the default owner's
+`~/.secrets-<owner>` first, else the first other `~/.secrets-*` with Mac recipients) the public recipients of every
+Mac, `recipients/se/*.txt` and `recipients/dev/*.txt`, and `recipients/recovery.txt` (never the CI keys of its
+projects, never a private key), generates `.sops.yaml`, commits "new secrets repo: the Macs and the recovery key" and
+pushes. Then it creates the project's files as usual. It prints:
+
+```
+> new secrets repo at ~/.secrets-<owner> (origin https://github.com/<owner>/secrets.git)
+ok copied 5 public recipient(s) from ~/.secrets-fabrolabs-innovations: Macs: mac-a mac-b; the recovery key
+ok secrets repo ~/.secrets-<owner> started and pushed to https://github.com/<owner>/secrets.git
+```
+
+The recovery key is the same for every owner's repo. A remote that already has content is cloned as it is, with
+nothing copied. A remote that cannot be cloned stops with what to do (create it, `gh auth status`). With no other
+secrets repo on this Mac to copy from, it says to enroll this Mac in the new repo (`make secrets-enroll`, then
+`make secrets-recovery` for a recovery key of its own).
+
+### 5.3 Macs across several secrets repos
+
+Each owner's repo has its own `recipients/`. The machine commands (`secrets-enroll`, `secrets-add-machine`,
+`secrets-remove-machine`, `secrets-recovery`, `secrets-sync`) act on the project's `SECRETS_DIR`, so run them in a
+project of the owner whose repo they should change. A Mac enrolled before a repo was started is in it already (its
+recipients were copied). A Mac enrolled later is added to each repo by itself: `make secrets-enroll` in a project of
+that owner reuses the Mac's Secure Enclave and Keychain keys and adds their public halves to that repo; then
+`make secrets-add-machine HOST=<mac>` there on a Mac already in it. Retiring a Mac means `secrets-remove-machine` in a
+project of every owner.
+
+### 5.4 Moving the pre-1.8 `~/.secrets`
+
+Before 1.8 the one secrets repo was `~/.secrets`; it is the default owner's, and its place is now
+`~/.secrets-<owner>`. Nothing moves it for you. While `~/.secrets` exists and `~/.secrets-<owner>` does not, the
+secrets commands of every project stop (they would otherwise clone a second checkout, or start a new repo with no Macs
+to copy) and, like `make doctor`, print the commands, which you run once per Mac:
+
+```bash
+mv "$HOME/.secrets" "$HOME/.secrets-<owner>"
+git -C "$HOME/.secrets-<owner>" config core.hooksPath "$HOME/.secrets-<owner>/.git/hooks"
+```
+
+The second line re-pins the pre-commit hook, whose path is absolute. The secrets commands also re-pin it on their
+next run when it points elsewhere, so it is a belt-and-braces step. Nothing else in the repo holds its path; the
+Secure Enclave reference (`~/.config/project-standard/age/se.txt`) and the Keychain key do not move.
 
 ### How a command gets its secrets
 
@@ -683,11 +767,12 @@ a rotation: the old file stays in the project's git history.
 ### A new Mac
 
 See section 8. In short: `make secrets-enroll` on the new Mac, then
-`make secrets-add-machine HOST=<new>` on an enrolled one (or with the recovery key).
+`make secrets-add-machine HOST=<new>` on an enrolled one (or with the recovery key). Once per owner's secrets repo:
+run both in a project of each owner (5.3).
 
 ### A lost or retired Mac
 
-On an enrolled Mac: `make secrets-remove-machine HOST=<lost>`. It removes its public keys, re-encrypts
+On an enrolled Mac, in a project of each owner (5.3): `make secrets-remove-machine HOST=<lost>`. It removes its public keys, re-encrypts
 every file without them, and lists every value that Mac could read. Old ciphertext stays in git
 history, so rotate those values (`make secrets-rotate NAME= ENV=`, then `make cf-secrets ENV=`)
 and revoke its tokens.
@@ -697,16 +782,16 @@ and revoke its tokens.
 `make secrets-ci` creates the project's CI age key, stores its private half as the GitHub Actions secret `SOPS_AGE_KEY`
 of the project's repository (from stdin, never on a command line), adds the public half to `recipients/ci/` and
 `.sops.yaml`, and re-encrypts. Every job that decrypts gets `SOPS_AGE_KEY` passed to it explicitly; dependency installs
-(`make <part>-setup`) run with it unset. Each job reads the secrets repository with `SECRETS_DEPLOY_KEY`, a read-only
-SSH deploy key (section 6). The same `make` wrapper decrypts. Set up once per project with `make ci-setup`.
+(`make <part>-setup`) run with it unset. Each job reads the project's secrets repository (the variable `SECRETS_REPO`,
+5.1) with `SECRETS_DEPLOY_KEY`, a read-only SSH deploy key (section 6). The same `make` wrapper decrypts. Set up once per project with `make ci-setup`.
 
 ## 6. CI/CD
 
 The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/name`, default
-`mayankgautam-me/ci-templates`), tagged `v1.7`. It is a setting of its own, independent of the project's `GITHUB_OWNER`:
+`mayankgautam-me/ci-templates`), tagged `v1.8`. It is a setting of its own, independent of the project's `GITHUB_OWNER`:
 projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.7`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.8`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -761,7 +846,8 @@ A push cancels the superseded run of the same branch in `checks.yml`.
 Project-wide settings are repository variables, set once with `gh variable set --repo <owner>/<project>`, not repeated
 on each job:
 
-- `SECRETS_REPO` = `<owner>/secrets`: the secrets repository, checked out sparsely (the project's folder and
+- `SECRETS_REPO` = `<owner>/secrets`: the project's secrets repository (section 5.1; `make ci-setup` sets it from
+  `SECRETS_REMOTE`), checked out sparsely (the project's folder and
   `recipients`) beside the project; `SECRETS_DIR` points there.
 - `KICAD_LIBRARY_REPO` = `<owner>/kicad-library`: the shared KiCad library for the hardware jobs (3D models only, see
   Limits and billing). The scaffold writes it from `KICAD_LIBRARY_PROJECT` in the user config.
@@ -924,7 +1010,7 @@ permissions (https://developers.cloudflare.com/r2/api/tokens/), the Workers Buil
    repo and is never committed anywhere.
 3. Sign in to GitHub: `gh auth login`, and make sure `git clone` of the secrets repo works over SSH.
 4. In any standard project: `make setup` (installs sops, age, age-plugin-se and the project's tools).
-5. `make secrets-enroll`: clones the secrets repo to `~/.secrets`, creates this Mac's Secure Enclave
+5. `make secrets-enroll`: clones the project's secrets repo (5.1; `~/.secrets-<owner>`), creates this Mac's Secure Enclave
    key (Touch ID prompt) and dev key (Keychain), commits their public halves and prints the command
    for the next step.
    On the very first Mac there is nothing else to do here, except step 5a.
@@ -935,6 +1021,7 @@ permissions (https://developers.cloudflare.com/r2/api/tokens/), the Workers Buil
 6. On a Mac that is already enrolled: `make secrets-add-machine HOST=<new-mac>`. It re-encrypts every
    file to the new Mac and pushes. No enrolled Mac at hand: do the same with the recovery key
    (`SOPS_AGE_KEY` from the printed copy, in that one shell only).
+6b. Projects of other owners: steps 5 and 6 again in one project of each owner (5.3).
 7. Back on the new Mac: `make doctor` in each project. Firmware SDKs install on the first `make setup`
    of a project that pins them.
 
@@ -943,17 +1030,20 @@ permissions (https://developers.cloudflare.com/r2/api/tokens/), the Workers Buil
 `~/.config/project-standard/config.mk` (private, per machine; copy it between your Macs):
 
 ```make
-SECRETS_REMOTE        := git@github.com:<owner>/secrets.git
-GITHUB_OWNER          := <owner>
+SECRETS_REMOTE        := git@github.com:<owner>/secrets.git   (optional: the default owner's secrets repo)
+GITHUB_OWNER          := <owner>                              (the default owner)
 # CI_TEMPLATES_REPO   := mayankgautam-me/ci-templates   (the default; set it only for another repository)
 DOCKER_REGISTRY       := ghcr.io/<owner>
 KICAD_LIBRARY_DIR     := <your kicad-library checkout>
 KICAD_LIBRARY_PROJECT := <owner>/kicad-library
 ```
 
-`GITHUB_OWNER` is the GitHub account that owns the project's repositories (a personal account or an organization):
-the project's repository, its releases, the secrets repository and the registry follow it. `GITLAB_GROUP` is ignored
-since v9.
+`GITHUB_OWNER` is the default owner: the GitHub account (a personal account or an organization) of a project that has
+no GitHub `origin` yet. A project's own owner comes from its `origin` (5.1), and its repository, releases and secrets
+repository follow that owner. `SECRETS_REMOTE` here is the default owner's secrets repo (default
+`https://github.com/<owner>/secrets.git`); a project of another owner uses `https://github.com/<its owner>/secrets.git`
+and never this one. Every owner's checkout is `~/.secrets-<owner>`; `SECRETS_DIR` here applies only to a project with no
+owner at all. Write all three with `:=` (common.mk reads this file's own values apart from the project's). `GITLAB_GROUP` is ignored since v9.
 
 `CI_TEMPLATES_REPO` (`owner/name`) is the repository of the reusable workflows (section 6), independent of
 `GITHUB_OWNER`; default `mayankgautam-me/ci-templates`, public. A project can set its own in `make/project.mk`, which
@@ -977,8 +1067,9 @@ apps download firmware from (`<part>_OTA_URL`). r2.dev is rate-limited and meant
 on the bucket is the production choice and is set in the dashboard. `cf-provision` never turns a URL off, and
 `cf-wipe`/`cf-destroy` never touch the bucket.
 
-Overrides for one shell: `STD_TOOLCHAINS` (default `~/.toolchains`), `SECRETS_DIR` (default
-`~/.secrets`), `STD_CONFIG` (default `~/.config/project-standard`).
+Overrides for one shell: `STD_TOOLCHAINS` (default `~/.toolchains`), `SECRETS_DIR` and `SECRETS_REMOTE` (default:
+the project's owner's, 5.1), `STD_CONFIG` (default `~/.config/project-standard`). `SECRETS_DEFAULT_DIR` (default
+`~/.secrets-<the config's owner>`) is where a new secrets repo first looks for the Macs' recipients (5.2).
 
 ## 10. Versions
 
@@ -986,6 +1077,14 @@ Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) an
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
 
+- **1.8** (2026-11-15): one secrets repo per GitHub owner. A project's owner is read from its git remote `origin`
+  (in CI from `GITHUB_REPOSITORY_OWNER`); its secrets repo is `https://github.com/<owner>/secrets.git`, checked out at
+  `~/.secrets-<owner>` for every owner, the user config's own included: move the old `~/.secrets` by hand, the
+  commands are in section 5.4 and every secrets command prints them until it is done. The config's `SECRETS_REMOTE`
+  applies to its own owner only, so a personal project never lands in a company repo. `secrets-init` on an empty
+  remote starts the repo with the Macs' and the recovery key's public recipients copied from another `~/.secrets-*`.
+  New-project mode creates the GitHub repo (owner asked) and `origin` before the secrets; `ci-setup` takes
+  `SECRETS_REPO` and the deploy key from the project's own secrets repo (section 5).
 - **1.7** (2026-11-15): `CI_TEMPLATES_REPO` (`owner/name`) names the repository of the reusable workflows, apart from
   the project's `GITHUB_OWNER`: default `mayankgautam-me/ci-templates`, public, so projects of every owner (the
   fabrolabs-innovations and i2sage-technologies organizations, the personal account) call the same workflows.

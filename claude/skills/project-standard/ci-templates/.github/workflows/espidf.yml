@@ -1,5 +1,5 @@
-# project-standard ci-templates v1.7: espidf (ESP-IDF firmware, the image pinned to the v5.5 IDF).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/espidf.yml@v1.7.
+# project-standard ci-templates v1.8: espidf (ESP-IDF firmware, the image pinned to the v5.5 IDF).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/espidf.yml@v1.8.
 
 on:
   workflow_call:

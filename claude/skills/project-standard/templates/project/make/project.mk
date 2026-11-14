@@ -1,7 +1,7 @@
 # make/project.mk: this project's own settings. The project-standard skill writes it once and never
 # overwrites it; edit it freely.
 #
-# PROJECT    the project's name: its folder in the secrets repo (~/.secrets/<PROJECT>/), the prefix of
+# PROJECT    the project's name: its folder in the secrets repo (<PROJECT>/ in it), the prefix of
 #            its CI variables and image names. Lowercase letters, digits and '-'.
 # PORT_BASE  dev ports are PORT_BASE + an offset per part, so two projects can run `make dev` at once.
 # PARTS      one entry per part, `name:kind[:dir]`; dir defaults to name. Every part gets the stage
@@ -10,6 +10,11 @@
 #                   app-flutter app-tauri app-xcode app-android docker go python
 # CI_TEMPLATES_REPO  optional: owner/name of the reusable CI workflows, over the user config's (default
 #            mayankgautam-me/ci-templates); scaffold the workflows again after changing it.
+# The secrets repo follows the project's GitHub owner, the owner of its git remote origin: <owner>/secrets, checked
+# out at ~/.secrets-<owner> (make secrets-doctor names it). Only to use another secrets repo, set both here, with
+# ?= so CI's own SECRETS_DIR still wins:
+#   SECRETS_DIR    ?= $(HOME)/.secrets-<name>
+#   SECRETS_REMOTE ?= https://github.com/<owner>/<repo>.git
 #
 # Per-part settings are `<part>_<VAR> := value`, for example:
 #   firmware_BOARD := nrf9151dk/nrf9151/ns

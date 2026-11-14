@@ -38,13 +38,14 @@ std_setup_env() {
   unset ENV CONFIRM PART LEVEL SOPS_AGE_KEY SOPS_AGE_KEY_FILE SOPS_AGE_KEY_CMD SECRETS_REMOTE PROJECT CF_SH_INNER CI
   unset CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID CF_NO_BROWSER
   export STD_AUDIT_OFFLINE=1   # the audit's one online check (the GitHub description) stays off unless a test turns it on
-  unset GITHUB_ACTIONS GITHUB_REPOSITORY GITHUB_REF_NAME GITHUB_REF_TYPE GITHUB_TOKEN GH_TOKEN GITHUB_OWNER GITLAB_CI
+  unset GITHUB_ACTIONS GITHUB_REPOSITORY GITHUB_REPOSITORY_OWNER GITHUB_REF_NAME GITHUB_REF_TYPE GITHUB_TOKEN GH_TOKEN GITHUB_OWNER GITLAB_CI
+  unset SECRETS_DEFAULT_DIR STD_OWNER_FROM STD_ORIGIN_OWNER STD_CONFIG_OWNER
 }
 
 mkproject() {
   local dir="$1" text="$2"
   mkdir -p "$dir/make/kinds"
-  printf '# project-standard v1.7 (managed: test)\ninclude make/project.mk\ninclude make/common.mk\n' >"$dir/Makefile"
+  printf '# project-standard v1.8 (managed: test)\ninclude make/project.mk\ninclude make/common.mk\n' >"$dir/Makefile"
   printf '%s\n' "$text" >"$dir/make/project.mk"
   cp "$STD_TEMPLATES/common.mk" "$dir/make/common.mk"
   mkdir -p "$dir/make/bin"

@@ -300,6 +300,7 @@ needs: [instructions, detect, bootstrap]
 - [x] 1.5: cf-backup, cf-wipe and cf-destroy reach a D1 by name through --env, so an adopted Worker with a local placeholder id backs up {#std-1-5-d1-env}
 - [x] 1.6: cf-provision creates the OTA bucket (OTA_BUCKET, <part>_OTA_BUCKET), also in a project whose only Cloudflare resource it is; OTA_PUBLIC turns on its r2.dev URL {#std-1-6-ota-provision}
 - [x] 1.7: CI_TEMPLATES_REPO names the reusable workflows' repo apart from the project owner (default mayankgautam-me/ci-templates, public) {#std-1-7-ci-templates-repo}
+- [x] 1.8: a project can name its own secrets repo (SECRETS_DIR, SECRETS_REMOTE in make/project.mk); secrets-init starts a new one with this Mac's and the recovery recipients {#std-1-8-secrets-per-owner}
 - [ ] Adopt the 12 Fabrolabs projects, simple ones first, one branch each: command-deck done; next waits on you {#std-fabrolabs-adopt}
 - [x] Every firmware build signs with the real key (Touch ID on each build), not only release: your choice {#std-signing-choice}
 - [x] App release recipes (android, flutter, tauri, xcode) need CONFIRM=production before publishing {#std-release-guard}

@@ -1,6 +1,6 @@
 # ci-templates
 
-The source of the reusable GitHub Actions workflows in `mayankgautam-me/ci-templates`, tagged `v1.7`. Each
+The source of the reusable GitHub Actions workflows in `mayankgautam-me/ci-templates`, tagged `v1.8`. Each
 file here is one part kind, at `.github/workflows/<kind>.yml`, and it has only `on: workflow_call`. A project's
 `.github/workflows/checks.yml` (pushes and pull requests) and `release.yml` (tags) call them with `uses:`. Every
 script line calls `make`, so CI runs what a developer runs locally. The v8 GitLab templates are gone from this
@@ -17,7 +17,7 @@ on:
   pull_request:
 jobs:
   cloud-api:
-    uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.7
+    uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.8
     with:
       part: cloud-api
       part_dir: cloud/api
@@ -39,7 +39,7 @@ jobs:
   firmware:
     needs: tag
     if: needs.tag.outputs.part == 'firmware'
-    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.7
+    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.8
     with:
       part: firmware
       part_dir: firmware
@@ -66,7 +66,7 @@ permissions:
   contents: write
 jobs:
   firmware:
-    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.7
+    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.8
     with:
       part: firmware
       part_dir: firmware
@@ -114,7 +114,7 @@ Repository or organization variables (`vars.`), not secrets.
 
 | Variable | Meaning |
 |---|---|
-| `SECRETS_REPO` | The secrets repository, e.g. `<owner>/secrets`. Checked out sparsely (the project's folder and `recipients`) into `.ci/secrets` inside the workspace; `SECRETS_DIR` points there. |
+| `SECRETS_REPO` | The project's secrets repository, e.g. `<owner>/secrets` (one per owner; `make ci-setup` sets it from the project's `SECRETS_REMOTE`). Checked out sparsely (the project's folder and `recipients`) into `.ci/secrets` inside the workspace; `SECRETS_DIR` points there. |
 | `KICAD_LIBRARY_REPO` | The KiCad library, e.g. `<owner>/kicad-library`. Optional; when set, the hardware jobs check it out with LFS and export `KICAD_LIBRARY_DIR` and the `<prefix>_LIB_DIR`, `_3DMODEL_DIR`, `_DATASHEET_DIR` paths. |
 | `KICAD_LIB_PREFIX` | Optional, default `FABROLABS`: the prefix of those path variables. |
 | `STD_APT_PACKAGES` | Optional: extra Debian packages (space separated) that every apt install adds, e.g. `libudev-dev`. |

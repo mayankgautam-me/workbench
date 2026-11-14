@@ -888,3 +888,183 @@ STUB
   [[ "$output" != *"secrets-add-machine"* ]]
   [[ "$output" == *"no recovery key yet"* ]]
 }
+
+# --- one secrets repo per owner (1.8) ------------------------------------------------------------
+
+# owner_repo: the default owner's repo is mksecrets' recipients (Macs, recovery, and a CI key of another project) at
+# ~/.secrets-fabrolabs-innovations; the project's is a new SECRETS_DIR with an empty remote of its own.
+owner_repo() {
+  mkdir -p "$SECRETS_DIR/recipients/ci"
+  age-keygen -o "$KEYS/otherci.txt" 2>/dev/null
+  OTHER_CI_PUB="$(age-keygen -y "$KEYS/otherci.txt")"
+  printf '%s\n' "$OTHER_CI_PUB" >"$SECRETS_DIR/recipients/ci/other.txt"
+  mv "$SECRETS_DIR" "$HOME/.secrets-fabrolabs-innovations"
+  export SECRETS_DEFAULT_DIR="$HOME/.secrets-fabrolabs-innovations"
+  export SECRETS_DIR="$HOME/.secrets-mayankgautam-me"
+  git init -q --bare -b main "$BATS_TEST_TMPDIR/personal.git"
+  export SECRETS_REMOTE="$BATS_TEST_TMPDIR/personal.git"
+}
+
+@test "new secrets repo: an empty remote starts with the Macs' and the recovery recipients only, hook, origin, pushed" {
+  owner_repo
+  run sec init --gen
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"new secrets repo at $SECRETS_DIR"* ]]
+  [[ "$output" == *"copied 3 public recipient(s) from $SECRETS_DEFAULT_DIR: Macs: testhost; the recovery key"* ]]
+  [ "$(cat "$SECRETS_DIR/recipients/se/testhost.txt")" = "$SE_PUB" ]
+  [ "$(cat "$SECRETS_DIR/recipients/dev/testhost.txt")" = "$DEV_PUB" ]
+  [ "$(cat "$SECRETS_DIR/recipients/recovery.txt")" = "$REC_PUB" ]
+  # no other project's CI key, and it is not a recipient of anything
+  [ ! -e "$SECRETS_DIR/recipients/ci/other.txt" ]
+  run grep -c "$OTHER_CI_PUB" "$SECRETS_DIR/.sops.yaml"
+  [ "$output" = 0 ]
+  grep -q "$SE_PUB" "$SECRETS_DIR/.sops.yaml"
+  [ "$(git -C "$SECRETS_DIR" remote get-url origin)" = "$SECRETS_REMOTE" ]
+  [ "$(git -C "$SECRETS_DIR" config core.hooksPath)" = "$SECRETS_DIR/.git/hooks" ]
+  [ -x "$SECRETS_DIR/.git/hooks/pre-commit" ]
+  [ "$(git -C "$SECRETS_DIR" rev-parse --abbrev-ref HEAD)" = main ]
+  # the first commit holds the recipients and .sops.yaml; then init's own; all pushed
+  [ "$(git --git-dir="$SECRETS_REMOTE" log --format=%s main | tail -n 1)" = "new secrets repo: the Macs and the recovery key" ]
+  [ "$(git --git-dir="$SECRETS_REMOTE" rev-parse main)" = "$(git -C "$SECRETS_DIR" rev-parse HEAD)" ]
+  [ -f "$SECRETS_DIR/demo/production.env.sops" ]
+  run enc "$KEYS/se.txt" demo/production.env.sops
+  [ "$status" -eq 0 ]
+  # nothing private copied or printed, and the default repo is untouched
+  assert_no_plain AGE-SECRET-KEY-1 "$SECRETS_DIR"
+  [[ "$output" != *"AGE-SECRET-KEY"* ]]
+  [ ! -e "$SECRETS_DEFAULT_DIR/.git" ]
+  [ ! -e "$SECRETS_DEFAULT_DIR/demo" ]
+}
+
+@test "new secrets repo: a recipient file that holds a private key is not copied" {
+  owner_repo
+  cp "$KEYS/dev.txt" "$SECRETS_DEFAULT_DIR/recipients/dev/leaky.txt"
+  run sec init --gen
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"skipped recipients/dev/leaky.txt: it holds a private key"* ]]
+  [ ! -e "$SECRETS_DIR/recipients/dev/leaky.txt" ]
+  assert_no_plain AGE-SECRET-KEY-1 "$SECRETS_DIR"
+}
+
+@test "new secrets repo: with no other secrets repo on this Mac to copy from it says how to enroll" {
+  owner_repo
+  rm -rf "$SECRETS_DEFAULT_DIR"
+  run sec init --gen
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no other secrets repo on this Mac (~/.secrets-*) to copy the Macs from"*"make secrets-enroll"*"make secrets-recovery"* ]]
+  [ -d "$SECRETS_DIR/.git" ]
+  [ "$(git -C "$SECRETS_DIR" remote get-url origin)" = "$SECRETS_REMOTE" ]
+}
+
+@test "new secrets repo: a remote that has content is cloned as it is, nothing copied" {
+  owner_repo
+  local seed="$BATS_TEST_TMPDIR/seed"
+  git clone -q "$SECRETS_REMOTE" "$seed" 2>/dev/null
+  mkdir -p "$seed/recipients/se" "$seed/recipients/dev"
+  printf '%s\n' "$SE_PUB" >"$seed/recipients/se/othermac.txt"
+  printf '%s\n' "$DEV_PUB" >"$seed/recipients/dev/othermac.txt"
+  git -C "$seed" add -A
+  git -C "$seed" commit -q -m existing
+  git -C "$seed" push -q origin HEAD:main
+  run sec init --gen
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"new secrets repo"* ]]
+  [ -f "$SECRETS_DIR/recipients/se/othermac.txt" ]
+  [ ! -e "$SECRETS_DIR/recipients/se/testhost.txt" ]
+  [ ! -e "$SECRETS_DIR/recipients/recovery.txt" ]
+  [ "$(git -C "$SECRETS_DIR" log --format=%s | tail -n 1)" = existing ]
+}
+
+@test "new secrets repo: a remote that cannot be cloned stops with what to do" {
+  owner_repo
+  export SECRETS_REMOTE="$BATS_TEST_TMPDIR/missing.git"
+  run sec init --gen
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"cannot clone $SECRETS_REMOTE into $SECRETS_DIR"*"gh repo create <owner>/secrets --private"* ]]
+}
+
+@test "per-owner repo: the machine commands act on the project's SECRETS_DIR, enroll adds this Mac to it" {
+  owner_repo
+  sec init --gen
+  stub_cmd age-plugin-se 'case "$1" in
+  keygen) shift; while [ $# -gt 0 ]; do [ "$1" = -o ] && out="$2"; shift; done
+    printf "# created\nAGE-PLUGIN-SE-1STUBIDENTITY\n" >"$out" ;;
+  recipients) echo age1se1stubrecipientpublickey ;;
+esac'
+  run sec enroll --host mac9
+  [ "$status" -eq 0 ]
+  [ -f "$SECRETS_DIR/recipients/se/mac9.txt" ]
+  [ ! -e "$SECRETS_DEFAULT_DIR/recipients/se/mac9.txt" ]
+  [[ "$output" == *"secrets-add-machine HOST=mac9"* ]]
+  run sec remove-machine mac9
+  [ "$status" -eq 0 ]
+  [ ! -e "$SECRETS_DIR/recipients/se/mac9.txt" ]
+  run sec sync
+  [ "$status" -eq 0 ]
+  [ "$(git --git-dir="$SECRETS_REMOTE" rev-parse main)" = "$(git -C "$SECRETS_DIR" rev-parse HEAD)" ]
+  [ -f "$SECRETS_DEFAULT_DIR/recipients/se/testhost.txt" ]
+  [ ! -e "$SECRETS_DEFAULT_DIR/.git" ]
+}
+
+@test "doctor names the project's owner and where it came from" {
+  owner_repo
+  sec init --gen
+  GITHUB_OWNER=mayankgautam-me STD_OWNER_FROM=origin run sec doctor
+  [[ "$output" == *"owner mayankgautam-me (the project's git remote origin)"* ]]
+  [[ "$output" == *"secrets repo $SECRETS_DIR ($SECRETS_REMOTE)"* ]]
+  GITHUB_OWNER=fabrolabs-innovations STD_OWNER_FROM=config run sec doctor
+  [[ "$output" == *"owner fabrolabs-innovations from the user config: the project has no GitHub remote origin yet"* ]]
+  GITHUB_OWNER= STD_OWNER_FROM= run sec doctor
+  [[ "$output" == *"no GitHub owner"* ]]
+}
+
+@test "new secrets repo: without SECRETS_DEFAULT_DIR it copies from another ~/.secrets-* on this Mac" {
+  owner_repo
+  unset SECRETS_DEFAULT_DIR
+  mkdir -p "$HOME/.secrets-empty-owner/recipients"
+  run sec init --gen
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"copied 3 public recipient(s) from $HOME/.secrets-fabrolabs-innovations"* ]]
+  [ -f "$SECRETS_DIR/recipients/se/testhost.txt" ]
+  [ ! -e "$SECRETS_DIR/recipients/ci" ]
+}
+
+@test "pre-1.8 ~/.secrets: the secrets commands stop with the mv and hooksPath commands and move nothing" {
+  git -C "$SECRETS_DIR" init -q -b main
+  export STD_CONFIG_OWNER=fabrolabs-innovations
+  export SECRETS_DIR="$HOME/.secrets-fabrolabs-innovations"
+  run sec init --gen
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"pre-1.8 checkout of fabrolabs-innovations's secrets repo"* ]]
+  [[ "$output" == *'mv "$HOME/.secrets" "$HOME/.secrets-fabrolabs-innovations"'* ]]
+  [[ "$output" == *'git -C "$HOME/.secrets-fabrolabs-innovations" config core.hooksPath "$HOME/.secrets-fabrolabs-innovations/.git/hooks"'* ]]
+  [ -d "$HOME/.secrets/.git" ]
+  [ ! -e "$SECRETS_DIR" ]
+  run sec sync
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'mv "$HOME/.secrets"'* ]]
+  # exec in local and list do not stop, but say it
+  run sec list
+  [[ "$output" == *'mv "$HOME/.secrets"'* ]]
+  run sec doctor
+  [[ "$output" == *'mv "$HOME/.secrets"'* ]]
+  # a project of another owner stops too: its new repo would have no Macs to copy
+  SECRETS_DIR="$HOME/.secrets-mayankgautam-me" run sec init --gen
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"move ~/.secrets first"* ]]
+  [ ! -e "$HOME/.secrets-mayankgautam-me" ]
+}
+
+@test "pre-1.8 ~/.secrets moved by hand: the next command re-pins core.hooksPath" {
+  STD_CONFIG_OWNER= sec init --gen
+  [ "$(git -C "$SECRETS_DIR" config core.hooksPath)" = "$HOME/.secrets/.git/hooks" ]
+  mv "$HOME/.secrets" "$HOME/.secrets-fabrolabs-innovations"
+  export STD_CONFIG_OWNER=fabrolabs-innovations
+  export SECRETS_DIR="$HOME/.secrets-fabrolabs-innovations"
+  run sec sync
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"pre-1.8"* ]]
+  [ "$(git -C "$SECRETS_DIR" config core.hooksPath)" = "$SECRETS_DIR/.git/hooks" ]
+  printf 'v2\n' | sec set API_KEY --env staging
+  [ -n "$(git --git-dir="$SECRETS_REMOTE" log --oneline main)" ]
+}

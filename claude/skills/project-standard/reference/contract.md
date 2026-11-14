@@ -1,4 +1,4 @@
-# project-standard v1.7: internal contract
+# project-standard v1.8: internal contract
 
 How the pieces of the skill fit together. `standard.md` is the user-facing spec; this file is for
 whoever writes or changes `common.mk`, a kind, a script, the CI templates, `scaffold.sh` or `audit.sh`.
@@ -51,16 +51,16 @@ and in no `.gitattributes` LFS line.
 Every managed file's first line is exactly:
 
 ```
-# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 ```
 
 (`#!/usr/bin/env bash` first, then that line, for scripts.) `audit.sh` and the hook look for
-`project-standard v1.7` on line 1 or 2 of `make/common.mk`.
+`project-standard v1.8` on line 1 or 2 of `make/common.mk`.
 
 Root `Makefile`:
 
 ```make
-# project-standard v1.7 (managed: ...)
+# project-standard v1.8 (managed: ...)
 include make/project.mk
 include make/common.mk
 ```
@@ -167,12 +167,18 @@ error otherwise, for every verb, because recipes and `teardown` remove things un
 | `CONFIRM` | empty | must equal the env being touched, and come from the command line (`$(origin CONFIRM)` = `command line`) |
 | `PART` | empty | restrict a root verb to one part |
 | `STD_TOOLCHAINS` | `$(HOME)/.toolchains` | shared SDKs: `<tool>-<version>` |
-| `SECRETS_DIR` | `$(HOME)/.secrets` | the secrets repo checkout |
+| `GITHUB_OWNER` | the project's owner | `GITHUB_REPOSITORY_OWNER` (or `GITHUB_REPOSITORY`'s owner) in CI, else the owner of the github.com `origin` (one `git remote get-url origin` per make run, only when the project root holds `.git`; exported as `STD_ORIGIN_OWNER` to sub-makes), else config.mk's; `STD_OWNER_FROM` = `ci`, `origin`, `config` or `command line` |
+| `SECRETS_REMOTE` | `https://github.com/<GITHUB_OWNER>/secrets.git` | the project's secrets repo; config.mk's value only for config.mk's own owner |
+| `SECRETS_DIR` | `$(HOME)/.secrets-<GITHUB_OWNER>` for every owner; with no owner at all config.mk's `SECRETS_DIR`, else `$(HOME)/.secrets` | the secrets repo checkout; a pre-1.8 `~/.secrets` of config.mk's owner is reported with the `mv` and `core.hooksPath` commands (standard.md 5.4), never moved |
+| `SECRETS_DEFAULT_DIR` | `$(HOME)/.secrets-<config.mk's GITHUB_OWNER>` | where a new secrets repo first copies the Macs' and the recovery recipients from; then any other `~/.secrets-*` |
 | `STD_CONFIG` | `$(HOME)/.config/project-standard` | per-user config dir |
 | `STD_BIN` | `make/bin` | managed scripts |
 | `NO_COLOR` | unset | plain output |
 
-`-include $(STD_CONFIG)/config.mk` may set `SECRETS_REMOTE`, `GITHUB_OWNER`,
+`SECRETS_DIR` and `SECRETS_REMOTE` from the environment or `make/project.mk` (written `?=` there, so CI's environment
+wins) and from the command line win over the derived values; common.mk captures them with their `$(origin)` and clears
+them before config.mk, so config.mk's own `SECRETS_DIR`, `SECRETS_REMOTE` and `GITHUB_OWNER` (assigned with `:=`) are
+known apart. `-include $(STD_CONFIG)/config.mk` may set `SECRETS_REMOTE`, `GITHUB_OWNER` (the default owner),
 `DOCKER_REGISTRY`, `CI_TEMPLATES_REPO` (owner/name, default `mayankgautam-me/ci-templates`, independent of
 `GITHUB_OWNER`; a value in `make/project.mk` wins over config.mk, and `CI_TEMPLATES_PROJECT` is ignored since 1.7), `KICAD_LIBRARY_DIR`, and
 `KICAD_LIBRARY_PROJECT` (read by `scaffold.sh` only: the CI variable `KICAD_LIBRARY_REPO` for a hardware part). `OTA_BUCKET` is a
@@ -203,7 +209,7 @@ forges `MAKELEVEL` to hide the check; the secrets blocklist keeps both out of a 
 
 ## Secrets
 
-Layout of the secrets repo (`SECRETS_DIR`):
+Layout of the secrets repo (`SECRETS_DIR`; one per GitHub owner, standard.md 5.1):
 
 ```
 .sops.yaml                  generated from recipients/ by secrets.sh, never hand-edited
@@ -248,7 +254,13 @@ secrets.sh with-file NAME -- cmd args {}    decrypt keys/NAME.sops to a mode-600
                                             mode-700 dir, replace {} in args, run, always remove
 secrets.sh get NAME --env E                 print one value (for scripts; never echo in make); decoded exactly
                                             as exec does (literal backslash-n becomes a newline)
-secrets.sh init [--gen]                     from secrets.schema: create files, prompt missing values
+secrets.sh init [--gen]                     from secrets.schema: create files, prompt missing values. With no
+                                            SECRETS_DIR yet: clone SECRETS_REMOTE; an empty remote (or none) starts
+                                            a new repo: main, origin, hook, the public recipients se/*.txt, dev/*.txt
+                                            and recovery.txt of SECRETS_DEFAULT_DIR, else of the first other
+                                            ~/.secrets-* with Mac recipients (no ci/, no file holding a private
+                                            key), .sops.yaml, first commit, push. Stops while a pre-1.8 ~/.secrets
+                                            waits to be moved
 secrets.sh set NAME --env E                 hidden prompt (or stdin when not a TTY), sops set, commit+push
 secrets.sh edit --env E                     sops edit, commit+push; ENV local or common only (staging/production
                                             refuse and point to set/import); vim/neovim run with swap, undo,
@@ -265,7 +277,8 @@ secrets.sh ci [--force]                     create ci/<p> and ci/<p>-production 
                                             store the private key as the GitHub Actions secret SOPS_AGE_KEY with
                                             gh secret set (stdin, never argv), regenerate .sops.yaml, updatekeys,
                                             commit+push
-secrets.sh enroll                           new Mac: clone SECRETS_REMOTE to SECRETS_DIR if missing,
+secrets.sh enroll                           new Mac (or this Mac in another owner's repo): clone SECRETS_REMOTE to
+                                            SECRETS_DIR if missing (starting a new repo as init does), reuse or
                                             create SE + dev identities, write recipients/{se,dev}/<host>.txt,
                                             commit+push, print what to run on an enrolled Mac
 secrets.sh add-machine HOST                 regenerate .sops.yaml, `sops updatekeys -y` every file, commit+push
@@ -405,7 +418,7 @@ from the environment, never from a command line. On a Mac gh uses its own login 
 ## CI workflows (`ci-templates/`)
 
 - `ci-templates/.github/workflows/<kind>.yml`: one reusable workflow per kind (`on: workflow_call`), in `CI_TEMPLATES_REPO`
-  (default `mayankgautam-me/ci-templates`, public, shared by every project owner), tagged `v1.7`. `scaffold.sh` and
+  (default `mayankgautam-me/ci-templates`, public, shared by every project owner), tagged `v1.8`. `scaffold.sh` and
   `audit.sh` resolve it the same way (`ci_project`: `make/project.mk`, else the environment or the user config, else
   the default); the audit warns on a `uses:` line on any other repository. Inputs: `part`, `part_dir`, `run_check`, `run_build`, `run_release`, `confirm`, `source_run_id`,
   `deploy_staging`, `production_only`, `target`. Secrets are declared in each file and passed explicitly by the caller (no
@@ -433,5 +446,5 @@ from the environment, never from a command line. On a Mac gh uses its own login 
 Tests build projects in `$BATS_TEST_TMPDIR`, put stub tools (wrangler, west, sops when needed, gh, actionlint, act,
 security, age-plugin-se...) first on `PATH`, and assert on output and exit codes. Real sops + age are
 used for the secrets tests with throwaway age keys (`age-keygen`), never the Secure Enclave and never
-the real `~/.secrets` (`SECRETS_DIR` and `STD_CONFIG` point into the temp dir). No test touches the
+the real `~/.secrets-*` (`SECRETS_DIR` and `STD_CONFIG` point into the temp dir). No test touches the
 network or Cloudflare.

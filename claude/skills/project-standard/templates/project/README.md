@@ -6,7 +6,7 @@
 
 ```sh
 make setup          # tools (brew bundle, mise), shared SDKs, dependencies, git hooks, LFS
-make secrets-init   # create this project's secrets (~/.secrets/@@PROJECT@@/) and ask for missing values
+make secrets-init   # create this project's secrets (@@PROJECT@@/ in its owner's secrets repo) and ask for missing values
 make doctor         # check everything; prints the command that fixes each problem
 make dev            # run the local stack
 make check          # format, lint, typecheck and unit tests: run before every commit

@@ -20,6 +20,10 @@ offer adopt; never change it silently.
 
 1. Ask, with options (AskUserQuestion when available):
    - the project name (lowercase, `-` allowed) and the folder (default `~/Projects/<name>`);
+   - the GitHub owner of its repository. Offer the user config's `GITHUB_OWNER` (`~/.config/project-standard/config.mk`,
+     the default owner), the organizations `gh api user/orgs --jq '.[].login'` lists, and the personal account
+     `gh api user --jq .login`. The owner decides the secrets repo: `<owner>/secrets`, checked out at `~/.secrets-<owner>` for
+     every owner (`reference/standard.md` 5.1);
    - the parts, each as a name and a kind. Offer the kinds grouped:
      firmware `zephyr`, `espidf`, `pio`, `arm-gcc`, `circuitpython`; hardware `hardware`;
      cloud `cloud-worker`, `web-pages`; apps `app-flutter`, `app-tauri`, `app-xcode`,
@@ -50,15 +54,27 @@ offer adopt; never change it silently.
    sets an OTA bucket, as on adopt, and says so when a kept schema lacks them); `make cf-login` then asks for R2,
    and `make cf-provision ENV=production CONFIRM=production` creates the bucket. Add `OTA_PUBLIC := r2dev` first
    when apps download the images from the bucket's public r2.dev URL: `cf-provision` then turns it on and prints it.
-4. `git init -b main` in the folder. Do not commit yet; the first commit follows the Git rules
-   (ask which branch; `main` here is fine only when the user picks it). The GitHub repository, when the user wants it,
-   is `gh repo create <owner>/<name> --private --description "<one line: what the project is and its parts>"`, the
-   same line as the README's first sentence: a repository is never left without a description (the audit warns).
+4. The repository, before any secrets: the project's owner comes from its `origin`, and the secrets repo follows it.
+   Show the commands and create the GitHub repository only after the user confirms (it is an outward action):
+   ```sh
+   git init -b main
+   gh repo create <owner>/<name> --private --description "<one line: what the project is and its parts>"
+   git remote add origin https://github.com/<owner>/<name>.git
+   ```
+   The description is the README's first sentence: a repository is never left without one (the audit warns). Do not
+   commit yet; the first commit follows the Git rules (ask which branch; `main` here is fine only when the user picks
+   it). Without a GitHub repository (the user declines), the owner and the secrets repo fall back to the user config's
+   until `origin` is added; `make doctor` says so.
 5. `make setup` (brew bundle, mise, SDKs, dependencies, hooks, LFS). Long: run it in the background
    and say so.
-6. `make secrets-init`: creates `~/.secrets/<name>/` from `secrets.schema` and asks the user for each
-   missing value in a hidden prompt. If the Mac is not enrolled yet, it says to run
-   `make secrets-enroll` first; that and any Touch ID prompt are the user's to answer.
+6. `make secrets-init`: creates `<name>/` in the project's secrets repo from `secrets.schema` and asks the user for
+   each missing value in a hidden prompt. If the Mac is not enrolled yet, it says to run
+   `make secrets-enroll` first; that and any Touch ID prompt are the user's to answer. For an owner whose secrets repo
+   is not on this Mac yet it clones `<owner>/secrets`; when that repo does not exist, ask, then create it empty
+   (`gh repo create <owner>/secrets --private --description "Encrypted secrets of <owner>'s projects (sops + age)"`):
+   `secrets-init` then starts it with this Mac's and the other Macs' public recipients and the recovery key from
+   another `~/.secrets-*` on this Mac, and pushes (`reference/standard.md` 5.2). A Mac that joins later runs `make secrets-enroll` in a
+   project of that owner, then `make secrets-add-machine HOST=<mac>` there on an enrolled Mac (5.3).
 7. `make doctor`, and report what it says is missing with the command that fixes each item. A `secrets.schema`
    row whose description starts with `optional:` (the app signing and store names, written only for the app kinds
    that read them) is a warning when missing, not a failure.
@@ -97,9 +113,14 @@ Read-only until the user says yes.
      command that replaces it (`make -C Firmware/Node flash` -> `make firmware-flash`), or
      "kept in make/local.mk" when it has no standard equivalent. Sub-Makefiles are removed once
      their targets are covered, except the Makefile an arm-gcc part builds through (audit leaves it alone).
+   - **Owner and secrets repo**: the project's owner is its `origin`'s (`git remote get-url origin`), and its
+     secrets repo `<owner>/secrets` at `~/.secrets-<owner>` (`reference/standard.md` 5.1). A pre-1.8 `~/.secrets` is
+     moved by the user with the two commands of 5.4 (the secrets commands print them); never move it yourself. Name both in the plan. With no GitHub `origin`, ask the owner (as in new, step 1)
+     and plan the repository the same way as new step 4 (confirm, `gh repo create`, `git remote add origin`) before
+     any secret moves; a secrets repo the owner does not have yet is created empty and started by `secrets-init`.
    - **Secrets**: every tracked or local secret file (`.env*`, `.dev.vars`, `.prod.vars`, `secrets/`,
      `keys/`, `*.pem`, `*.p8`, `*.jks`, ...), which env and name each value moves to in
-     `~/.secrets/<project>/`, and the `secrets.schema` lines that describe them. Never print a
+     `<project>/` of the project's secrets repo, and the `secrets.schema` lines that describe them. Never print a
      value: not in chat, not in a command line, not in a log.
    - **CI swap**: the jobs of the old `.gitlab-ci.yml` and the workflow jobs that replace them (what the scaffold
      generates: `checks.yml` and `release.yml`); a job with no template becomes a job of its own in `checks.yml`.
@@ -175,7 +196,7 @@ Read-only until the user says yes.
    - Secrets: values go in through stdin so they never appear, for example
      `while IFS='=' read -r k v; do [ -n "$k" ] && printf '%s' "$v" | make secrets-set NAME="$k" ENV=staging; done < .dev.vars`
      (`secrets-set` reads stdin when it is not a TTY). Key files go to `keys/<name>.sops`, encrypted
-     straight from the file with sops in `~/.secrets` (see "Moving an existing key" in
+     straight from the file with sops in the project's secrets repo (`make secrets-doctor` names it; see "Moving an existing key" in
      `reference/standard.md`). Then `git rm --cached` the files and delete the plain copies only after
      `make secrets-list` shows them.
 5. Read the worktree's whole diff, run `make help`, `make doctor` and `make check` there, and

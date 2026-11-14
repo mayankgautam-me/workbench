@@ -1,4 +1,4 @@
-# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # The stage commands, the same in every project. GNU make 3.81 compatible (macOS /usr/bin/make):
 # no .ONESHELL, .SHELLFLAGS, $(file), .RECIPEPREFIX, undefine, != or ::=.
@@ -25,7 +25,6 @@ endif
 CONFIRM ?=
 PART ?=
 STD_TOOLCHAINS ?= $(HOME)/.toolchains
-SECRETS_DIR ?= $(HOME)/.secrets
 STD_CONFIG ?= $(HOME)/.config/project-standard
 STD_BIN ?= make/bin
 SECRETS_SCHEMA ?= $(CURDIR)/secrets.schema
@@ -34,13 +33,83 @@ SECRETS_SCHEMA ?= $(CURDIR)/secrets.schema
 STD_OTA_BUCKET_PROJECT := $(OTA_BUCKET)
 # CI_TEMPLATES_REPO set in make/project.mk wins over the user config (1.7).
 STD_CI_TEMPLATES_REPO_PROJECT := $(CI_TEMPLATES_REPO)
+# The secrets repo follows the project's GitHub owner (1.8). SECRETS_DIR and SECRETS_REMOTE from make/project.mk or
+# the environment, and GITHUB_OWNER from the environment, are captured with their origin and cleared, so what config.mk
+# sets is known apart (config.mk assigns with :=); all three are resolved below. The command line wins over everything.
+STD_P_GITHUB_OWNER := $(GITHUB_OWNER)
+STD_P_GITHUB_OWNER_FROM := $(origin GITHUB_OWNER)
+STD_P_SECRETS_DIR := $(SECRETS_DIR)
+STD_P_SECRETS_DIR_FROM := $(origin SECRETS_DIR)
+STD_P_SECRETS_REMOTE := $(SECRETS_REMOTE)
+STD_P_SECRETS_REMOTE_FROM := $(origin SECRETS_REMOTE)
+GITHUB_OWNER :=
+SECRETS_DIR :=
+SECRETS_REMOTE :=
 -include $(STD_CONFIG)/config.mk
+STD_CONFIG_OWNER := $(GITHUB_OWNER)
+STD_CONFIG_SECRETS_DIR := $(SECRETS_DIR)
+STD_CONFIG_SECRETS_REMOTE := $(SECRETS_REMOTE)
 ifneq ($(OTA_BUCKET),$(STD_OTA_BUCKET_PROJECT))
 $(warning OTA_BUCKET in $(STD_CONFIG)/config.mk is ignored since project-standard v6: set OTA_BUCKET in make/project.mk and remove it from config.mk)
 OTA_BUCKET := $(STD_OTA_BUCKET_PROJECT)
 endif
-# GITHUB_OWNER is the GitHub account (a User, or an Org) that owns the project's repos, set in the user config
-# (~/.config/project-standard/config.mk): <owner>/<project> and <owner>/secrets are private.
+# GITHUB_OWNER is the GitHub account (a User, or an Org) that owns the project's repos: <owner>/<project> and
+# <owner>/secrets are private. It is the project's own owner (1.8): in GitHub Actions GITHUB_REPOSITORY_OWNER (or the
+# owner part of GITHUB_REPOSITORY), else the owner of the git remote origin when it is on github.com
+# (https://github.com/<owner>/<repo>, git@github.com:<owner>/<repo>, ssh://git@github.com/<owner>/<repo>), else, with
+# no GitHub origin yet, the user config's (~/.config/project-standard/config.mk), else the environment's. git runs
+# once per make run (a sub-make reads the exported result), and only when the project root holds .git (a folder, or
+# a worktree's file); without one there is simply no origin.
+# STD_OWNER_FROM says where it came from (ci, origin, config); the user config's owner is the default owner.
+ifeq ($(origin STD_ORIGIN_OWNER),undefined)
+STD_ORIGIN_OWNER := $(if $(wildcard $(CURDIR)/.git),$(shell git remote get-url origin 2>/dev/null | sed -n -E 's%^(https?://([^@/]*@)?github\.com/|ssh://git@github\.com/|git@github\.com:)([A-Za-z0-9][A-Za-z0-9-]*)/[A-Za-z0-9._-]+/?$$%\3%p' | tr 'A-Z' 'a-z'))
+endif
+export STD_ORIGIN_OWNER
+ifeq ($(strip $(STD_CONFIG_OWNER)),)
+ifeq ($(STD_P_GITHUB_OWNER_FROM),environment)
+STD_CONFIG_OWNER := $(STD_P_GITHUB_OWNER)
+endif
+endif
+STD_CI_OWNER := $(or $(GITHUB_REPOSITORY_OWNER),$(if $(findstring /,$(GITHUB_REPOSITORY)),$(firstword $(subst /, ,$(GITHUB_REPOSITORY)))))
+ifneq ($(strip $(STD_CI_OWNER)),)
+GITHUB_OWNER := $(STD_CI_OWNER)
+STD_OWNER_FROM := ci
+else ifneq ($(strip $(STD_ORIGIN_OWNER)),)
+GITHUB_OWNER := $(STD_ORIGIN_OWNER)
+STD_OWNER_FROM := origin
+else
+GITHUB_OWNER := $(STD_CONFIG_OWNER)
+STD_OWNER_FROM := $(if $(strip $(STD_CONFIG_OWNER)),config)
+endif
+ifeq ($(origin GITHUB_OWNER),command line)
+STD_OWNER_FROM := command line
+# config.mk could not set it: read the default owner from the file itself
+STD_CONFIG_OWNER := $(shell sed -n -E 's/^[[:space:]]*GITHUB_OWNER[[:space:]]*[:?]?=[[:space:]]*([^[:space:]]*).*/\1/p' "$(STD_CONFIG)/config.mk" 2>/dev/null | tail -n 1)
+endif
+# One secrets repo per owner (reference/standard.md 5.1), the same rule for every owner: SECRETS_DIR ~/.secrets-<owner>,
+# SECRETS_REMOTE https://github.com/<owner>/secrets.git. The environment or make/project.mk win (a last-resort override;
+# write it with ?= so CI's SECRETS_DIR still wins). The user config's SECRETS_REMOTE is its own owner's repo and never
+# reaches a project of another owner; its SECRETS_DIR is used only when there is no owner at all (else ~/.secrets, as
+# before 1.8). SECRETS_DEFAULT_DIR is the user config's owner's checkout, the first place a new secrets repo copies the
+# Macs' recipients from (make secrets-init); secrets.sh then looks at the other ~/.secrets-* on this Mac.
+STD_SAME_OWNER := $(if $(filter-out $(STD_CONFIG_OWNER),$(GITHUB_OWNER)),,1)
+SECRETS_DEFAULT_DIR ?= $(if $(strip $(STD_CONFIG_OWNER)),$(HOME)/.secrets-$(strip $(STD_CONFIG_OWNER)))
+ifneq ($(strip $(if $(filter environment file,$(STD_P_SECRETS_DIR_FROM)),$(STD_P_SECRETS_DIR))),)
+SECRETS_DIR := $(STD_P_SECRETS_DIR)
+else ifneq ($(strip $(GITHUB_OWNER)),)
+SECRETS_DIR := $(HOME)/.secrets-$(strip $(GITHUB_OWNER))
+else
+SECRETS_DIR := $(or $(STD_CONFIG_SECRETS_DIR),$(HOME)/.secrets)
+endif
+ifneq ($(strip $(if $(filter environment file,$(STD_P_SECRETS_REMOTE_FROM)),$(STD_P_SECRETS_REMOTE))),)
+SECRETS_REMOTE := $(STD_P_SECRETS_REMOTE)
+else ifneq ($(and $(STD_SAME_OWNER),$(strip $(STD_CONFIG_SECRETS_REMOTE))),)
+SECRETS_REMOTE := $(STD_CONFIG_SECRETS_REMOTE)
+else ifneq ($(strip $(GITHUB_OWNER)),)
+SECRETS_REMOTE := https://github.com/$(GITHUB_OWNER)/secrets.git
+else
+SECRETS_REMOTE :=
+endif
 # CI_TEMPLATES_REPO (owner/name) is the repository of the reusable workflows, independent of GITHUB_OWNER (1.7):
 # make/project.mk, else the user config, else the public mayankgautam-me/ci-templates. CI_TEMPLATES_PROJECT is ignored.
 ifneq ($(strip $(STD_CI_TEMPLATES_REPO_PROJECT)),)
@@ -53,7 +122,7 @@ ifeq ($(strip $(PROJECT)),)
 $(error PROJECT is not set: put PROJECT := <name> in make/project.mk)
 endif
 
-export PROJECT PORT_BASE SECRETS_DIR STD_CONFIG SECRETS_REMOTE GITHUB_OWNER OTA_BUCKET DOCKER_REGISTRY
+export PROJECT PORT_BASE SECRETS_DIR SECRETS_DEFAULT_DIR STD_CONFIG SECRETS_REMOTE GITHUB_OWNER STD_OWNER_FROM STD_CONFIG_OWNER OTA_BUCKET DOCKER_REGISTRY
 export CI_TEMPLATES_REPO STD_TOOLCHAINS SECRETS_SCHEMA
 
 STD_LIB := . $(STD_BIN)/lib.sh
@@ -656,13 +725,14 @@ ci-run:
 	@$(STD_NEED_GH); gh workflow run checks.yml --ref "$$(git branch --show-current)"
 
 # Everything CI needs, in one run you start: the CI age key (secrets-ci), a read-only deploy key for the secrets repo
+# (the project's, SECRETS_REMOTE, whose owner/name is also the variable SECRETS_REPO)
 # and, with a hardware part, for the KiCad library (made in ~/.ssh when missing, added to the repo when not there yet,
 # its private half stored as the repo secret), and the repository variables. Safe to run again: what exists is kept,
 # the secrets and variables are set again. It prints no values. The GitHub repository must exist first. The reusable
 # workflows' repository (CI_TEMPLATES_REPO) is public and needs no setting; it warns only when that repo is private.
 ci-setup:
 	@$(STD_NEED_GH); $(STD_LIB); owner="$(GITHUB_OWNER)"; \
-	[ -n "$$owner" ] || die "GITHUB_OWNER is not set: put GITHUB_OWNER := <your GitHub account> in $(STD_CONFIG)/config.mk"; \
+	[ -n "$$owner" ] || die "GITHUB_OWNER is not set: add the GitHub remote origin (git remote add origin https://github.com/<owner>/$(PROJECT).git), or put GITHUB_OWNER := <your GitHub account> in $(STD_CONFIG)/config.mk"; \
 	repo="$$owner/$(PROJECT)"; \
 	gh repo view "$$repo" >/dev/null 2>&1 || die "no GitHub repository $$repo: create it first (gh repo create $$repo --private --description \"...\")"; \
 	command -v ssh-keygen >/dev/null 2>&1 || die "ssh-keygen not found"; \
@@ -679,8 +749,10 @@ ci-setup:
 	  gh secret set "$$3" --repo "$$repo" <"$$f" || die "could not set the secret $$3 of $$repo"; \
 	  log_ok "secret $$3 of $$repo set"; \
 	}; \
-	deploy_key secrets "$$owner/secrets" SECRETS_DEPLOY_KEY; \
-	gh variable set SECRETS_REPO --repo "$$repo" --body "$$owner/secrets" && log_ok "variable SECRETS_REPO of $$repo set"; \
+	srepo="$$(github_repo_slug "$(SECRETS_REMOTE)")"; \
+	[ -n "$$srepo" ] || die "SECRETS_REMOTE '$(SECRETS_REMOTE)' is not a GitHub repository: the CI jobs clone the secrets repo from GitHub"; \
+	deploy_key secrets "$$srepo" SECRETS_DEPLOY_KEY; \
+	gh variable set SECRETS_REPO --repo "$$repo" --body "$$srepo" && log_ok "variable SECRETS_REPO of $$repo set ($$srepo)"; \
 	if echo " $(STD_KINDS) " | grep -q ' hardware '; then \
 	  deploy_key kicad "$$owner/kicad-library" KICAD_LIBRARY_DEPLOY_KEY; \
 	  gh variable set KICAD_LIBRARY_REPO --repo "$$repo" --body "$$owner/kicad-library" && log_ok "variable KICAD_LIBRARY_REPO of $$repo set"; \
@@ -690,16 +762,17 @@ ci-setup:
 	log_ok "CI for $$repo is set up: make ci-run starts the checks"
 
 # The commands make ci-setup runs, printed for you to run by hand instead. They print no values; the keys stay
-# in ~/.ssh and in the GitHub secrets. GITHUB_OWNER comes from the user config.
+# in ~/.ssh and in the GitHub secrets. GITHUB_OWNER is the project's (its origin); the secrets repo is SECRETS_REMOTE.
 ci-setup-help:
 	@$(STD_LIB); owner="$(GITHUB_OWNER)"; \
-	if [ -z "$$owner" ]; then log_warn "GITHUB_OWNER is not set: put GITHUB_OWNER := <your GitHub account> in $(STD_CONFIG)/config.mk, then run this again"; owner='<owner>'; fi; \
+	if [ -z "$$owner" ]; then log_warn "GITHUB_OWNER is not set: add the GitHub remote origin, or put GITHUB_OWNER := <your GitHub account> in $(STD_CONFIG)/config.mk, then run this again"; owner='<owner>'; fi; \
+	srepo="$$(github_repo_slug "$(SECRETS_REMOTE)")"; [ -n "$$srepo" ] || srepo="$$owner/secrets"; \
 	printf '%s\n' "# CI setup for $(PROJECT). Run these yourself, in this order." ""; \
 	printf '%s\n' "# 1. the age key the CI jobs decrypt with: stored as the secret SOPS_AGE_KEY of $$owner/$(PROJECT)" \
 	  "make secrets-ci" ""; \
 	printf '%s\n' "# 2. a read-only deploy key for the secrets repo (the CI jobs clone it with it)" \
 	  "ssh-keygen -t ed25519 -N '' -C $(PROJECT)-ci-secrets -f ~/.ssh/$(PROJECT)-ci-secrets" \
-	  "gh repo deploy-key add ~/.ssh/$(PROJECT)-ci-secrets.pub --repo $$owner/secrets --title $(PROJECT)-ci-read-only" \
+	  "gh repo deploy-key add ~/.ssh/$(PROJECT)-ci-secrets.pub --repo $$srepo --title $(PROJECT)-ci-read-only" \
 	  "gh secret set SECRETS_DEPLOY_KEY --repo $$owner/$(PROJECT) < ~/.ssh/$(PROJECT)-ci-secrets" ""; \
 	if echo " $(STD_KINDS) " | grep -q ' hardware '; then \
 	  printf '%s\n' "# 3. the same for the shared KiCad library (the hardware jobs clone it; it is a private repo)" \
@@ -708,7 +781,7 @@ ci-setup-help:
 	    "gh secret set KICAD_LIBRARY_DEPLOY_KEY --repo $$owner/$(PROJECT) < ~/.ssh/$(PROJECT)-ci-kicad" ""; \
 	fi; \
 	printf '%s\n' "# 4. repository variables (names, not secrets) the workflows read" \
-	  "gh variable set SECRETS_REPO --repo $$owner/$(PROJECT) --body $$owner/secrets"; \
+	  "gh variable set SECRETS_REPO --repo $$owner/$(PROJECT) --body $$srepo"; \
 	if echo " $(STD_KINDS) " | grep -q ' hardware '; then \
 	  printf '%s\n' "gh variable set KICAD_LIBRARY_REPO --repo $$owner/$(PROJECT) --body $$owner/kicad-library"; \
 	fi; \

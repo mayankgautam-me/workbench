@@ -480,7 +480,7 @@ while IFS= read -r f; do
   case $class in
     secret)
       add error secrets "$f" "secret-like file $where" \
-        "move it into ~/.secrets/$PROJECT_NAME/ (adopt does it without printing it), git rm --cached it, then rotate it: it stays in git history"
+        "move it into the project's secrets repo, $PROJECT_NAME/ in it (adopt does it without printing it), git rm --cached it, then rotate it: it stays in git history"
       ;;
     warn)
       add warn secrets "$f" "file that often holds exported secrets ($where)" \
@@ -502,7 +502,7 @@ if ((IS_GIT == 1)); then
     class=$(std_secret_class "$f" "$DIR")
     [[ -n $class ]] || continue
     add warn secrets "$f" "secret-like file on disk, not tracked (plain text outside the secrets repo)" \
-      "move it into ~/.secrets/$PROJECT_NAME/ with make secrets-import, then delete the file"
+      "move it into the project's secrets repo with make secrets-import, then delete the file"
   done < <(cd "$DIR" && find . \( -type d \( "${disk_expr[@]}" -false \) -prune \) -o -type f -print0)
 fi
 
@@ -671,9 +671,17 @@ if [[ -n $(config_value CI_TEMPLATES_PROJECT) ]]; then
     "CI_TEMPLATES_PROJECT is ignored since 1.7: the workflows call $CI_PROJECT (CI_TEMPLATES_REPO)" \
     "remove CI_TEMPLATES_PROJECT; set CI_TEMPLATES_REPO := <owner>/<name> only for a repository other than $CI_TEMPLATES_DEFAULT"
 fi
-if [[ -z $(config_value GITHUB_OWNER) ]]; then
+# The project's owner is its GitHub origin's (1.8): its secrets repo and CI follow it; the user config's
+# GITHUB_OWNER is only the fallback before the repository exists.
+ORIGIN_OWNER=''
+if ((IS_GIT == 1)); then
+  ORIGIN_OWNER=$(git -C "$DIR" remote get-url origin 2>/dev/null |
+    sed -n -E 's%^(https?://([^@/]*@)?github\.com/|ssh://git@github\.com/|git@github\.com:)([A-Za-z0-9][A-Za-z0-9-]*)/[A-Za-z0-9._-]+/?$%\3%p' |
+    tr 'A-Z' 'a-z' || true)
+fi
+if [[ -z $ORIGIN_OWNER && -z $(config_value GITHUB_OWNER) ]]; then
   add warn ci "user config ~/.config/project-standard/config.mk" "GITHUB_OWNER is not set: make ci-setup and the releases need it" \
-    "set GITHUB_OWNER := <owner> in the user config (the account that owns this project's repository)"
+    "add the project's GitHub remote origin (its owner is the project's), or set GITHUB_OWNER := <owner> in the user config"
 fi
 
 WF="$DIR/.github/workflows"

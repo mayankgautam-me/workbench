@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Shared shell helpers for secrets.sh, cf.sh and the recipes in common.mk.
 # Source it:   . "$STD_BIN/lib.sh"
@@ -41,6 +41,26 @@ paint() {
 log_info() { printf '%s %s\n' "$(paint 2 blue '>')" "$*" >&2; }
 log_ok() { printf '%s %s\n' "$(paint 2 green 'ok')" "$*" >&2; }
 log_warn() { printf '%s %s\n' "$(paint 2 yellow 'warn')" "$*" >&2; }
+
+# github_repo_slug URL   owner/name of a GitHub repository written as https://github.com/<o>/<n>[.git],
+# git@github.com:<o>/<n>[.git], ssh://git@github.com/<o>/<n>, github.com/<o>/<n> or <o>/<n>; prints nothing for
+# anything else (a local path, another host). The secrets repo's SECRETS_REMOTE becomes the CI variable SECRETS_REPO.
+github_repo_slug() {
+  local u="${1:-}" s
+  case "$u" in
+    https://github.com/* | http://github.com/*) s="${u#*://github.com/}" ;;
+    https://*@github.com/*) s="${u#*@github.com/}" ;;
+    ssh://git@github.com/*) s="${u#ssh://git@github.com/}" ;;
+    git@github.com:*) s="${u#git@github.com:}" ;;
+    github.com/*) s="${u#github.com/}" ;;
+    *://* | *@*:* | /* | .* | '~'*) return 0 ;;
+    *) s="$u" ;;
+  esac
+  s="${s%/}"
+  s="${s%.git}"
+  if [[ $s =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+$ ]]; then printf '%s\n' "$s"; fi
+  return 0
+}
 
 # public_dns_a HOST   the first IPv4 address of HOST in public DNS, asked over DNS-over-HTTPS (Cloudflare 1.1.1.1, then
 # Google 8.8.8.8), so this machine's own resolver and its cache play no part; empty when neither answers.
@@ -237,7 +257,7 @@ STD_HOOK_MARK='# project-standard v[0-9][0-9.]* pre-commit hook'
 install_hook_body() {
   cat <<'HOOK'
 #!/usr/bin/env bash
-# project-standard v1.7 pre-commit hook (installed by `make hooks`; fast checks only)
+# project-standard v1.8 pre-commit hook (installed by `make hooks`; fast checks only)
 set -euo pipefail
 max_mb="${STD_MAX_FILE_MB:-5}"
 limit=$((max_mb * 1024 * 1024))

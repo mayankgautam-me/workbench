@@ -508,6 +508,146 @@ printf "PRIVATE\n" >"$f"; printf "ssh-ed25519 AAAAfake%s c\n" "$RANDOM" >"$f.pub
   [ ! -f "$STUB_LOG/keygen" ]
 }
 
+# --- the project's owner and its secrets repo (1.8) ---------------------------------------------
+
+# owner_probe: secrets.sh replaced by a script that prints what make hands it; the user config of the default owner
+# (fabrolabs-innovations, with its explicit secrets remote); no SECRETS_DIR from the test environment.
+owner_probe() {
+  printf '#!/bin/bash\necho "OWNER=$GITHUB_OWNER FROM=$STD_OWNER_FROM DIR=$SECRETS_DIR REMOTE=$SECRETS_REMOTE DEF=$SECRETS_DEFAULT_DIR"\n' >make/bin/secrets.sh
+  mkdir -p "$STD_CONFIG"
+  printf 'SECRETS_REMOTE       := git@github.com:fabrolabs-innovations/secrets.git\nGITHUB_OWNER         := fabrolabs-innovations\n' >"$STD_CONFIG/config.mk"
+  unset SECRETS_DIR SECRETS_REMOTE
+}
+
+@test "owner: parsed from the git remote origin in every GitHub URL form" {
+  owner_probe
+  git init -q
+  local u
+  for u in https://github.com/mayankgautam-me/ai-trade.git https://github.com/mayankgautam-me/ai-trade \
+    git@github.com:mayankgautam-me/ai-trade.git ssh://git@github.com/mayankgautam-me/ai-trade \
+    https://token@github.com/mayankgautam-me/ai-trade.git https://github.com/MayankGautam-Me/ai-trade.git; do
+    git remote remove origin 2>/dev/null || true
+    git remote add origin "$u"
+    run make secrets-list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OWNER=mayankgautam-me FROM=origin "* ]] || { echo "$u: $output"; false; }
+  done
+  # an origin that is not on github.com is no owner: the user config's
+  git remote set-url origin https://gitlab.com/mayankgautam-me/ai-trade.git
+  run make secrets-list
+  [[ "$output" == *"OWNER=fabrolabs-innovations FROM=config "* ]]
+}
+
+@test "owner: no GitHub origin (or no git repo) falls back to the user config's owner, its ~/.secrets-<owner> and remote" {
+  owner_probe
+  run make secrets-list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"OWNER=fabrolabs-innovations FROM=config DIR=$HOME/.secrets-fabrolabs-innovations REMOTE=git@github.com:fabrolabs-innovations/secrets.git DEF=$HOME/.secrets-fabrolabs-innovations"* ]]
+  git init -q
+  run make secrets-list
+  [[ "$output" == *"OWNER=fabrolabs-innovations FROM=config DIR=$HOME/.secrets-fabrolabs-innovations "* ]]
+  # no owner at all: the config's SECRETS_DIR (legacy), else ~/.secrets, and no remote
+  printf 'SECRETS_DIR := %s/old-secrets\n' "$HOME" >"$STD_CONFIG/config.mk"
+  run make secrets-list
+  [[ "$output" == *"OWNER= FROM= DIR=$HOME/old-secrets REMOTE= DEF="* ]]
+  : >"$STD_CONFIG/config.mk"
+  run make secrets-list
+  [[ "$output" == *"OWNER= FROM= DIR=$HOME/.secrets REMOTE= DEF="* ]]
+}
+
+@test "owner: every owner gets ~/.secrets-<owner> and <owner>/secrets; the config's remote stays with its own owner" {
+  owner_probe
+  git init -q
+  git remote add origin https://github.com/mayankgautam-me/ai-trade.git
+  run make secrets-list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"OWNER=mayankgautam-me FROM=origin DIR=$HOME/.secrets-mayankgautam-me REMOTE=https://github.com/mayankgautam-me/secrets.git DEF=$HOME/.secrets-fabrolabs-innovations"* ]]
+  [[ "$output" != *"fabrolabs-innovations/secrets"* ]]
+  # the config's own owner: the same rule for the folder, and the config's remote
+  git remote set-url origin git@github.com:fabrolabs-innovations/gateway.git
+  run make secrets-list
+  [[ "$output" == *"OWNER=fabrolabs-innovations FROM=origin DIR=$HOME/.secrets-fabrolabs-innovations REMOTE=git@github.com:fabrolabs-innovations/secrets.git "* ]]
+  # a config SECRETS_DIR is no owner's folder: ignored while there is an owner
+  printf 'SECRETS_DIR := %s/company-secrets\n' "$HOME" >>"$STD_CONFIG/config.mk"
+  run make secrets-list
+  [[ "$output" == *"DIR=$HOME/.secrets-fabrolabs-innovations "* ]]
+  git remote set-url origin https://github.com/i2sage-technologies/x.git
+  run make secrets-list
+  [[ "$output" == *"OWNER=i2sage-technologies FROM=origin DIR=$HOME/.secrets-i2sage-technologies REMOTE=https://github.com/i2sage-technologies/secrets.git DEF=$HOME/.secrets-fabrolabs-innovations"* ]]
+}
+
+@test "owner: in GitHub Actions the repository's owner wins over the origin" {
+  owner_probe
+  git init -q
+  git remote add origin https://github.com/mayankgautam-me/ai-trade.git
+  GITHUB_REPOSITORY_OWNER=i2sage-technologies run make secrets-list
+  [[ "$output" == *"OWNER=i2sage-technologies FROM=ci "* ]]
+  GITHUB_REPOSITORY=fabrolabs-innovations/gateway run make secrets-list
+  [[ "$output" == *"OWNER=fabrolabs-innovations FROM=ci DIR=$HOME/.secrets-fabrolabs-innovations REMOTE=git@github.com:fabrolabs-innovations/secrets.git "* ]]
+  # CI's SECRETS_DIR (the environment) wins over the derived one
+  GITHUB_REPOSITORY_OWNER=i2sage-technologies SECRETS_DIR=/ci/secrets run make secrets-list
+  [[ "$output" == *"DIR=/ci/secrets REMOTE=https://github.com/i2sage-technologies/secrets.git"* ]]
+}
+
+@test "owner: SECRETS_DIR and SECRETS_REMOTE in make/project.mk win over the owner's; the environment over ?=" {
+  owner_probe
+  git init -q
+  git remote add origin https://github.com/mayankgautam-me/ai-trade.git
+  printf 'SECRETS_DIR ?= /x/own-secrets\nSECRETS_REMOTE ?= https://github.com/someone/vault.git\n' >>make/project.mk
+  run make secrets-list
+  [[ "$output" == *"OWNER=mayankgautam-me FROM=origin DIR=/x/own-secrets REMOTE=https://github.com/someone/vault.git"* ]]
+  SECRETS_DIR=/env/secrets run make secrets-list
+  [[ "$output" == *"DIR=/env/secrets REMOTE=https://github.com/someone/vault.git"* ]]
+  # := in project.mk wins over the config for the config's own owner too
+  git remote set-url origin https://github.com/fabrolabs-innovations/x.git
+  printf 'SECRETS_REMOTE := /x/remote.git\n' >>make/project.mk
+  run make secrets-list
+  [[ "$output" == *"OWNER=fabrolabs-innovations FROM=origin DIR=/x/own-secrets REMOTE=/x/remote.git"* ]]
+  # the command line wins over everything
+  run make secrets-list SECRETS_DIR=/cmd
+  [[ "$output" == *"DIR=/cmd "* ]]
+}
+
+@test "ci-setup: SECRETS_REPO and the deploy key go to the project's secrets repo, derived from its remote" {
+  owner_probe
+  git init -q
+  git remote add origin https://github.com/mayankgautam-me/demo.git
+  mkdir -p "$HOME/.ssh"
+  ci_setup_stubs
+  run make ci-setup STD_SECRETS=:
+  [ "$status" -eq 0 ]
+  grep -q 'repo deploy-key add .*demo-ci-secrets.pub --repo mayankgautam-me/secrets --title demo-ci-read-only' "$STUB_LOG/gh.calls"
+  grep -q 'variable set SECRETS_REPO --repo mayankgautam-me/demo --body mayankgautam-me/secrets' "$STUB_LOG/gh.calls"
+  run grep -c 'fabrolabs-innovations' "$STUB_LOG/gh.calls"
+  [ "$output" = 0 ]
+  run make ci-setup-help
+  [[ "$output" == *"--repo mayankgautam-me/secrets --title demo-ci-read-only"* ]]
+  [[ "$output" == *"gh variable set SECRETS_REPO --repo mayankgautam-me/demo --body mayankgautam-me/secrets"* ]]
+  # an explicit remote in project.mk: its owner/name
+  printf 'SECRETS_REMOTE ?= git@github.com:someone/vault.git\n' >>make/project.mk
+  run make ci-setup STD_SECRETS=:
+  [ "$status" -eq 0 ]
+  grep -q 'variable set SECRETS_REPO --repo mayankgautam-me/demo --body someone/vault' "$STUB_LOG/gh.calls"
+  # a remote that is not on GitHub cannot be cloned by CI
+  printf 'SECRETS_REMOTE := /x/remote.git\n' >>make/project.mk
+  run make ci-setup STD_SECRETS=:
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"is not a GitHub repository"* ]]
+}
+
+@test "github_repo_slug reads owner/name from the GitHub URL forms only" {
+  . make/bin/lib.sh
+  [ "$(github_repo_slug https://github.com/a-b/secrets.git)" = a-b/secrets ]
+  [ "$(github_repo_slug https://github.com/a-b/secrets)" = a-b/secrets ]
+  [ "$(github_repo_slug git@github.com:a-b/secrets.git)" = a-b/secrets ]
+  [ "$(github_repo_slug ssh://git@github.com/a-b/secrets)" = a-b/secrets ]
+  [ "$(github_repo_slug github.com/a-b/secrets)" = a-b/secrets ]
+  [ "$(github_repo_slug a-b/secrets)" = a-b/secrets ]
+  [ -z "$(github_repo_slug /tmp/remote.git)" ]
+  [ -z "$(github_repo_slug https://gitlab.com/a/b.git)" ]
+  [ -z "$(github_repo_slug '')" ]
+}
+
 # --- hooks -------------------------------------------------------------------------------------
 
 @test "hooks: installs a pre-commit hook that blocks files over 5 MB" {
