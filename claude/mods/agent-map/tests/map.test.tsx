@@ -111,8 +111,9 @@ test('the toggle and the panel are for a project with a PLAN.md; without one, /m
   const clock = mock.clock(on)
   const asked: string[] = []
   on('prompt.submit', async (_$, e) => {
-    asked.push(String((e as { text?: string }).text))
-    return {} as never
+    const text = String((e as { text?: string }).text)
+    asked.push(text)
+    return { text } as never
   })
 
   const band = async () => {

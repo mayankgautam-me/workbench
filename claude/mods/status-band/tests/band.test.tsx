@@ -176,7 +176,6 @@ test('the toggle folds the band to one line and opens it again, and the choice i
   mock.store(on)
   on('session.measure', async (_$, e) => ({ changed: e.changed }))
   on('clock.now', async () => ({ value: Date.now() }) as never)
-  on('ui.press', async () => ({}) as never)
   await $.session.measure({
     context: { window: 200_000, tokens: 84_000, percent: 42 },
     rateLimits: [{ kind: 'five_hour', percentUsed: 18 }, { kind: 'seven_day', percentUsed: 93 }],

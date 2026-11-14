@@ -76,6 +76,7 @@ needs: [settings]
 - [x] The band follows its width: shorter detail when medium, two rows of two with short labels when narrow {#band-responsive}
 - [x] The folded band follows its width too: short labels, then no bars, then figures that wrap instead of being cut {#band-folded-responsive}
 - [x] The same gap as the git graph and the map: two cells across, one row down, between the band's cells, rows and toggles, also where they wrap {#band-even-gaps}
+- [x] Toggle test passes again: its press mock returned `{}`, which the engine now refuses; the engine runs the press itself {#band-test-press}
 
 ## Session tint {#session-tint}
 tech: hooks module, Tokyo Night palette
@@ -143,6 +144,7 @@ links: [status-band, session-tint]
 - [x] Background tasks on the map: a background shell, monitor or workflow is a row on the session card, and on the component its command names, with how long it has run and how it ended {#map-background-tasks}
 - [x] Look at background tasks on the map in the running app, with a real background command: seen working {#map-background-verify}
 - [x] /map refresh: read PLAN.md and the project again and redraw the map, without showing or hiding it {#map-refresh}
+- [x] /map test passes again: its prompt.submit mock returned `{}`; it now returns the prompt as `{ text }` {#map-test-prompt}
 
 ## Git graph {#git-graph}
 tech: hooks module, one SVG cell per commit row
