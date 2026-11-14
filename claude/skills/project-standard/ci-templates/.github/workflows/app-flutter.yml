@@ -1,5 +1,5 @@
-# project-standard ci-templates v1.8: app-flutter (a Flutter app; Linux files per architecture, store upload by hand (TARGET from the input)).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/app-flutter.yml@v1.8.
+# project-standard ci-templates v1.0: app-flutter (a Flutter app; Linux files per architecture, store upload by hand (TARGET from the input)).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/app-flutter.yml@v1.0.
 
 on:
   workflow_call:

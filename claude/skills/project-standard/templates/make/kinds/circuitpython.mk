@@ -1,4 +1,4 @@
-# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.0 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind circuitpython: a CircuitPython part (interpreter image built in Docker, code in src/).
 #

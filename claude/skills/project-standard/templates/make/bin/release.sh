@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.0 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Versions, release notes and GitHub Releases of one part. make runs it from the project root.
 #

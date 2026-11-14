@@ -1,4 +1,4 @@
-# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.0 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind web-pages: a static site, a Vite app or a Next.js static export, served by Cloudflare Pages.
 #

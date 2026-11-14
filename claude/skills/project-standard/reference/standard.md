@@ -1,4 +1,4 @@
-# The project standard, v1.8
+# The project standard, v1.0
 
 One set of commands for every stage of work, the same in every project: firmware, boards,
 Cloudflare services, apps and containers alike. The tools stay what they are (west, idf.py, pio,
@@ -74,7 +74,7 @@ second part of a kind arrives, the first moves into its own subfolder in the sam
 that name it).
 
 "Managed" files start with the line
-`# project-standard v1.8 (managed: ...)` and are refreshed by the skill's update mode; never edit
+`# project-standard v1.0 (managed: ...)` and are refreshed by the skill's update mode; never edit
 them in a project. Your own targets go in `make/local.mk`, written like this, and show under
 "project" in `make help`:
 
@@ -788,10 +788,10 @@ of the project's repository (from stdin, never on a command line), adds the publ
 ## 6. CI/CD
 
 The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/name`, default
-`mayankgautam-me/ci-templates`), tagged `v1.8`. It is a setting of its own, independent of the project's `GITHUB_OWNER`:
+`mayankgautam-me/ci-templates`), tagged `v1.0`. It is a setting of its own, independent of the project's `GITHUB_OWNER`:
 projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.8`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.0`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -1077,6 +1077,10 @@ Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) an
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
 
+- **1.0** (2026-11-15, second restart): the version restarts at 1.0 again. `make/VERSION`, the managed files'
+  headers, the workflows' `@v1.0` and the `mayankgautam-me/ci-templates` tag all say 1.0; ci-templates' history is one
+  commit, tagged `v1.0`. 1.1 to 1.8 below (and the first 1.0) are the versions before this restart; 1.8 and this 1.0
+  have the same files.
 - **1.8** (2026-11-15): one secrets repo per GitHub owner. A project's owner is read from its git remote `origin`
   (in CI from `GITHUB_REPOSITORY_OWNER`); its secrets repo is `https://github.com/<owner>/secrets.git`, checked out at
   `~/.secrets-<owner>` for every owner, the user config's own included: move the old `~/.secrets` by hand, the

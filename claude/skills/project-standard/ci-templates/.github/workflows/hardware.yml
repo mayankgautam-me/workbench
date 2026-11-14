@@ -1,5 +1,5 @@
-# project-standard ci-templates v1.8: hardware (KiCad 10 boards through kicad-cli; the 3D models come from the KiCad library).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/hardware.yml@v1.8.
+# project-standard ci-templates v1.0: hardware (KiCad 10 boards through kicad-cli; the 3D models come from the KiCad library).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/hardware.yml@v1.0.
 
 on:
   workflow_call:

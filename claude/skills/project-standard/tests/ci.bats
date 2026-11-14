@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 bats_require_minimum_version 1.5.0
-# The reusable GitHub workflows in ci-templates/.github/workflows/ (v1.8). Parsed with PyYAML and checked on the raw
+# The reusable GitHub workflows in ci-templates/.github/workflows/ (v1.0). Parsed with PyYAML and checked on the raw
 # text, so the comments count too. Nothing here runs a workflow: a real run needs the repo, the secrets and the runners.
 
 WF="$BATS_TEST_DIRNAME/../ci-templates/.github/workflows"
@@ -75,10 +75,10 @@ def check_names():
     for f in files:
         first = open(f).readline()
         kind = os.path.basename(f)[:-4]
-        if f"project-standard ci-templates v1.8: {kind}" not in first:
-            fails.append(f"{kind}.yml: header line does not name v1.8 and the kind")
-        if f"workflows/{kind}.yml@v1.8" not in open(f).read():
-            fails.append(f"{kind}.yml: header has no uses: line with @v1.8")
+        if f"project-standard ci-templates v1.0: {kind}" not in first:
+            fails.append(f"{kind}.yml: header line does not name v1.0 and the kind")
+        if f"workflows/{kind}.yml@v1.0" not in open(f).read():
+            fails.append(f"{kind}.yml: header has no uses: line with @v1.0")
 
 
 def check_uses():
@@ -245,7 +245,7 @@ PY
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
 
-@test "there is one workflow per kind, named for the kind, with the v1.8 header and the uses: line" {
+@test "there is one workflow per kind, named for the kind, with the v1.0 header and the uses: line" {
   run check names
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
@@ -367,19 +367,19 @@ PY
 
 @test "the README and the workflows name the public mayankgautam-me/ci-templates, with no Access step for it (1.7)" {
   README="$BATS_TEST_DIRNAME/../ci-templates/README.md"
-  grep -q 'uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.8' "$README"
+  grep -q 'uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.0' "$README"
   [ "$(grep -c '<owner>/ci-templates' "$README")" -eq 0 ]
   [ "$(grep -c 'Accessible from repositories owned by the same user' "$README")" -eq 0 ]
   grep -q 'This repository is public' "$README"
   for f in "$WF"/*.yml; do
-    grep -q "uses: mayankgautam-me/ci-templates/.github/workflows/$(basename "$f")@v1.8" "$f" ||
+    grep -q "uses: mayankgautam-me/ci-templates/.github/workflows/$(basename "$f")@v1.0" "$f" ||
       { echo "$f does not name mayankgautam-me/ci-templates"; false; }
   done
 }
 
-@test "the README documents the v1.8 call shape, the inputs, the secrets and the four variables" {
+@test "the README documents the v1.0 call shape, the inputs, the secrets and the four variables" {
   README="$BATS_TEST_DIRNAME/../ci-templates/README.md"
-  grep -q 'workflows/cloud-worker.yml@v1.8' "$README"
+  grep -q 'workflows/cloud-worker.yml@v1.0' "$README"
   for v in SECRETS_REPO KICAD_LIBRARY_REPO STD_APT_PACKAGES MACOS_CI SECRETS_DEPLOY_KEY SOPS_AGE_KEY KICAD_LIBRARY_DEPLOY_KEY; do
     grep -q "$v" "$README" || { echo "README does not mention $v"; false; }
   done

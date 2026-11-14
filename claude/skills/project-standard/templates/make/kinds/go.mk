@@ -1,4 +1,4 @@
-# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.0 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind go: a Go module with one main package (a service or a CLI).
 #

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.0 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Shared shell helpers for secrets.sh, cf.sh and the recipes in common.mk.
 # Source it:   . "$STD_BIN/lib.sh"
@@ -257,7 +257,7 @@ STD_HOOK_MARK='# project-standard v[0-9][0-9.]* pre-commit hook'
 install_hook_body() {
   cat <<'HOOK'
 #!/usr/bin/env bash
-# project-standard v1.8 pre-commit hook (installed by `make hooks`; fast checks only)
+# project-standard v1.0 pre-commit hook (installed by `make hooks`; fast checks only)
 set -euo pipefail
 max_mb="${STD_MAX_FILE_MB:-5}"
 limit=$((max_mb * 1024 * 1024))

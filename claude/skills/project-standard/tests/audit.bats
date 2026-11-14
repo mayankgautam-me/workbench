@@ -6,7 +6,7 @@ if [[ -f "$BATS_TEST_DIRNAME/helpers.bash" ]]; then
   load helpers
 fi
 
-SA_HEADER='# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)'
+SA_HEADER='# project-standard v1.0 (managed: refresh with the project-standard skill, put project changes in make/local.mk)'
 SA_KINDS="zephyr espidf pio arm-gcc circuitpython hardware cloud-worker web-pages app-flutter app-tauri app-xcode app-android docker go python"
 
 setup() {
@@ -96,7 +96,7 @@ EOF
   run "$(sa_skill_copy)/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -eq 0 ]
-  [[ $output == *"standard v1.8"* ]]
+  [[ $output == *"standard v1.0"* ]]
   [[ $output == *clean* ]]
 }
 
@@ -475,14 +475,14 @@ sa_git_lfs() {
   sa_fresh "$d"
   ci="$d/.github/workflows/checks.yml"
   sed -i.bak -e 's|actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1|actions/checkout@v7|' "$ci"
-  sed -i.bak -e 's|zephyr.yml@v1.8|zephyr.yml@v8|' "$ci"
+  sed -i.bak -e 's|zephyr.yml@v1.0|zephyr.yml@v8|' "$ci"
   printf '      - uses: some-org/deploy-tool@v1\n' >>"$ci"
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -eq 1 ]
   [[ $output == *"error    ci        .github/workflows/checks.yml: uses some-org/deploy-tool@v1: a third-party action"* ]]
   [[ $output == *"uses actions/checkout@v7: not pinned by a full commit SHA"* ]]
-  [[ $output == *"uses mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v8: the skill is at v1.8"* ]]
+  [[ $output == *"uses mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v8: the skill is at v1.0"* ]]
 }
 
 @test "audit: a reusable workflow with no @version is an error, and one from another owner is a warning" {
@@ -490,7 +490,7 @@ sa_git_lfs() {
   d="$BATS_TEST_TMPDIR/nover"
   sa_fresh "$d"
   ci="$d/.github/workflows/checks.yml"
-  sed -i.bak -e 's|zephyr.yml@v1.8|zephyr.yml|' -e 's|mayankgautam-me/ci-templates/.github/workflows/go|other-owner/ci-templates/.github/workflows/go|' "$ci"
+  sed -i.bak -e 's|zephyr.yml@v1.0|zephyr.yml|' -e 's|mayankgautam-me/ci-templates/.github/workflows/go|other-owner/ci-templates/.github/workflows/go|' "$ci"
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -508,7 +508,7 @@ sa_git_lfs() {
   sed -i.bak -e 's|mayankgautam-me/ci-templates/|fabrolabs-innovations/ci-templates/|' "$ci"
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
-  [[ $output == *"warn     ci        .github/workflows/checks.yml: uses fabrolabs-innovations/ci-templates/.github/workflows/zephyr.yml@v1.8: outdated, the CI templates are mayankgautam-me/ci-templates (CI_TEMPLATES_REPO), not fabrolabs-innovations/ci-templates"* ]]
+  [[ $output == *"warn     ci        .github/workflows/checks.yml: uses fabrolabs-innovations/ci-templates/.github/workflows/zephyr.yml@v1.0: outdated, the CI templates are mayankgautam-me/ci-templates (CI_TEMPLATES_REPO), not fabrolabs-innovations/ci-templates"* ]]
   [[ $output == *"change the uses lines to mayankgautam-me/ci-templates"* ]]
   [[ $output != *"release.yml: uses fabrolabs-innovations"* ]]
   # the project's CI_TEMPLATES_REPO makes that repo the right one, and the other file's lines outdated
