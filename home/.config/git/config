@@ -1,6 +1,6 @@
 [user]
 	name = Mayank Gautam
-	email = me@mayankgautam.me
+	email = contact@mayankgautam.me
 
 # Work folders commit with the work address; each file sets user.email only.
 [includeIf "gitdir:~/Projects/Fabrolabs/"]

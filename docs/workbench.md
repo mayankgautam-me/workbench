@@ -67,7 +67,7 @@ this repo (`claude-code-setup`), whose Claude files become one part of it. Agree
 
 ## Git and SSH
 
-- `~/.config/git/config`: name, `me@mayankgautam.me`, git-lfs, gh credential helper,
+- `~/.config/git/config`: name, `contact@mayankgautam.me`, git-lfs, gh credential helper,
   `includeIf "gitdir:~/Projects/Fabrolabs/"` and `"gitdir:~/Projects/I2Sage/"` to the tracked
   per-org files with the work emails (Fabrolabs: `mayank.gautam@fabrolabs.com`,
   I2Sage: `mayank.gautam@i2sage.in`). Sourcetree entries, the commit template and absolute
