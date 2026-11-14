@@ -193,7 +193,7 @@ cpy_doctor = $(STD_FW_SH) say "$(1): circuitpython $($(1)_CP_VERSION), board $($
   if [ -f "$(CURDIR)/$($(1)_DOCKERFILE)" ]; then ok "$($(1)_DOCKERFILE)"; else bad "no $($(1)_DOCKERFILE)"; fi; \
   if have docker && docker image inspect "$($(1)_IMAGE)" >/dev/null 2>&1; then ok "image $($(1)_IMAGE)"; else warn "image $($(1)_IMAGE) not built: make $(1)-setup"; fi; \
   if [ -n "$($(1)_BOARD)" ]; then ok "board $($(1)_BOARD)"; else bad "no board: set $(1)_BOARD"; fi; \
-  if [ -d "$(CURDIR)/$(2)/src" ]; then ok "$(2)/src"; else bad "no $(2)/src"; fi; \
+  $(call std_doctor_started,$(1),$(2)) \
   if [ "$($(1)_P)" = esptool ]; then if have esptool || have esptool.py; then ok "esptool"; else bad "esptool: brew install esptool"; fi; fi; \
   if [ -d "$($(1)_VOLUME)" ]; then ok "$($(1)_VOLUME) mounted"; else warn "$($(1)_VOLUME) not mounted (needed by make $(1)-deploy)"; fi; \
   $(std_fw_ports_check) \
@@ -229,6 +229,9 @@ cpy_release_assets = $(STD_FW_SH) $(call cpy_need_board,$(1)) $(call std_rel_beg
 # `make <part>-deploy` copies the code; it is an extra, so `make deploy` (cloud) never touches a board.
 
 define kind_circuitpython
+# the part is started once its folder has src (its code) (std_started in common.mk): until then setup, check and build
+# skip it and flash and release refuse
+$(1)_START ?= src
 $(1)_BOARD ?=
 $(1)_CP_VERSION ?= 10.3.1
 $(1)_CP_PORT ?= espressif
@@ -259,7 +262,7 @@ $(1)-doctor:
 
 $(call std_verb,$(1),setup,firmware,Build the Docker image that builds CircuitPython $$($(1)_CP_VERSION) and REBUILD=1 to redo it)
 $(1)-setup:
-	@$$(call cpy_setup,$(1),$(2))
+	@$$(call std_skip_unstarted,$(1),$(2),setup) $$(call cpy_setup,$(1),$(2))
 
 # The build runs in the image setup builds: it builds the image first when it is missing (std_ready in common.mk).
 # flash, release and release-assets build through it.
@@ -267,15 +270,15 @@ $(call std_ready,$(1),$(2),cpy_ready,build)
 
 $(call std_verb,$(1),check,firmware,Lint the code in $(2)/src with ruff or a python syntax check)
 $(1)-check:
-	@$$(call cpy_check,$(1),$(2))
+	@$$(call std_skip_unstarted,$(1),$(2),check) $$(call cpy_check,$(1),$(2))
 
 $(call std_verb,$(1),build,firmware,Build the CircuitPython image for $$($(1)_BOARD) in Docker into $(2)/build)
 $(1)-build:
-	@$$(call cpy_build,$(1),$(2))
+	@$$(call std_skip_unstarted,$(1),$(2),build) $$(call cpy_build,$(1),$(2))
 
 $(call std_verb,$(1),flash,firmware,Flash the CircuitPython image with esptool or uf2 and NOBUILD=1 to skip the build)
 $(1)-flash: $$(if $$(NOBUILD),,$(1)-build)
-	@$$(call cpy_flash,$(1),$(2))
+	@$$(call std_refuse_unstarted,$(1),$(2),flash) $$(call cpy_flash,$(1),$(2))
 
 $(call std_verb,$(1),erase,firmware,Erase the whole flash and CIRCUITPY with it and needs CONFIRM=erase)
 $(1)-erase:
@@ -298,7 +301,7 @@ $(1)-release:
 	@if [ -z "$$(strip $$($(1)_OTA_BUCKET))" ]; then echo "> $(1): no OTA bucket (no Cloudflare in this project): firmware publish skipped"; exit 0; fi; if $$(call std_fw_tag_ok,$(1)); then $$(MAKE) --no-print-directory $(1)-release-run; else echo "$(1): tag $$$$CI_COMMIT_TAG is not a $(1) release, nothing to do"; fi
 
 $(1)-release-run:
-	@$$(std_production_guard) && { $$(std_fw_remote_env); } && $$(if $$(NOBUILD),true,$$(MAKE) --no-print-directory $(1)-build) && { $$(call cpy_release,$(1),$(2)); }
+	@$$(call std_refuse_unstarted,$(1),$(2),release) $$(std_production_guard) && { $$(std_fw_remote_env); } && $$(if $$(NOBUILD),true,$$(MAKE) --no-print-directory $(1)-build) && { $$(call cpy_release,$(1),$(2)); }
 
 $(call std_verb,$(1),version,release,Code version from $(2)/VERSION)
 

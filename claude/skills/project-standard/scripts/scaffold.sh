@@ -162,7 +162,7 @@ kind_ignore() {
     circuitpython) printf '%s\n' '__pycache__/' ;;
     hardware) printf '%s\n' 'outputs/' '*-backups/' '_autosave-*' '*.lck' 'fp-info-cache' '*.kicad_prl' ;;
     cloud-worker) printf '%s\n' 'node_modules/' '.wrangler/' 'dist/' ;;
-    web-pages) printf '%s\n' 'node_modules/' '.wrangler/' 'dist/' '.svelte-kit/' 'vite.config.*.timestamp-*' ;;
+    web-pages) printf '%s\n' 'node_modules/' '.wrangler/' 'dist/' '.svelte-kit/' '.astro/' 'vite.config.*.timestamp-*' ;;
     app-flutter) printf '%s\n' '.dart_tool/' '.flutter-plugins' '.flutter-plugins-dependencies' 'build/' 'Pods/' ;;
     app-tauri) printf '%s\n' 'node_modules/' 'dist/' 'src-tauri/target/' 'src-tauri/gen/' '.svelte-kit/' 'vite.config.*.timestamp-*' ;;
     app-xcode) printf '%s\n' 'DerivedData/' 'xcuserdata/' '*.xcuserstate' 'build/' ;;
@@ -1107,7 +1107,7 @@ web_wrangler() {
   [[ -e "$DEST/$d/wrangler.jsonc" || -e "$DEST/$d/wrangler.json" ]] && return 0
   today=$(date +%Y-%m-%d)
   out=./public
-  if compgen -G "$DEST/$d/next.config.*" >/dev/null; then out=./out; elif compgen -G "$DEST/$d/vite.config.*" >/dev/null; then out=./dist; fi
+  if compgen -G "$DEST/$d/next.config.*" >/dev/null; then out=./out; elif compgen -G "$DEST/$d/astro.config.*" >/dev/null || compgen -G "$DEST/$d/vite.config.*" >/dev/null; then out=./dist; fi
   if is_pages "$p"; then
     write_file "$DEST/$d/wrangler.jsonc" <<EOF
 {

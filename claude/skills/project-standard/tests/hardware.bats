@@ -347,3 +347,34 @@ KICAD_PREFS_ROOT := $R/kicad-root"
   echo "$output"
   [[ "$output" == *"library $LIB (from KICAD_LIBRARY_DIR)"* ]]
 }
+
+@test "a hardware part not started yet (no .kicad_pro): check and build skip with exit 0, doctor warns, release refuses" {
+  hwproject
+  mkdir -p hardware
+  echo 1 >hardware/VERSION
+  run make hardware-check
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"> hardware: not started yet (no *.kicad_pro in hardware): check skipped"* ]]
+  run make hardware-build
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"> hardware: not started yet (no *.kicad_pro in hardware): build skipped"* ]]
+  [ ! -f "$STUB_LOG/kicad-cli.argv" ] || [[ "$(argv kicad-cli)" != *$'erc\n'* && "$(argv kicad-cli)" != *$'export\n'* ]]
+  # the root check fans out to it and passes too
+  run make check
+  [ "$status" -eq 0 ]
+  run make hardware-doctor
+  [[ "$output" == *"warn"*"hardware: not started yet (no *.kicad_pro in hardware)"* ]]
+  [[ "$output" != *"miss"*"kicad_pro"* ]]
+  run make hardware-release-assets
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"hardware: not started yet (no *.kicad_pro in hardware): nothing to release"* ]]
+  [ ! -d hardware/release ]
+  run make hardware-release-assets NOBUILD=1
+  [ "$status" -ne 0 ]
+  # once a board is there, check runs ERC and DRC again
+  mkboard
+  run make hardware-check
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"not started yet"* ]]
+  [[ "$(argv kicad-cli)" == *$'sch\nerc\n'* ]]
+}

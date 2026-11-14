@@ -64,6 +64,19 @@ esac
 EOF
   chmod +x "$P/make/bin/secrets.sh"
   cd "$P"
+  # each part started (std_started): the file its kind builds from, so its targets run; arm-gcc and circuitpython
+  # tests write their own (CMakeLists.txt or Makefile picks the build system). FW_EMPTY=1 leaves the parts empty.
+  local spec name kind dir
+  if [ "${FW_EMPTY:-}" != 1 ]; then
+    for spec in $1; do
+      IFS=: read -r name kind dir <<<"$spec"
+      dir="${dir:-$name}"
+      case "$kind" in
+        zephyr | espidf) mkdir -p "$dir"; [ -e "$dir/CMakeLists.txt" ] || : >"$dir/CMakeLists.txt" ;;
+        pio) mkdir -p "$dir"; [ -e "$dir/platformio.ini" ] || : >"$dir/platformio.ini" ;;
+      esac
+    done
+  fi
 }
 
 argv() { cat "$STUB_LOG/$1.argv" 2>/dev/null; }
@@ -861,4 +874,50 @@ cpy_VOLUME := $BATS_TEST_TMPDIR/CIRCUITPY"
   run make -n mcu-build
   [[ "$output" != *"not set up yet"* ]]
   [[ "$output" != *"mcu-setup"* ]]
+}
+
+@test "a zephyr part not started yet (no CMakeLists.txt): setup, check and build skip with exit 0 and run no west; flash and release refuse" {
+  FW_EMPTY=1 zephyr_proj
+  [ ! -e firmware/CMakeLists.txt ]
+  # not set up either: a started part would run setup first (std_ready), this one does not
+  rm -f "$STD_TOOLCHAINS/ncs-v3.2.1/.std-updated"
+  for v in setup check build; do
+    run make "firmware-$v"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"> firmware: not started yet (no CMakeLists.txt in firmware): $v skipped"* ]]
+    [[ "$output" != *"not set up yet"* ]]
+  done
+  [ ! -f "$STUB_LOG/west.argv" ]
+  run make firmware-doctor
+  [[ "$output" == *"warn"*"firmware: not started yet (no CMakeLists.txt in firmware)"* ]]
+  run make firmware-flash
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"firmware: not started yet (no CMakeLists.txt in firmware): nothing to flash"* ]]
+  run make firmware-release ENV=staging
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"nothing to release"* ]]
+  run make firmware-release-assets
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"firmware: not started yet (no CMakeLists.txt in firmware): nothing to release"* ]]
+  [ ! -f "$STUB_LOG/west.argv" ] && [ ! -f "$STUB_LOG/npx.argv" ] && [ ! -d firmware/release ]
+}
+
+@test "the other firmware kinds skip check, test and build of a part not started yet and refuse its flash" {
+  FW_EMPTY=1 fwproject 'esp:espidf fw:pio iface:arm-gcc cpy:circuitpython' 'cpy_BOARD := adafruit_feather_esp32s3'
+  rm -f "$P/fw/platformio.ini"
+  for p in esp:CMakeLists.txt fw:platformio.ini "iface:CMakeLists.txt or Makefile" cpy:src; do
+    part="${p%%:*}" what="${p#*:}"
+    for v in check build; do
+      run make "$part-$v"
+      [ "$status" -eq 0 ]
+      [[ "$output" == *"> $part: not started yet (no $what in $part): $v skipped"* ]]
+    done
+    run make "$part-flash" NOBUILD=1
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"$part: not started yet (no $what in $part): nothing to flash"* ]]
+  done
+  run make fw-test
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"> fw: not started yet (no platformio.ini in fw): test skipped"* ]]
+  for t in idf.py pio cmake arm-none-eabi-gcc docker; do [ ! -f "$STUB_LOG/$t.argv" ] || { echo "$t ran"; false; }; done
 }

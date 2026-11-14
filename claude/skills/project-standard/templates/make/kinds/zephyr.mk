@@ -248,6 +248,7 @@ zephyr_doctor = $(STD_FW_SH) say "$(1): zephyr, NCS $($(1)_NCS), Zephyr SDK $($(
   if [ -f "$($(1)_NCS_DIR)/zephyr/zephyr-env.sh" ]; then ok "NCS $($(1)_NCS_DIR)"; else bad "NCS $($(1)_NCS) missing: make $(1)-setup"; fi; \
   if [ -x "$($(1)_NCS_DIR)/.venv/bin/west" ] || have west; then ok "west"; else bad "west missing: make $(1)-setup"; fi; \
   if [ -d "$($(1)_SDK_DIR)" ] || [ -d "$${ZEPHYR_SDK_INSTALL_DIR:-/nonexistent}" ]; then ok "Zephyr SDK $($(1)_ZEPHYR_SDK)"; else bad "Zephyr SDK $($(1)_ZEPHYR_SDK) missing: make $(1)-setup"; fi; \
+  $(call std_doctor_started,$(1),$(2)) \
   if [ -n "$($(1)_B)" ]; then ok "board $($(1)_B)"; else bad "no board: set $(1)_BOARD in make/project.mk"; fi; \
   case "$($(1)_P)" in \
     probe-rs) if have probe-rs; then ok "probe-rs"; else bad "probe-rs: brew install probe-rs-tools"; fi; \
@@ -359,6 +360,9 @@ zephyr_release_assets = $(STD_FW_SH) $(call zephyr_need_build,$(1)) $(call std_r
 # <dir>/tests with native_sim on Linux.
 
 define kind_zephyr
+# the part is started once its folder has its CMakeLists.txt (std_started in common.mk): until then setup, check and build
+# skip it and flash and release refuse
+$(1)_START ?= CMakeLists.txt
 $(1)_NCS ?= v3.2.1
 $(1)_ZEPHYR_SDK ?= 0.17.4
 $(1)_SDK_TOOLCHAINS ?= arm-zephyr-eabi
@@ -401,7 +405,7 @@ $(1)-doctor:
 
 $(call std_verb,$(1),setup,firmware,Install NCS $$($(1)_NCS) and Zephyr SDK $$($(1)_ZEPHYR_SDK) into $$(STD_TOOLCHAINS) shared)
 $(1)-setup:
-	@$$(call zephyr_setup,$(1),$(2))
+	@$$(call std_skip_unstarted,$(1),$(2),setup) $$(call zephyr_setup,$(1),$(2))
 
 # The commands that run west or the Zephyr SDK set up the pinned NCS and SDK first when they are not ready (std_ready
 # in common.mk). release, release-assets and provision build or flash through the targets below.
@@ -415,16 +419,16 @@ $(call std_verb,$(1),check,firmware,Build with warnings as errors and run native
 # -Werror through EXTRA_CFLAGS reaches Zephyr and the app, not the images built on their own: with
 # CONFIG_COMPILER_WARNINGS_AS_ERRORS, NCS also passes -Werror to TF-M (every /ns board), whose own sources warn (v21).
 $(1)-check:
-	@$$(call zephyr_west_build,$(1),$(2),$$($(1)_CHECK_BUILD),,-DEXTRA_CFLAGS=-Werror)
-	@$$(call zephyr_twister,$(1),$(2))
+	@$$(call std_skip_unstarted,$(1),$(2),check) $$(call zephyr_west_build,$(1),$(2),$$($(1)_CHECK_BUILD),,-DEXTRA_CFLAGS=-Werror)
+	@$$(call std_started,$(1),$(2)) || exit 0; $$(call zephyr_twister,$(1),$(2))
 
 $(call std_verb,$(1),build,firmware,Signed sysbuild build for $$($(1)_B) into $(2)/build)
 $(1)-build:
-	@$$(call zephyr_west_build,$(1),$(2),$$($(1)_BUILD),1,)
+	@$$(call std_skip_unstarted,$(1),$(2),build) $$(call zephyr_west_build,$(1),$(2),$$($(1)_BUILD),1,)
 
 $(call std_verb,$(1),flash,firmware,Build then flash with PROBE= probe-rs jlink openocd or nrfutil and NOBUILD=1 to skip the build)
 $(1)-flash: $$(if $$(NOBUILD),,$(1)-build)
-	@$$(call zephyr_flash,$(1),$(2))
+	@$$(call std_refuse_unstarted,$(1),$(2),flash) $$(call zephyr_flash,$(1),$(2))
 
 $(call std_verb,$(1),erase,firmware,Erase the whole chip and needs CONFIRM=erase)
 $(1)-erase:
@@ -463,7 +467,7 @@ $(1)-release:
 	@if [ -z "$$(strip $$($(1)_OTA_BUCKET))" ]; then echo "> $(1): no OTA bucket (no Cloudflare in this project): firmware publish skipped"; exit 0; fi; if $$(call std_fw_tag_ok,$(1)); then $$(MAKE) --no-print-directory $(1)-release-run; else echo "$(1): tag $$$$CI_COMMIT_TAG is not a $(1) release, nothing to do"; fi
 
 $(1)-release-run:
-	@$$(std_production_guard) && { $$(std_fw_remote_env); } && $$(if $$(NOBUILD),true,$$(MAKE) --no-print-directory $(1)-build) && { $$(call zephyr_release,$(1),$(2)); }
+	@$$(call std_refuse_unstarted,$(1),$(2),release) $$(std_production_guard) && { $$(std_fw_remote_env); } && $$(if $$(NOBUILD),true,$$(MAKE) --no-print-directory $(1)-build) && { $$(call zephyr_release,$(1),$(2)); }
 
 $(call std_verb,$(1),version,release,Firmware version from $(2)/VERSION)
 

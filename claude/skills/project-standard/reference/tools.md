@@ -20,6 +20,11 @@ Rules that hold for every kind:
 - A part's commands run its `setup` first when the part is not ready (a millisecond check of files; `standard.md` 4.1,
   Setup on demand): `> <part>: not set up yet, running make <part>-setup first`. setup, doctor, clean, distclean,
   version and bump never do, and nothing that needs you is chained.
+- A firmware or hardware part with nothing in its folder yet is not started (`standard.md` 4.1, Parts not started
+  yet): its setup, check, test and build (hardware: check and build) print `> <part>: not started yet (no <file> in <dir>): <verb> skipped` and
+  exit 0, doctor warns, and flash, release, release-assets and github-release refuse. The file is `<part>_START`:
+  `*.kicad_pro` (hardware), `CMakeLists.txt` (zephyr, espidf), `platformio.ini` (pio), `CMakeLists.txt` or
+  `Makefile` (arm-gcc), `src` (circuitpython).
 - Each part also has `<dir>/README.md`, `<dir>/CHANGELOG.md` and its kind's docs in `docs/<part>/`
   (`standard.md` §1, "Documents"): the scaffold writes them once, then they are the project's.
 - Releases that upload OTA images (firmware kinds, app-android, app-tauri `CHANNEL=ota`) use `OTA_BUCKET` from
@@ -158,8 +163,8 @@ never what is meant.
 | doctor | Checks kicad-cli, the library path variables and iBOM; warns when KiCad has the board open |
 | setup | Checks KiCad's library tables and path variables against `KICAD_LIBRARY_DIR` (unset: the library KiCad's `<prefix>_LIB_DIR` points at, from the `kicad_common.json` of the installed major); `APPLY=1` adds what is missing (after a backup) |
 | new *extra* | Starts a board from the template, `NAME=`, `LAYERS=2\|4`, with JLCPCB design rules and stackup |
-| check | ERC, and DRC with schematic parity; fails on violations |
-| build | Gerbers, drill, positions, BOM, schematic PDF, STEP, WRL and the iBOM into `outputs/` |
+| check | ERC, and DRC with schematic parity; fails on violations. No `*.kicad_pro` yet: `> <part>: not started yet (no *.kicad_pro in <dir>): check skipped`, exit 0 |
+| build | Gerbers, drill, positions, BOM, schematic PDF, STEP, WRL and the iBOM into `outputs/`. No `*.kicad_pro` yet: skipped the same way; release refuses |
 | ibom *extra* | Interactive HTML BOM into `outputs/` |
 | render *extra* | 3D renders of top and bottom into `outputs/` |
 | bom *extra* | Hands sourcing and pricing to the `bom` skill |
@@ -211,14 +216,19 @@ wipe and destroy. Every other binding (Durable Objects, `send_email`, Workers AI
 Workflows, Containers, service bindings, Access) is passed to wrangler on deploy and is not provisioned,
 checked or backed up.
 
-### web-pages: static, Vite or Next export sites (a static-assets Worker on its custom domain; Pages when asked for)
+### web-pages: static, Astro, Vite or Next export sites (a static-assets Worker on its custom domain; Pages when asked for)
+
+The framework comes from the part's files: `astro.config.mjs`/`.js`/`.ts`/`.cjs` is Astro, `next.config.*` Next,
+`vite.config.*` Vite, anything else static. The output folder (`<part>_OUT`) defaults to `<dir>/dist` for Astro and
+Vite, `<dir>/out` for Next, `<dir>` for a static site. Package binaries run through `pnpm exec` with a
+`pnpm-lock.yaml`, else `npx --no-install`.
 
 | Target | What it does |
 |---|---|
 | setup | Installs the site packages |
-| dev | Framework dev server, or `wrangler pages dev`, on the part's port |
-| check / test / format | Lint, typecheck, vitest; biome formatting |
-| build | Framework build, or copies the static files into the output folder |
+| dev | Framework dev server (Astro: `astro dev --port <port> --strictPort`), or `wrangler pages dev`, on the part's port |
+| check / test / format | Astro: `astro check` when `@astrojs/check` is in the part's `package.json` (else a note that it is skipped); then lint, typecheck, vitest; biome formatting |
+| build | Framework build (Astro: `astro build` into `dist/`), or copies the static files into the output folder |
 | deploy | check, build, `wrangler pages deploy` to the staging preview branch or to production, then smoke. With a `wrangler.jsonc` without `pages_build_output_dir` in the part dir the site is a static-assets Worker instead: `wrangler deploy --env $ENV` from the part dir (its custom domain the only address with `workers_dev` and `preview_urls` off), and provision has nothing to create. In CI: staging on a push to main, production on the part's tag. A production-only site (`scaffold.sh --production-only`) has no staging CI job |
 | smoke / test-remote | Health path and `tests/smoke` / `tests/remote` against `ENV` |
 | provision *extra* | Creates the Pages project for `ENV` when missing |

@@ -30,11 +30,17 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Get the Git LFS cache key before anything builds
+        id: lfs-key
+        shell: bash
+        env:
+          KEY: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Git LFS objects of this part
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .git/lfs
-          key: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+          key: ${{ steps.lfs-key.outputs.key }}
           restore-keys: |
             lfs-${{ inputs.part }}-
       - name: Get the Git LFS files of this part only
@@ -92,6 +98,12 @@ jobs:
           echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
           export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
           mise install
+      - name: Get the Cargo and pnpm cache key before anything builds
+        id: cargo-key
+        shell: bash
+        env:
+          KEY: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Cargo, Rust target and pnpm caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -101,7 +113,7 @@ jobs:
             ${{ inputs.part_dir }}/src-tauri/target
             ~/.local/share/pnpm/store
             ~/AppData/Local/pnpm/store
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+          key: ${{ steps.cargo-key.outputs.key }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-
       - name: Install dependencies (no CI key)
@@ -123,11 +135,17 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Get the Git LFS cache key before anything builds
+        id: lfs-key
+        shell: bash
+        env:
+          KEY: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Git LFS objects of this part
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .git/lfs
-          key: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+          key: ${{ steps.lfs-key.outputs.key }}
           restore-keys: |
             lfs-${{ inputs.part }}-
       - name: Get the Git LFS files of this part only
@@ -185,6 +203,12 @@ jobs:
           echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
           export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
           mise install
+      - name: Get the Cargo and pnpm cache key before anything builds
+        id: cargo-key
+        shell: bash
+        env:
+          KEY: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Cargo, Rust target and pnpm caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -194,7 +218,7 @@ jobs:
             ${{ inputs.part_dir }}/src-tauri/target
             ~/.local/share/pnpm/store
             ~/AppData/Local/pnpm/store
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+          key: ${{ steps.cargo-key.outputs.key }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-
       - name: Install dependencies (no CI key)
@@ -236,11 +260,17 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Get the Git LFS cache key before anything builds
+        id: lfs-key
+        shell: bash
+        env:
+          KEY: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Git LFS objects of this part
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .git/lfs
-          key: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+          key: ${{ steps.lfs-key.outputs.key }}
           restore-keys: |
             lfs-${{ inputs.part }}-
       - name: Get the Git LFS files of this part only
@@ -298,6 +328,12 @@ jobs:
           echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
           export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
           mise install
+      - name: Get the Cargo and pnpm cache key before anything builds
+        id: cargo-key
+        shell: bash
+        env:
+          KEY: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Cargo, Rust target and pnpm caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -307,7 +343,7 @@ jobs:
             ${{ inputs.part_dir }}/src-tauri/target
             ~/.local/share/pnpm/store
             ~/AppData/Local/pnpm/store
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+          key: ${{ steps.cargo-key.outputs.key }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-
       - name: Install dependencies (no CI key)
@@ -351,11 +387,17 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Get the Git LFS cache key before anything builds
+        id: lfs-key
+        shell: bash
+        env:
+          KEY: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Git LFS objects of this part
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .git/lfs
-          key: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+          key: ${{ steps.lfs-key.outputs.key }}
           restore-keys: |
             lfs-${{ inputs.part }}-
       - name: Get the Git LFS files of this part only
@@ -413,6 +455,12 @@ jobs:
           echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
           export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
           mise install
+      - name: Get the Cargo and pnpm cache key before anything builds
+        id: cargo-key
+        shell: bash
+        env:
+          KEY: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Cargo, Rust target and pnpm caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -422,7 +470,7 @@ jobs:
             ${{ inputs.part_dir }}/src-tauri/target
             ~/.local/share/pnpm/store
             ~/AppData/Local/pnpm/store
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+          key: ${{ steps.cargo-key.outputs.key }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-
       - name: Install dependencies (no CI key)
@@ -479,6 +527,12 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value "$env:ProgramData\chocolatey\bin"
           Add-Content -Path $env:GITHUB_PATH -Value "$env:USERPROFILE\.cargo\bin"
           Add-Content -Path $env:GITHUB_PATH -Value (npm prefix -g)
+      - name: Get the Cargo and pnpm cache key before anything builds
+        id: cargo-key
+        shell: bash
+        env:
+          KEY: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Cargo, Rust target and pnpm caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -488,7 +542,7 @@ jobs:
             ${{ inputs.part_dir }}/src-tauri/target
             ~/.local/share/pnpm/store
             ~/AppData/Local/pnpm/store
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+          key: ${{ steps.cargo-key.outputs.key }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-
       - name: Install dependencies (no CI key)
@@ -561,6 +615,12 @@ jobs:
             $p = Start-Process -Wait -PassThru "$vsi\vs_installer.exe" -ArgumentList "modify --installPath `"$vs`" --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --quiet --norestart --nocache"
             if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { Write-Error "VS ARM64 tools: installer exit $($p.ExitCode)"; exit 1 }
           }
+      - name: Get the Cargo and pnpm cache key before anything builds
+        id: cargo-key
+        shell: bash
+        env:
+          KEY: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Cargo, Rust target and pnpm caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -570,7 +630,7 @@ jobs:
             ${{ inputs.part_dir }}/src-tauri/target
             ~/.local/share/pnpm/store
             ~/AppData/Local/pnpm/store
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+          key: ${{ steps.cargo-key.outputs.key }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-
       - name: Install dependencies (no CI key)
@@ -598,11 +658,17 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Get the Git LFS cache key before anything builds
+        id: lfs-key
+        shell: bash
+        env:
+          KEY: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Git LFS objects of this part
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .git/lfs
-          key: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+          key: ${{ steps.lfs-key.outputs.key }}
           restore-keys: |
             lfs-${{ inputs.part }}-
       - name: Get the Git LFS files of this part only
@@ -656,6 +722,12 @@ jobs:
           echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
           export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
           mise install
+      - name: Get the Cargo and pnpm cache key before anything builds
+        id: cargo-key
+        shell: bash
+        env:
+          KEY: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Cargo, Rust target and pnpm caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -665,7 +737,7 @@ jobs:
             ${{ inputs.part_dir }}/src-tauri/target
             ~/.local/share/pnpm/store
             ~/AppData/Local/pnpm/store
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+          key: ${{ steps.cargo-key.outputs.key }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-
       - name: Install dependencies (no CI key)
@@ -740,6 +812,12 @@ jobs:
       - name: Install sops and age
         shell: bash
         run: command -v sops >/dev/null 2>&1 && command -v age >/dev/null 2>&1 || mise use -g --yes sops@3 age@1
+      - name: Get the Cargo and pnpm cache key before anything builds
+        id: cargo-key
+        shell: bash
+        env:
+          KEY: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Cargo, Rust target and pnpm caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -749,7 +827,7 @@ jobs:
             ${{ inputs.part_dir }}/src-tauri/target
             ~/.local/share/pnpm/store
             ~/AppData/Local/pnpm/store
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+          key: ${{ steps.cargo-key.outputs.key }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-
       - name: Install dependencies (no CI key)
@@ -829,6 +907,12 @@ jobs:
       - name: Install sops and age
         shell: bash
         run: command -v sops >/dev/null 2>&1 && command -v age >/dev/null 2>&1 || mise use -g --yes sops@3 age@1
+      - name: Get the Cargo and pnpm cache key before anything builds
+        id: cargo-key
+        shell: bash
+        env:
+          KEY: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Cargo, Rust target and pnpm caches
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -838,7 +922,7 @@ jobs:
             ${{ inputs.part_dir }}/src-tauri/target
             ~/.local/share/pnpm/store
             ~/AppData/Local/pnpm/store
-          key: ${{ runner.os }}-${{ runner.arch }}-cargo-${{ hashFiles(format('{0}/src-tauri/Cargo.lock', inputs.part_dir), format('{0}/pnpm-lock.yaml', inputs.part_dir)) }}
+          key: ${{ steps.cargo-key.outputs.key }}
           restore-keys: |
             ${{ runner.os }}-${{ runner.arch }}-cargo-
       - name: Install dependencies (no CI key)

@@ -319,7 +319,7 @@ $(call std_extra,$(1),release-latest,release,Copy the files of the $(1) Release 
 $(1)-bump:
 	@$$(STD_RELEASE) bump --part $(1) --kind $(2) --part-dir $(3) $$(STD_BUMP_ARGS)
 $(1)-release-assets:
-	@$(if $(4),set -euo pipefail; $$(if $$(NOBUILD),,$(if $(5),$$(MAKE) --no-print-directory $(addprefix $(1)-,$(5));)) $$(call $(4),$(1),$(3)),echo "$(1): no release files: its GitHub Release carries the CHANGELOG notes only")
+	@$(if $(4),$$(call std_refuse_unstarted,$(1),$(3),release) set -euo pipefail; $$(if $$(NOBUILD),,$(if $(5),$$(MAKE) --no-print-directory $(addprefix $(1)-,$(5));)) $$(call $(4),$(1),$(3)),echo "$(1): no release files: its GitHub Release carries the CHANGELOG notes only")
 $(1)-github-release:
 	@$$(call std_github_release,$(1),$(2),$(3),$(4))
 $(1)-release-latest:
@@ -327,6 +327,22 @@ $(1)-release-latest:
 	  [ -n "$$$$ver" ] || ver=$$$$($$(STD_RELEASE) version --part $(1) --kind $(2) --part-dir $(3)); \
 	  $$(STD_RELEASE) latest-sync --part $(1) --kind $(2) --project "$$(PROJECT)" --version "$$$$ver"
 endef
+
+# --- parts not started yet ---------------------------------------------------------------------
+# A part is started once its folder has the file its kind builds from, <part>_START (set by the kind, a project may
+# override it): hardware *.kicad_pro, zephyr and espidf CMakeLists.txt, pio platformio.ini, arm-gcc CMakeLists.txt or
+# Makefile, circuitpython src. A part declared in make/project.mk with nothing in its folder yet is not started: its
+# setup, check, test and build say so and succeed (so CI passes before the part is written), doctor warns, and its
+# flash, release and release-assets refuse. A kind with no <part>_START is always started.
+# $(call std_started,part,dir): shell test, true when one of <part>_START (globs, relative to dir) exists.
+std_started = $(if $(strip $($(1)_START)),( cd "$(CURDIR)/$(2)" 2>/dev/null && for f in $($(1)_START); do [ -e "$$f" ] && exit 0; done; exit 1 ),true)
+std_start_what = $(subst $(space), or ,$(strip $($(1)_START)))
+# $(call std_skip_unstarted,part,dir,verb): shell text that, for a part not started, says so and ends the line with 0.
+std_skip_unstarted = if ! $(call std_started,$(1),$(2)); then printf '> %s: not started yet (no %s in %s): %s skipped\n' "$(1)" "$(call std_start_what,$(1))" "$(2)" "$(3)"; exit 0; fi;
+# $(call std_refuse_unstarted,part,dir,verb): shell text that, for a part not started, refuses with status 1.
+std_refuse_unstarted = if ! $(call std_started,$(1),$(2)); then printf 'error %s: not started yet (no %s in %s): nothing to %s\n' "$(1)" "$(call std_start_what,$(1))" "$(2)" "$(3)" >&2; exit 1; fi;
+# $(call std_doctor_started,part,dir): doctor's line for it (ok and warn come from the kind's shell prelude).
+std_doctor_started = if $(call std_started,$(1),$(2)); then ok "project $(2)"; else warn "$(1): not started yet (no $(call std_start_what,$(1)) in $(2)): setup, check, test and build skip it, flash and release refuse"; fi;
 
 # --- setup on demand ---------------------------------------------------------------------------
 # A part's commands that need what its setup installs run that setup first when the part is not ready, so in a fresh
@@ -343,7 +359,7 @@ define std_ready
 STD_READY += $(1)-ready
 .PHONY: $(1)-ready
 $(1)-ready:
-	@if ( $$(call $(3),$(1),$(2)) ) >/dev/null 2>&1; then :; else printf '> %s: not set up yet, running make %s-setup first\n' "$(1)" "$(1)"; $$(MAKE) --no-print-directory $(1)-setup; fi
+	@if ! $$(call std_started,$(1),$(2)); then :; elif ( $$(call $(3),$(1),$(2)) ) >/dev/null 2>&1; then :; else printf '> %s: not set up yet, running make %s-setup first\n' "$(1)" "$(1)"; $$(MAKE) --no-print-directory $(1)-setup; fi
 $(addprefix $(1)-,$(4)): $(1)-ready
 endef
 

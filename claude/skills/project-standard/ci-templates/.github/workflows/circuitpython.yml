@@ -35,11 +35,17 @@ jobs:
           apt-get install -y -qq --no-install-recommends make git ${STD_APT_PACKAGES:-}
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Get the Git LFS cache key before anything builds
+        id: lfs-key
+        shell: bash
+        env:
+          KEY: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Git LFS objects of this part
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .git/lfs
-          key: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+          key: ${{ steps.lfs-key.outputs.key }}
           restore-keys: |
             lfs-${{ inputs.part }}-
       - name: Get the Git LFS files of this part only
@@ -71,11 +77,17 @@ jobs:
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Get the Git LFS cache key before anything builds
+        id: lfs-key
+        shell: bash
+        env:
+          KEY: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Git LFS objects of this part
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .git/lfs
-          key: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+          key: ${{ steps.lfs-key.outputs.key }}
           restore-keys: |
             lfs-${{ inputs.part }}-
       - name: Get the Git LFS files of this part only
@@ -103,6 +115,7 @@ jobs:
           name: ${{ inputs.part }}-build
           path: ${{ inputs.part_dir }}/build/
           retention-days: 7
+          if-no-files-found: ignore
 
   release:
     if: ${{ inputs.run_release && !failure() && !cancelled() }}
@@ -138,11 +151,17 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Get the Git LFS cache key before anything builds
+        id: lfs-key
+        shell: bash
+        env:
+          KEY: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
       - name: Keep the Git LFS objects of this part
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .git/lfs
-          key: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+          key: ${{ steps.lfs-key.outputs.key }}
           restore-keys: |
             lfs-${{ inputs.part }}-
       - name: Get the Git LFS files of this part only

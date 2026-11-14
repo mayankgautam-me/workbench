@@ -703,3 +703,46 @@ logline() { local n; n=$(grep -n -m1 -E "$1" "$STUB_LOG" | cut -d: -f1); echo "$
   [ "$(grep -c '^npm ' "$STUB_LOG")" -eq 0 ]
   grep -q '^cf status' "$STUB_LOG"
 }
+
+@test "web-pages: astro.config.* makes an Astro site: astro build, astro dev on the part port, dist/ as OUT, astro check with @astrojs/check" {
+  printf '#!/usr/bin/env bash\necho "pnpm $*" >> "$STUB_LOG"\nexit 0\n' > "$BATS_TEST_TMPDIR/bin/pnpm"
+  chmod +x "$BATS_TEST_TMPDIR/bin/pnpm"
+  cp "$KINDS_SRC/web-pages.mk" "$P/make/kinds/"
+  printf 'PARTS += site:web-pages:cloud/site\nsite_PORT_OFFSET := 4\n' >> "$P/make/project.mk"
+  mkdir -p "$P/cloud/site"
+  printf 'show:\n\t@echo "$(site_FRAMEWORK) $(site_OUT)"\n' > "$P/show.mk"
+  # every config extension Astro reads is detected; a vite.config next to it does not make it vite
+  for e in mjs js ts cjs; do
+    rm -f "$P/cloud/site/"astro.config.*
+    : > "$P/cloud/site/astro.config.$e"
+    : > "$P/cloud/site/vite.config.ts"
+    run make -C "$P" --no-print-directory -f Makefile -f show.mk show
+    [ "$status" -eq 0 ] || { echo "$output"; false; }
+    [ "$output" = "astro cloud/site/dist" ] || { echo "got: $output"; false; }
+  done
+  rm -f "$P/cloud/site/vite.config.ts"
+  : > "$P/cloud/site/pnpm-lock.yaml"
+  printf '{"devDependencies": {"astro": "^5.0.0"}}\n' > "$P/cloud/site/package.json"
+  run make -C "$P" site-build site-check
+  [ "$status" -eq 0 ]
+  grep -q '^pnpm exec astro build$' "$STUB_LOG"
+  [[ "$output" == *"site: astro check skipped (@astrojs/check is not a dependency of cloud/site)"* ]]
+  if grep -q 'astro check' "$STUB_LOG"; then return 1; fi
+  if grep -q 'vite' "$STUB_LOG"; then return 1; fi
+  : > "$STUB_LOG"
+  printf '{"devDependencies": {"astro": "^5.0.0", "@astrojs/check": "^0.9.0", "typescript": "^5.0.0"}}\n' > "$P/cloud/site/package.json"
+  : > "$P/cloud/site/tsconfig.json"
+  run make -C "$P" site-check site-dev
+  [ "$status" -eq 0 ]
+  grep -q '^pnpm exec astro check$' "$STUB_LOG"
+  # what the kind already did still runs: typecheck and the lint note
+  grep -q '^pnpm exec tsc --noEmit' "$STUB_LOG"
+  [[ "$output" == *"lint skipped"* ]]
+  grep -q '^pnpm exec astro dev --port 8104 --strictPort$' "$STUB_LOG"
+  # without pnpm-lock.yaml it goes through npx --no-install
+  rm -f "$P/cloud/site/pnpm-lock.yaml"
+  : > "$STUB_LOG"
+  run make -C "$P" site-build
+  [ "$status" -eq 0 ]
+  grep -q '^npx --no-install astro build$' "$STUB_LOG"
+}

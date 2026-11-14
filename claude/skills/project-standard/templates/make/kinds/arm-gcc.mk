@@ -223,7 +223,7 @@ armgcc_size = $(STD_FW_SH) $(call armgcc_artifacts,$(1),$(2)) $($(1)_PREFIX)size
 armgcc_doctor = $(STD_FW_SH) say "$(1): arm-gcc, probe $($(1)_P)"; \
   if have $($(1)_PREFIX)gcc; then ok "$$($($(1)_PREFIX)gcc --version | head -n 1)"; else bad "$($(1)_PREFIX)gcc: brew install --cask gcc-arm-embedded (or set $(1)_PREFIX)"; fi; \
   if [ -f "$(CURDIR)/$(2)/CMakeLists.txt" ]; then ok "CMake project"; for t in cmake ninja; do if have $$t; then ok "$$t"; else bad "$$t: brew install $$t"; fi; done; \
-  elif [ -f "$(CURDIR)/$(2)/Makefile" ]; then ok "Makefile project"; else bad "no CMakeLists.txt or Makefile in $(2)"; fi; \
+  elif [ -f "$(CURDIR)/$(2)/Makefile" ]; then ok "Makefile project"; else $(call std_doctor_started,$(1),$(2)) fi; \
   case "$($(1)_P)" in \
     dfu) if have dfu-util; then ok "dfu-util"; else bad "dfu-util: brew install dfu-util"; fi;; \
     stlink) if have st-flash; then ok "st-flash"; else bad "st-flash: brew install stlink"; fi;; \
@@ -264,6 +264,9 @@ armgcc_release_assets = $(STD_FW_SH) $(call armgcc_artifacts,$(1),$(2)) $(call s
 # `make <part>-check` builds with warnings as errors (CMake), or runs the Makefile's check target.
 
 define kind_arm-gcc
+# the part is started once its folder has a CMakeLists.txt or Makefile (std_started in common.mk): until then setup, check and build
+# skip it and flash and release refuse
+$(1)_START ?= CMakeLists.txt Makefile
 $(1)_PREFIX ?= arm-none-eabi-
 $(1)_TOOLCHAIN_FILE ?=
 $(1)_CMAKE_ARGS ?=
@@ -301,19 +304,19 @@ $(1)-doctor:
 
 $(call std_verb,$(1),setup,firmware,Check the cross compiler which comes from the Brewfile)
 $(1)-setup:
-	@$$(STD_FW_SH) $$(call armgcc_need_gcc,$(1)) ok "$(1): $$($(1)_PREFIX)gcc found"
+	@$$(call std_skip_unstarted,$(1),$(2),setup) $$(STD_FW_SH) $$(call armgcc_need_gcc,$(1)) ok "$(1): $$($(1)_PREFIX)gcc found"
 
 $(call std_verb,$(1),check,firmware,Build with warnings as errors or the Makefile check target)
 $(1)-check:
-	@$$(call armgcc_build,$(1),$(2),1)
+	@$$(call std_skip_unstarted,$(1),$(2),check) $$(call armgcc_build,$(1),$(2),1)
 
 $(call std_verb,$(1),build,firmware,Build with CMake or the part Makefile)
 $(1)-build:
-	@$$(call armgcc_build,$(1),$(2),)
+	@$$(call std_skip_unstarted,$(1),$(2),build) $$(call armgcc_build,$(1),$(2),)
 
 $(call std_verb,$(1),flash,firmware,Build then flash with PROBE= dfu stlink probe-rs or openocd and NOBUILD=1 to skip the build)
 $(1)-flash: $$(if $$(NOBUILD),,$(1)-build)
-	@$$(call armgcc_flash,$(1),$(2))
+	@$$(call std_refuse_unstarted,$(1),$(2),flash) $$(call armgcc_flash,$(1),$(2))
 
 $(call std_verb,$(1),erase,firmware,Erase the whole chip and needs CONFIRM=erase)
 $(1)-erase:
@@ -344,7 +347,7 @@ $(1)-release:
 	@if [ -z "$$(strip $$($(1)_OTA_BUCKET))" ]; then echo "> $(1): no OTA bucket (no Cloudflare in this project): firmware publish skipped"; exit 0; fi; if $$(call std_fw_tag_ok,$(1)); then $$(MAKE) --no-print-directory $(1)-release-run; else echo "$(1): tag $$$$CI_COMMIT_TAG is not a $(1) release, nothing to do"; fi
 
 $(1)-release-run:
-	@$$(std_production_guard) && { $$(std_fw_remote_env); } && $$(if $$(NOBUILD),true,$$(MAKE) --no-print-directory $(1)-build) && { $$(call armgcc_release,$(1),$(2)); }
+	@$$(call std_refuse_unstarted,$(1),$(2),release) $$(std_production_guard) && { $$(std_fw_remote_env); } && $$(if $$(NOBUILD),true,$$(MAKE) --no-print-directory $(1)-build) && { $$(call armgcc_release,$(1),$(2)); }
 
 $(call std_verb,$(1),version,release,Firmware version from $(2)/VERSION)
 

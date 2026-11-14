@@ -528,6 +528,8 @@ fw_release() {
   stub_cmd esptool.py 'while [ $# -gt 0 ]; do [ "$1" = -o ] && echo merged >"$2"; shift; done'
   stub_cmd arm-none-eabi-objcopy 'echo hex >"${@: -1}"'
   stub_cmd docker 'echo "$*" >>"$STUB_LOG/docker.argv"; case "$*" in *imagetools*) echo sha256:abc ;; esac'
+  # the firmware parts are started (std_started): a part with nothing in it refuses its release
+  for d in fw esp arm; do : >"$d/CMakeLists.txt"; done
   # zephyr (sysbuild, MCUboot)
   b=fw/build/nrf_x
   mkdir -p "$b/fw/zephyr"

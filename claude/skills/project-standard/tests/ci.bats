@@ -385,3 +385,53 @@ PY
   done
   [ "$(wc -l <"$README")" -lt 240 ]
 }
+
+@test "no cache key hashes files in the cache step: keys are worked out earlier, so the post step (after the build) hashes nothing" {
+  # actions/cache evaluates its inputs again in its post step, after the build; a hashFiles over the part folder then
+  # fails on files the build left unreadable ("Fail to hash files under directory") and fails a passing job.
+  python3 - "$WF" <<'PY'
+import glob, os, re, sys, yaml
+fails = []
+for f in sorted(glob.glob(os.path.join(sys.argv[1], "*.yml"))):
+    text = open(f).read()
+    if re.search(r"^\s*key:.*hashFiles\(format\('\{0\}/\*\*", text, re.M):
+        fails.append(f"{os.path.basename(f)}: a key: line hashes a part folder glob")
+    for jid, job in yaml.safe_load(text)["jobs"].items():
+        steps = job.get("steps", [])
+        ids = [s.get("id") for s in steps]
+        for i, st in enumerate(steps):
+            if not str(st.get("uses", "")).startswith("actions/cache"):
+                continue
+            key = str((st.get("with") or {}).get("key", ""))
+            if "hashFiles" in key:
+                fails.append(f"{os.path.basename(f)} {jid} {st.get('name')}: key calls hashFiles in the cache step")
+            m = re.fullmatch(r"\$\{\{ steps\.([a-z-]+)\.outputs\.key \}\}", key)
+            if m:
+                sid = m.group(1)
+                if sid not in ids[:i]:
+                    fails.append(f"{os.path.basename(f)} {jid}: key step {sid} does not come before {st.get('name')}")
+                elif "hashFiles" not in str((steps[ids.index(sid)].get("env") or {}).get("KEY", "")):
+                    fails.append(f"{os.path.basename(f)} {jid}: key step {sid} has no hashFiles KEY")
+for x in fails:
+    print(x)
+sys.exit(1 if fails else 0)
+PY
+}
+
+@test "firmware and hardware build jobs keep their outputs with if-no-files-found: ignore (a part not started yet builds nothing)" {
+  python3 - "$WF" <<'PY'
+import os, sys, yaml
+fails = []
+for kind in ("hardware", "zephyr", "espidf", "pio", "arm-gcc", "circuitpython"):
+    job = yaml.safe_load(open(os.path.join(sys.argv[1], kind + ".yml")))["jobs"]["build"]
+    ups = [s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
+    if not ups:
+        fails.append(f"{kind}: build keeps no artifact")
+    for s in ups:
+        if s["with"].get("if-no-files-found") != "ignore":
+            fails.append(f"{kind}: {s.get('name')} fails or warns on no files")
+for x in fails:
+    print(x)
+sys.exit(1 if fails else 0)
+PY
+}

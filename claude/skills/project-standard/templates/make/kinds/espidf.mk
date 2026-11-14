@@ -197,7 +197,7 @@ espidf_ready = idf="$($(1)_IDF_DIR)"; \
 espidf_doctor = $(STD_FW_SH) say "$(1): espidf, ESP-IDF $($(1)_IDF), target $($(1)_T)$(if $(filter 1,$($(1)_FLASH_ENCRYPTION)), flash encryption)$(if $(filter 1,$($(1)_SECURE_BOOT)), secure boot)"; \
   if [ -f "$($(1)_IDF_DIR)/export.sh" ]; then ok "ESP-IDF $($(1)_IDF_DIR)"; else bad "ESP-IDF $($(1)_IDF) missing: make $(1)-setup"; fi; \
   if [ -d "$($(1)_IDF_TOOLS)" ]; then ok "ESP-IDF tools $($(1)_IDF_TOOLS)"; else bad "ESP-IDF tools missing: make $(1)-setup"; fi; \
-  if [ -f "$(CURDIR)/$(2)/CMakeLists.txt" ]; then ok "project $(2)"; else bad "no $(2)/CMakeLists.txt"; fi; \
+  $(call std_doctor_started,$(1),$(2)) \
   sd="$(CURDIR)/$(2)/sdkconfig.$($(1)_T)"; \
   if [ -f "$$sd" ]; then ok "sdkconfig.$($(1)_T)"; else warn "no sdkconfig.$($(1)_T) yet: the first build makes it from sdkconfig.defaults"; fi; \
   if [ "$($(1)_SECURE_BOOT)" = 1 ]; then $(call std_fw_key_check,$(1),$($(1)_KEY)) \
@@ -289,6 +289,9 @@ espidf_release_assets = $(STD_FW_SH) $(call espidf_need_build,$(1)) $(call espid
 # eFuse burns need CONFIRM=fuse; erase and recover need CONFIRM=erase.
 
 define kind_espidf
+# the part is started once its folder has its CMakeLists.txt (std_started in common.mk): until then setup, check and build
+# skip it and flash and release refuse
+$(1)_START ?= CMakeLists.txt
 $(1)_IDF ?= v5.5
 $(1)_TARGET ?= esp32c6
 $(1)_TARGETS ?= $$($(1)_T)
@@ -320,7 +323,7 @@ $(1)-doctor:
 
 $(call std_verb,$(1),setup,firmware,Install ESP-IDF $$($(1)_IDF) and its tools into $$(STD_TOOLCHAINS) shared)
 $(1)-setup:
-	@$$(call espidf_setup,$(1),$(2))
+	@$$(call std_skip_unstarted,$(1),$(2),setup) $$(call espidf_setup,$(1),$(2))
 
 # The commands that source the ESP-IDF environment install the pinned ESP-IDF and its tools first when they are not
 # there (std_ready in common.mk). release, release-assets and provision build or flash through these targets.
@@ -332,15 +335,15 @@ $(1)-update:
 
 $(call std_verb,$(1),check,firmware,Build for $$($(1)_T) unsigned as the gate)
 $(1)-check:
-	@$$(call espidf_build,$(1),$(2),)
+	@$$(call std_skip_unstarted,$(1),$(2),check) $$(call espidf_build,$(1),$(2),)
 
 $(call std_verb,$(1),build,firmware,Build for TARGET=$$($(1)_T) into $(2)/build/$$($(1)_T) and sign when secure boot is on)
 $(1)-build:
-	@$$(call espidf_build,$(1),$(2),1)
+	@$$(call std_skip_unstarted,$(1),$(2),build) $$(call espidf_build,$(1),$(2),1)
 
 $(call std_verb,$(1),flash,firmware,Build then flash with esptool and checks the eFuses first when flash encryption is on)
 $(1)-flash: $$(if $$(NOBUILD),,$(1)-build)
-	@$$(call espidf_flash,$(1),$(2))
+	@$$(call std_refuse_unstarted,$(1),$(2),flash) $$(call espidf_flash,$(1),$(2))
 
 $(call std_verb,$(1),erase,firmware,Erase the whole flash and needs CONFIRM=erase)
 $(1)-erase:
@@ -391,7 +394,7 @@ $(1)-release:
 	@if [ -z "$$(strip $$($(1)_OTA_BUCKET))" ]; then echo "> $(1): no OTA bucket (no Cloudflare in this project): firmware publish skipped"; exit 0; fi; if $$(call std_fw_tag_ok,$(1)); then $$(MAKE) --no-print-directory $(1)-release-run; else echo "$(1): tag $$$$CI_COMMIT_TAG is not a $(1) release, nothing to do"; fi
 
 $(1)-release-run:
-	@$$(std_production_guard) && { $$(std_fw_remote_env); } && $$(if $$(NOBUILD),true,$$(MAKE) --no-print-directory $(1)-build) && { $$(call espidf_release,$(1),$(2)); }
+	@$$(call std_refuse_unstarted,$(1),$(2),release) $$(std_production_guard) && { $$(std_fw_remote_env); } && $$(if $$(NOBUILD),true,$$(MAKE) --no-print-directory $(1)-build) && { $$(call espidf_release,$(1),$(2)); }
 
 $(call std_verb,$(1),version,release,Firmware version from $(2)/VERSION or version.txt)
 

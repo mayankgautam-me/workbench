@@ -210,7 +210,7 @@ hw_doctor = $(hw_sh) say "$(1): hardware, KiCad $(KICAD_VERSION)"; \
   d="$(CURDIR)/$(2)"; set -- "$$d"/*.kicad_pro; \
   if [ -f "$$1" ]; then name=$$(basename "$$1" .kicad_pro); ok "project $(2)/$$name.kicad_pro"; \
     $(hw_locks) if [ -n "$$locks" ]; then warn "KiCad has the project open ($$(echo $$locks | xargs -n 1 basename | tr '\n' ' ')): save before build or release"; fi; \
-  else bad "no .kicad_pro in $(2): make $(1)-new NAME=..."; fi; \
+  else warn "$(1): not started yet (no *.kicad_pro in $(2)): check and build skip it, release refuses; start it with make $(1)-new NAME=..."; fi; \
   $(hw_lib) if [ -n "$$lib" ]; then ok "library $$lib (from $$lib_from)"; \
   else warn "no shared library: KICAD_LIBRARY_DIR is not set in $(STD_CONFIG)/config.mk and KiCad has no $(KICAD_LIB_PREFIX)_LIB_DIR"; fi; \
   if [ -f "$(KICAD_PREFS)/kicad_common.json" ] && have jq; then \
@@ -232,6 +232,8 @@ hw_version = $(hw_sh) $(call hw_find,$(1),$(2)) $(call hw_rev,$(1),$(2)) printf 
 
 define kind_hardware
 $(1)_SEVERITY ?= --severity-error
+# the part is started once its folder has a KiCad project (std_started in common.mk)
+$(1)_START ?= *.kicad_pro
 
 $(1)_TEMPLATE ?= $$(STD_SKILL_DIR)/templates/hardware
 
@@ -251,11 +253,11 @@ $(1)-new:
 
 $(call std_verb,$(1),check,hardware,ERC and DRC with schematic parity and fail on violations)
 $(1)-check:
-	@$$(call hw_check,$(1),$(2))
+	@$$(call std_skip_unstarted,$(1),$(2),check) $$(call hw_check,$(1),$(2))
 
 $(call std_verb,$(1),build,hardware,Gerbers drill positions BOM schematic PDF STEP WRL and iBOM into $(2)/outputs)
 $(1)-build:
-	@$$(call hw_build,$(1),$(2))
+	@$$(call std_skip_unstarted,$(1),$(2),build) $$(call hw_build,$(1),$(2))
 
 $(call std_extra,$(1),ibom,hardware,Interactive HTML BOM into $(2)/outputs)
 $(1)-ibom:

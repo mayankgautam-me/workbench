@@ -1,15 +1,16 @@
 # project-standard v1.0 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
-# Kind web-pages: a static site, a Vite app or a Next.js static export, served by Cloudflare Pages.
+# Kind web-pages: a static site, an Astro site, a Vite app or a Next.js static export, served by Cloudflare Pages.
 #
 # make/project.mk declares it as   <name>:web-pages:<dir>   and may set, per part:
 #   <name>_PAGES         Pages project name            (default PROJECT-<name>)
-#   <name>_OUT           build output, from the root   (default <dir>/out for next, <dir>/dist for vite, <dir> for static)
+#   <name>_OUT           build output, from the root   (default <dir>/out for next, <dir>/dist for astro and vite, <dir> for static)
 #   <name>_PORT_OFFSET   dev port is PORT_BASE + offset (default 0)
 #   <name>_HEALTH        path checked by smoke         (default /)
 #   <name>_URL_<env>     public URL in that env        (staging, production)
 #
-# The framework comes from the files: next.config.* is next, vite.config.* is vite, anything else is static.
+# The framework comes from the files: astro.config.mjs/.js/.ts/.cjs is astro, next.config.* is next, vite.config.* is
+# vite, anything else is static. astro check runs in <name>-check when @astrojs/check is in the part's package.json.
 # A wrangler.jsonc without pages_build_output_dir in the part dir makes it a static-assets Worker instead of a Pages project:
 # assets.directory is the build output, env.<name> blocks name the Worker of each env, its routes put it on a custom
 # domain, and workers_dev: false with preview_urls: false leave that domain its only address (Pages cannot turn off
@@ -25,13 +26,13 @@
 # staging (the Pages preview branch) unless the part is production-only.
 
 define kind_web-pages
-$(1)_FRAMEWORK := $(if $(wildcard $(2)/next.config.*),next,$(if $(wildcard $(2)/vite.config.*),vite,static))
+$(1)_FRAMEWORK := $(if $(wildcard $(addprefix $(2)/astro.config.,mjs js ts cjs)),astro,$(if $(wildcard $(2)/next.config.*),next,$(if $(wildcard $(2)/vite.config.*),vite,static)))
 $(1)_PAGES ?= $(PROJECT)-$(1)
 # pages (wrangler pages deploy to the Pages project) or worker (a static-assets Worker: the part's wrangler.jsonc names it,
 # its custom domain, and turns workers.dev and preview URLs off). A wrangler.jsonc without pages_build_output_dir makes it worker.
 # A wrangler file that sets pages_build_output_dir (the scaffold writes one) is the Pages project's config: still pages.
 $(1)_TARGET ?= $(if $(wildcard $(2)/wrangler.jsonc $(2)/wrangler.json),$(if $(shell grep -l pages_build_output_dir $(wildcard $(2)/wrangler.jsonc $(2)/wrangler.json) 2>/dev/null),pages,worker),pages)
-$(1)_OUT ?= $(if $(wildcard $(2)/next.config.*),$(2)/out,$(if $(wildcard $(2)/vite.config.*),$(2)/dist,$(2)))
+$(1)_OUT ?= $(if $(wildcard $(addprefix $(2)/astro.config.,mjs js ts cjs)),$(2)/dist,$(if $(wildcard $(2)/next.config.*),$(2)/out,$(if $(wildcard $(2)/vite.config.*),$(2)/dist,$(2))))
 $(1)_PORT_OFFSET ?= 0
 $(1)_PORT := $(shell expr $(PORT_BASE) + $(or $($(1)_PORT_OFFSET),0))
 $(1)_HEALTH ?= /
@@ -55,14 +56,19 @@ $(1)-dev:
 	test "$(ENV)" = local || { echo "$(1)-dev runs locally, drop ENV=$(ENV)"; exit 1; }; \
 	fw="$$($(1)_FRAMEWORK)"; \
 	case "$$$$fw" in \
+	  astro) cd $(2) && $$($(1)_EXEC) astro dev --port $$($(1)_PORT) --strictPort ;; \
 	  next) cd $(2) && $$($(1)_EXEC) next dev --port $$($(1)_PORT) ;; \
 	  vite) cd $(2) && $$($(1)_EXEC) vite --port $$($(1)_PORT) --strictPort ;; \
 	  *) $(2)/node_modules/.bin/wrangler pages dev $$($(1)_OUT) --port $$($(1)_PORT) ;; \
 	esac
 
-$(call std_verb,$(1),check,test,Lint typecheck and unit tests of the site)
+$(call std_verb,$(1),check,test,Lint typecheck and unit tests of the site and astro check when @astrojs/check is installed)
 $(1)-check:
 	@set -euo pipefail; cd $(2); \
+	if [ "$$($(1)_FRAMEWORK)" = astro ]; then \
+	  if [ -f package.json ] && grep -q '"@astrojs/check"' package.json; then $$($(1)_EXEC) astro check; \
+	  else echo "$(1): astro check skipped (@astrojs/check is not a dependency of $(2))"; fi; \
+	fi; \
 	if [ -f tsconfig.json ]; then $$($(1)_EXEC) tsc --noEmit; fi; \
 	$$($(1)_LINT_CMD); \
 	if ls vitest.config.* >/dev/null 2>&1; then $$($(1)_EXEC) vitest run --passWithNoTests; fi
@@ -80,6 +86,7 @@ $(1)-build:
 	@set -euo pipefail; \
 	fw="$$($(1)_FRAMEWORK)"; \
 	case "$$$$fw" in \
+	  astro) cd $(2) && $$($(1)_EXEC) astro build ;; \
 	  next) cd $(2) && $$($(1)_EXEC) next build ;; \
 	  vite) cd $(2) && $$($(1)_EXEC) vite build ;; \
 	  *) echo "$(1): static site, nothing to build" ;; \

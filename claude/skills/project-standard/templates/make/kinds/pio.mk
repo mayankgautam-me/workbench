@@ -212,7 +212,7 @@ pio_ready = $(call std_fresh,$(CURDIR)/$(2),.pio/.std-setup,platformio.ini)
 
 pio_doctor = $(STD_FW_SH) say "$(1): pio$(if $($(1)_E), env $($(1)_E))"; \
   if have pio; then ok "$$(pio --version 2>/dev/null | head -n 1)"; else bad "pio missing: mise install (mise.toml pins platformio)"; fi; \
-  if [ -f "$(CURDIR)/$(2)/platformio.ini" ]; then ok "$(2)/platformio.ini"; else bad "no $(2)/platformio.ini"; fi; \
+  $(call std_doctor_started,$(1),$(2)) \
   $(if $($(1)_E),if [ -f "$(CURDIR)/$(2)/platformio.ini" ] && ! grep -q '^\[env:$($(1)_E)\]' "$(CURDIR)/$(2)/platformio.ini"; then bad "no [env:$($(1)_E)] in platformio.ini"; fi;) \
   if [ -d "$(CURDIR)/$(2)/.pio" ]; then ok "packages and build in $(2)/.pio"; else warn "nothing built yet: make $(1)-setup then make $(1)-build"; fi; \
   $(std_fw_ports_check) \
@@ -258,6 +258,9 @@ pio_release_assets = $(STD_FW_SH) ini="$(CURDIR)/$(2)/platformio.ini"; \
 # PlatformIO itself is pinned in mise.toml ("pipx:platformio" = "6"); its packages live in ~/.platformio.
 
 define kind_pio
+# the part is started once its folder has its platformio.ini (std_started in common.mk): until then setup, check and build
+# skip it and flash and release refuse
+$(1)_START ?= platformio.ini
 $(1)_PIO_ENV ?=
 $(1)_IMAGE ?= firmware.bin
 $(1)_TEST_ENV ?= native
@@ -281,7 +284,7 @@ $(1)-doctor:
 
 $(call std_verb,$(1),setup,firmware,Install the platforms and libraries of platformio.ini)
 $(1)-setup:
-	@$$(call pio_setup,$(1),$(2))
+	@$$(call std_skip_unstarted,$(1),$(2),setup) $$(call pio_setup,$(1),$(2))
 
 # The commands that run pio on the project install its platforms and libraries first when setup has not run since
 # platformio.ini last changed (std_ready in common.mk).
@@ -293,19 +296,19 @@ $(1)-update:
 
 $(call std_verb,$(1),check,firmware,pio check static analysis then the native host tests)
 $(1)-check:
-	@$$(call pio_check,$(1),$(2))
+	@$$(call std_skip_unstarted,$(1),$(2),check) $$(call pio_check,$(1),$(2))
 
 $(call std_verb,$(1),test,firmware,Host tests with pio test -e native and TEST=pattern for one)
 $(1)-test:
-	@$$(call pio_test,$(1),$(2))
+	@$$(call std_skip_unstarted,$(1),$(2),test) $$(call pio_test,$(1),$(2))
 
 $(call std_verb,$(1),build,firmware,pio run for PIO_ENV $$($(1)_E))
 $(1)-build:
-	@$$(call pio_build,$(1),$(2))
+	@$$(call std_skip_unstarted,$(1),$(2),build) $$(call pio_build,$(1),$(2))
 
 $(call std_verb,$(1),flash,firmware,Upload one env with pio on PORT or the only port and NOBUILD is ignored as pio builds first)
 $(1)-flash:
-	@$$(call pio_flash,$(1),$(2))
+	@$$(call std_refuse_unstarted,$(1),$(2),flash) $$(call pio_flash,$(1),$(2))
 
 $(call std_verb,$(1),erase,firmware,pio run -t erase for one env and needs CONFIRM=erase)
 $(1)-erase:
@@ -336,7 +339,7 @@ $(1)-release:
 	@if [ -z "$$(strip $$($(1)_OTA_BUCKET))" ]; then echo "> $(1): no OTA bucket (no Cloudflare in this project): firmware publish skipped"; exit 0; fi; if $$(call std_fw_tag_ok,$(1)); then $$(MAKE) --no-print-directory $(1)-release-run; else echo "$(1): tag $$$$CI_COMMIT_TAG is not a $(1) release, nothing to do"; fi
 
 $(1)-release-run:
-	@$$(std_production_guard) && { $$(std_fw_remote_env); } && { $$(if $$($(1)_E),true,echo "release needs one env: set $(1)_PIO_ENV or pass PIO_ENV=" >&2; exit 1); } && $$(if $$(NOBUILD),true,$$(MAKE) --no-print-directory $(1)-build) && { $$(call pio_release,$(1),$(2)); }
+	@$$(call std_refuse_unstarted,$(1),$(2),release) $$(std_production_guard) && { $$(std_fw_remote_env); } && { $$(if $$($(1)_E),true,echo "release needs one env: set $(1)_PIO_ENV or pass PIO_ENV=" >&2; exit 1); } && $$(if $$(NOBUILD),true,$$(MAKE) --no-print-directory $(1)-build) && { $$(call pio_release,$(1),$(2)); }
 
 $(call std_verb,$(1),version,release,Firmware version from $(2)/VERSION)
 

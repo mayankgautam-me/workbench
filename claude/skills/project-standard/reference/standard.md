@@ -146,7 +146,7 @@ firmware_BOARD := nrf9151dk/nrf9151/ns
 | `circuitpython` | CircuitPython boards | circup, the CIRCUITPY drive |
 | `hardware` | KiCad 10 boards | kicad-cli, the `bom` and `jlcpcb` skills |
 | `cloud-worker` | Cloudflare Worker with D1, KV, R2, Queues, DO | wrangler (pinned in the part's package.json) |
-| `web-pages` | static site or static export on a static-assets Worker on its custom domain, its only address (the default since v34: `scaffold.sh --domain <part>=<host>`); on Cloudflare Pages only when asked for (`--pages <part>`, a `wrangler.jsonc` with `pages_build_output_dir`: Pages always keeps `*.pages.dev`) | wrangler pages, wrangler deploy |
+| `web-pages` | static site, Astro site (`astro.config.*`), Vite app or Next static export on a static-assets Worker on its custom domain, its only address (the default since v34: `scaffold.sh --domain <part>=<host>`); on Cloudflare Pages only when asked for (`--pages <part>`, a `wrangler.jsonc` with `pages_build_output_dir`: Pages always keeps `*.pages.dev`) | wrangler pages, wrangler deploy |
 | `app-flutter` / `app-tauri` / `app-xcode` / `app-android` | apps | flutter / tauri + cargo / xcodebuild / gradle |
 | `docker` | container images and compose services | docker buildx, compose |
 | `go` | Go services | go, golangci-lint |
@@ -218,6 +218,27 @@ Never chained: `setup` itself, `doctor`, `clean`, `distclean`, `version`, `bump`
 `cf-login`, Touch ID, `CONFIRM`, a probe): only the part's own `setup` runs. The root commands (`make check`, `make build`
 ...) chain through the part targets they fan out to. CI runs `<part>-setup` first, so the check passes there and nothing
 more runs. A refused command (no `CONFIRM`) may still have set the part up first; setting up changes nothing remote.
+
+#### Parts not started yet
+
+A part declared in `make/project.mk` whose folder does not have the file its kind builds from yet is *not started*
+(`<part>_START`, set by the kind; a project may override it in `make/project.mk`; `std_started` in `common.mk`):
+
+| Kind | Started when the part folder has |
+|---|---|
+| hardware | a `*.kicad_pro` (`make <part>-new NAME=...` makes one) |
+| zephyr, espidf | `CMakeLists.txt` |
+| pio | `platformio.ini` |
+| arm-gcc | `CMakeLists.txt` or `Makefile` |
+| circuitpython | `src` |
+
+Until then its `setup`, `check`, `test` and `build` (hardware: `check` and `build`; its `setup` only configures KiCad and still runs) print `> <part>: not started yet (no <file> in <dir>): check
+skipped` (the verb they are) and exit 0, and run no tool and no setup on demand, so CI (and the root `make check`)
+passes on a project whose parts are declared before they are written. `doctor` reports it as a warning, not a
+problem. `flash`, `release`, `release-assets` and `github-release` still refuse (`error <part>: not started yet (no
+<file> in <dir>): nothing to release`, non-zero). The CI templates keep the build outputs with
+`if-no-files-found: ignore`, so the skipped build uploads nothing and passes. The other kinds have no `<part>_START`
+and are always started.
 
 #### Teardown and prune: records, ledger and safety (since v17)
 
@@ -412,6 +433,11 @@ A firmware part builds one image per env (PlatformIO `default_envs`, say one per
 board takes one: with pio, flash, erase, monitor, debug and provision refuse unless exactly one env is
 selected (`PIO_ENV=<env>`, `<part>_PIO_ENV` in `make/project.mk`, or a `platformio.ini` that names only one).
 
+A firmware part with nothing in its folder yet (no `CMakeLists.txt` for zephyr and espidf, `platformio.ini` for pio,
+`CMakeLists.txt` or `Makefile` for arm-gcc, `src` for circuitpython) is not started: setup, check, test and build
+print `> <part>: not started yet (no <file> in <dir>): <verb> skipped` and exit 0, doctor warns, flash and release
+refuse (4.1, Parts not started yet).
+
 Signing keys reach the build through a temporary file only (`secrets.sh with-file`, the `{}`
 placeholder), removed when the command exits. Every firmware build is signed with the real key, so
 `make build` (and `make deploy`, which builds) asks for Touch ID once per firmware part: the image
@@ -428,6 +454,9 @@ you test is the image you ship. eFuse burns and similar one-way operations need
 | `<part>-build` | Gerbers, drill, positions, BOM, schematic PDF, STEP, WRL and iBOM into `outputs/`. |
 | `<part>-bom` | Hands sourcing and pricing to the `bom` skill. |
 | `<part>-release` | The board's GitHub Release, the same as `<part>-github-release` (4.12): the fab zip (also kept as `production/<Board>_v<rev>.zip`) and every output attached to the Release. Since v7 the tag `<part>-v<rev>` comes from `make <part>-bump`, not from release. |
+
+A hardware part with no `*.kicad_pro` yet is not started: check and build print `> <part>: not started yet (no
+*.kicad_pro in <dir>): check skipped` and exit 0, doctor warns, release refuses (4.1, Parts not started yet).
 
 Never edit a board or schematic while KiCad has it open.
 
@@ -904,7 +933,7 @@ Design consequences:
 
 ### Known gaps
 
-- Caches (actions/cache): Cargo registry and target directory, pnpm store, PlatformIO packages, pub and Gradle caches, and the kicad-library LFS objects keyed on the library commit. GitHub evicts caches past 10 GB per repository, so the library cache can churn when the library changes often.
+- Caches (actions/cache): Cargo registry and target directory, pnpm store, PlatformIO packages, pub and Gradle caches, and the kicad-library LFS objects keyed on the library commit. Each `hashFiles` key is worked out in a `Get the ... cache key before anything builds` step and reaches the cache step as `steps.<id>.outputs.key`: actions/cache evaluates its inputs again in its post step, after the build, where a `hashFiles` over the part folder failed on files the build left unreadable and failed a passing job. GitHub evicts caches past 10 GB per repository, so the library cache can churn when the library changes often.
 - Real workflow runs are not yet verified on GitHub. The arm64 Windows image's Visual Studio components need a real run.
 
 ## 7. Cloudflare API token permissions
