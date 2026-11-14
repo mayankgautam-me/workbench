@@ -319,7 +319,7 @@ needs: [bootstrap, instructions, settings]
 - [x] Drop NotchNook's hooks from settings.json {#workbench-notchnook}
 - [x] bootstrap.sh all | apps | home | macos | claude | check, and a pre-commit home-path guard {#workbench-bootstrap}
 - [x] README and the CLAUDE.md sections "Dotfiles" and "This setup is a git repo" rewritten {#workbench-docs}
-- [~] Push to github.com/mayankgautam-me/workbench; `check` reports a clean Mac {#workbench-publish}
+- [x] Push to github.com/mayankgautam-me/workbench; `check` reports a clean Mac but for TextEdit {#workbench-publish}
 - [ ] You check GitHub, then delete the GitLab project yourself {#workbench-gitlab}
 - [ ] TextEdit plain text: run `bash ~/.workbench/macos/defaults.sh` from Terminal (Claude's shell cannot write TextEdit's sandboxed settings) {#workbench-textedit}
 
