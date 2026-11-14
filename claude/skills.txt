@@ -1,0 +1,22 @@
+# owner/repo@skill, one per line. Installed by bootstrap.sh with: npx skills add <line> -g -y -a claude-code
+Leonxlnx/taste-skill@brandkit
+Leonxlnx/taste-skill@design-taste-frontend
+Leonxlnx/taste-skill@high-end-visual-design
+Leonxlnx/taste-skill@industrial-brutalist-ui
+Leonxlnx/taste-skill@minimalist-ui
+Leonxlnx/taste-skill@redesign-existing-projects
+Leonxlnx/taste-skill@stitch-design-taste
+aklofas/kicad-happy@bom
+aklofas/kicad-happy@jlcpcb
+aklofas/kicad-happy@kicad
+aklofas/kicad-happy@pcbway
+cloudflare/security-audit-skill@security-audit
+jeffallan/claude-skills@embedded-systems
+mattpocock/skills@research
+mindrally/skills@mqtt-development
+mindrally/skills@tauri-development
+mohitmishra786/low-level-dev-skills@embedded-rust
+mohitmishra786/low-level-dev-skills@openocd-jtag
+sveltejs/ai-tools@svelte-code-writer
+sveltejs/ai-tools@svelte-core-bestpractices
+vercel-labs/skills@find-skills

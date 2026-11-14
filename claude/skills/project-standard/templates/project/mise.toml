@@ -1,0 +1,4 @@
+# mise.toml: language runtimes and CLI tools pinned for this project. `make setup` runs
+# `mise install`; `make update` bumps these on purpose. Firmware SDKs are pinned per part in
+# make/project.mk and installed into ~/.toolchains, not here.
+[tools]

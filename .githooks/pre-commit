@@ -1,0 +1,8 @@
+#!/bin/bash
+# Refuses a commit that adds this Mac's absolute home path: the repository is public.
+# Write ~ or $HOME instead. Made-up paths in tests (/Users/me/...) are allowed.
+set -euo pipefail
+if git diff --cached -U0 --no-color | grep -E '^\+' | grep -v '^+++ ' | grep -F "$HOME/"; then
+  echo "pre-commit: the lines above add your home path ($HOME); write ~ or \$HOME instead." >&2
+  exit 1
+fi

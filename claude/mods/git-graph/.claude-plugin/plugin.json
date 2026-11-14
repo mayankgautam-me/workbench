@@ -1,0 +1,9 @@
+{
+  "name": "git-graph",
+  "version": "0.11.0",
+  "description": "Git graph panel: the repository's commits as a graph with branch and tag labels, a branch filter and a find box, a row for uncommitted changes, and git actions on a commit, branch or tag, each confirmed first",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Mayank Gautam"
+  }
+}

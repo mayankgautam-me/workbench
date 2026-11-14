@@ -1,0 +1,21 @@
+[user]
+	name = Mayank Gautam
+	email = me@mayankgautam.me
+
+# Work folders commit with the work address; each file sets user.email only.
+[includeIf "gitdir:~/Projects/Fabrolabs/"]
+	path = fabrolabs
+[includeIf "gitdir:~/Projects/I2Sage/"]
+	path = i2sage
+
+[filter "lfs"]
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+	required = true
+[credential "https://github.com"]
+	helper =
+	helper = !/opt/homebrew/bin/gh auth git-credential
+[credential "https://gist.github.com"]
+	helper =
+	helper = !/opt/homebrew/bin/gh auth git-credential

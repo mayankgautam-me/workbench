@@ -1,0 +1,339 @@
+# project-standard ci-templates v1.6: hardware (KiCad 10 boards through kicad-cli; the 3D models come from the KiCad library).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/hardware.yml@v1.6.
+
+on:
+  workflow_call:
+    inputs:
+      part: { type: string, required: true }
+      part_dir: { type: string, required: true }
+      run_check: { type: boolean, default: true }
+      run_build: { type: boolean, default: true }
+      run_release: { type: boolean, default: false }
+      confirm: { type: string, default: '' }
+    secrets:
+      SECRETS_DEPLOY_KEY:
+        required: false
+      SOPS_AGE_KEY:
+        required: false
+      KICAD_LIBRARY_DEPLOY_KEY:
+        required: false
+
+jobs:
+  check:
+    if: ${{ inputs.run_check }}
+    runs-on: ${{ vars.STD_RUNNER || 'ubuntu-24.04' }}
+    container:
+      image: kicad/kicad:10.0.8@sha256:3f4a01786dfbe803a65f345c3342b765db9add913f5e9448f8356793714ddc34
+      options: --user root
+    env:
+      PART: ${{ inputs.part }}
+      PART_DIR: ${{ inputs.part_dir }}
+      STD_APT_PACKAGES: ${{ vars.STD_APT_PACKAGES }}
+      GIT_LFS_SKIP_SMUDGE: "0"
+      INTERACTIVE_HTML_BOM_NO_DISPLAY: "1"
+    steps:
+      - name: Install system packages (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends make git git-lfs curl jq zip ${STD_APT_PACKAGES:-}
+      - name: Git setting for the container
+        run: git config --global --add safe.directory '*'
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: false
+      - name: Keep the Git LFS objects of this part
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .git/lfs
+          key: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+          restore-keys: |
+            lfs-${{ inputs.part }}-
+      - name: Get the Git LFS files of this part only
+        shell: bash
+        env:
+          PART_DIR: ${{ inputs.part_dir }}
+        run: |
+          set -euo pipefail
+          if ! command -v git-lfs >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+            sudo_cmd=""
+            [ "$(id -u)" = 0 ] || sudo_cmd=sudo
+            $sudo_cmd apt-get update -qq
+            $sudo_cmd apt-get install -y -qq git-lfs
+          fi
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git lfs install --local
+          git lfs pull --include "$PART_DIR/**"
+      - name: Check out the KiCad library (3D models)
+        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ vars.KICAD_LIBRARY_REPO }}
+          ssh-key: ${{ secrets.KICAD_LIBRARY_DEPLOY_KEY }}
+          path: .ci/kicad-library
+          lfs: false
+      - name: Export the KiCad library paths
+        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        env:
+          LIB_PREFIX: ${{ vars.KICAD_LIB_PREFIX }}
+        run: |
+          set -euo pipefail
+          prefix="${LIB_PREFIX:-FABROLABS}"
+          lib="$GITHUB_WORKSPACE/.ci/kicad-library"
+          {
+            echo "KICAD_LIBRARY_DIR=$lib"
+            echo "KICAD_LIB_PREFIX=$prefix"
+            echo "${prefix}_LIB_DIR=$lib"
+            echo "${prefix}_3DMODEL_DIR=$lib/3D Models"
+            echo "${prefix}_DATASHEET_DIR=$lib/Datasheets"
+          } >> "$GITHUB_ENV"
+      - name: Install InteractiveHtmlBom at the pinned commit
+        env:
+          STD_IBOM_COMMIT: ${{ vars.STD_IBOM_COMMIT }}
+        run: |
+          set -euo pipefail
+          # The image has no InteractiveHtmlBom: fetch the pinned commit (v2.12.0) so the code cannot change under a run.
+          # The default pin; the repo variable STD_IBOM_COMMIT overrides it. KICAD_IBOM and the no-display flag are exported.
+          ibom="$RUNNER_TEMP/ibom"
+          git init --quiet "$ibom"
+          git -C "$ibom" fetch --quiet --depth 1 https://github.com/openscopeproject/InteractiveHtmlBom.git "${STD_IBOM_COMMIT:-5c192e794cd66fde04bab11810601b711bf8581b}"
+          git -C "$ibom" -c advice.detachedHead=false checkout --quiet FETCH_HEAD
+          echo "KICAD_IBOM=$ibom/InteractiveHtmlBom/generate_interactive_bom.py" >> "$GITHUB_ENV"
+      - name: Check
+        run: make "$PART-check"
+      - name: Keep rpt
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.part }}-rpt
+          path: ${{ inputs.part_dir }}/outputs/*.rpt
+          retention-days: 7
+          if-no-files-found: ignore
+
+  build:
+    if: ${{ inputs.run_build && !failure() && !cancelled() }}
+    needs: check
+    runs-on: ${{ vars.STD_RUNNER || 'ubuntu-24.04' }}
+    container:
+      image: kicad/kicad:10.0.8@sha256:3f4a01786dfbe803a65f345c3342b765db9add913f5e9448f8356793714ddc34
+      options: --user root
+    env:
+      PART: ${{ inputs.part }}
+      PART_DIR: ${{ inputs.part_dir }}
+      STD_APT_PACKAGES: ${{ vars.STD_APT_PACKAGES }}
+      GIT_LFS_SKIP_SMUDGE: "0"
+      INTERACTIVE_HTML_BOM_NO_DISPLAY: "1"
+    steps:
+      - name: Install system packages (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends make git git-lfs curl jq zip ${STD_APT_PACKAGES:-}
+      - name: Git setting for the container
+        run: git config --global --add safe.directory '*'
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: false
+      - name: Keep the Git LFS objects of this part
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .git/lfs
+          key: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+          restore-keys: |
+            lfs-${{ inputs.part }}-
+      - name: Get the Git LFS files of this part only
+        shell: bash
+        env:
+          PART_DIR: ${{ inputs.part_dir }}
+        run: |
+          set -euo pipefail
+          if ! command -v git-lfs >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+            sudo_cmd=""
+            [ "$(id -u)" = 0 ] || sudo_cmd=sudo
+            $sudo_cmd apt-get update -qq
+            $sudo_cmd apt-get install -y -qq git-lfs
+          fi
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git lfs install --local
+          git lfs pull --include "$PART_DIR/**"
+      - name: Check out the KiCad library (3D models)
+        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ vars.KICAD_LIBRARY_REPO }}
+          ssh-key: ${{ secrets.KICAD_LIBRARY_DEPLOY_KEY }}
+          path: .ci/kicad-library
+          lfs: false
+      - name: Get the KiCad library commit
+        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        id: libsha
+        run: echo "sha=$(git -C "$GITHUB_WORKSPACE/.ci/kicad-library" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Keep the KiCad library LFS objects (per library commit)
+        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci/kicad-library/.git/lfs/objects
+          key: kicad-lfs-v1-${{ steps.libsha.outputs.sha }}
+          restore-keys: |
+            kicad-lfs-v1-
+      - name: Get the 3D models from Git LFS (the 3D Models folder only, not the datasheets)
+        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        run: git -C "$GITHUB_WORKSPACE/.ci/kicad-library" lfs pull --include "3D Models/**"
+      - name: Export the KiCad library paths
+        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        env:
+          LIB_PREFIX: ${{ vars.KICAD_LIB_PREFIX }}
+        run: |
+          set -euo pipefail
+          prefix="${LIB_PREFIX:-FABROLABS}"
+          lib="$GITHUB_WORKSPACE/.ci/kicad-library"
+          {
+            echo "KICAD_LIBRARY_DIR=$lib"
+            echo "KICAD_LIB_PREFIX=$prefix"
+            echo "${prefix}_LIB_DIR=$lib"
+            echo "${prefix}_3DMODEL_DIR=$lib/3D Models"
+            echo "${prefix}_DATASHEET_DIR=$lib/Datasheets"
+          } >> "$GITHUB_ENV"
+      - name: Install InteractiveHtmlBom at the pinned commit
+        env:
+          STD_IBOM_COMMIT: ${{ vars.STD_IBOM_COMMIT }}
+        run: |
+          set -euo pipefail
+          # The image has no InteractiveHtmlBom: fetch the pinned commit (v2.12.0) so the code cannot change under a run.
+          # The default pin; the repo variable STD_IBOM_COMMIT overrides it. KICAD_IBOM and the no-display flag are exported.
+          ibom="$RUNNER_TEMP/ibom"
+          git init --quiet "$ibom"
+          git -C "$ibom" fetch --quiet --depth 1 https://github.com/openscopeproject/InteractiveHtmlBom.git "${STD_IBOM_COMMIT:-5c192e794cd66fde04bab11810601b711bf8581b}"
+          git -C "$ibom" -c advice.detachedHead=false checkout --quiet FETCH_HEAD
+          echo "KICAD_IBOM=$ibom/InteractiveHtmlBom/generate_interactive_bom.py" >> "$GITHUB_ENV"
+      - name: Build
+        run: make "$PART-build"
+      - name: Keep outputs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.part }}-outputs
+          path: ${{ inputs.part_dir }}/outputs/
+          retention-days: 7
+
+  release:
+    if: ${{ inputs.run_release && !failure() && !cancelled() }}
+    needs: [check, build]
+    runs-on: ${{ vars.STD_RUNNER || 'ubuntu-24.04' }}
+    container:
+      image: kicad/kicad:10.0.8@sha256:3f4a01786dfbe803a65f345c3342b765db9add913f5e9448f8356793714ddc34
+      options: --user root
+    permissions:
+      contents: write
+    env:
+      PART: ${{ inputs.part }}
+      PART_DIR: ${{ inputs.part_dir }}
+      STD_APT_PACKAGES: ${{ vars.STD_APT_PACKAGES }}
+      GIT_LFS_SKIP_SMUDGE: "0"
+      INTERACTIVE_HTML_BOM_NO_DISPLAY: "1"
+    steps:
+      - name: Get the GitHub CLI (release.sh needs it; a container has none)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v gh >/dev/null 2>&1; then exit 0; fi
+          if ! command -v curl >/dev/null 2>&1; then s=""; [ "$(id -u)" = 0 ] || s=sudo; $s apt-get update -qq && $s apt-get install -y -qq --no-install-recommends curl ca-certificates; fi
+          ver=2.103.3
+          case "$(uname -m)" in
+            x86_64) arch=amd64; sha=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d ;;
+            aarch64) arch=arm64; sha=ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63 ;;
+            *) echo "gh: unsupported architecture $(uname -m)" >&2; exit 1 ;;
+          esac
+          tmp="$(mktemp -d)"
+          curl -fsSL -o "$tmp/gh.tgz" "https://github.com/cli/cli/releases/download/v${ver}/gh_${ver}_linux_${arch}.tar.gz"
+          echo "$sha  $tmp/gh.tgz" | sha256sum -c -
+          tar -xzf "$tmp/gh.tgz" -C "$tmp"
+          mkdir -p "$HOME/.local/bin"
+          install -m 755 "$tmp/gh_${ver}_linux_${arch}/bin/gh" "$HOME/.local/bin/gh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Install system packages (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends make git git-lfs curl jq zip ${STD_APT_PACKAGES:-}
+      - name: Git setting for the container
+        run: git config --global --add safe.directory '*'
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: false
+      - name: Keep the Git LFS objects of this part
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .git/lfs
+          key: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+          restore-keys: |
+            lfs-${{ inputs.part }}-
+      - name: Get the Git LFS files of this part only
+        shell: bash
+        env:
+          PART_DIR: ${{ inputs.part_dir }}
+        run: |
+          set -euo pipefail
+          if ! command -v git-lfs >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+            sudo_cmd=""
+            [ "$(id -u)" = 0 ] || sudo_cmd=sudo
+            $sudo_cmd apt-get update -qq
+            $sudo_cmd apt-get install -y -qq git-lfs
+          fi
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git lfs install --local
+          git lfs pull --include "$PART_DIR/**"
+      - name: Check out the KiCad library (3D models)
+        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ vars.KICAD_LIBRARY_REPO }}
+          ssh-key: ${{ secrets.KICAD_LIBRARY_DEPLOY_KEY }}
+          path: .ci/kicad-library
+          lfs: false
+      - name: Get the KiCad library commit
+        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        id: libsha
+        run: echo "sha=$(git -C "$GITHUB_WORKSPACE/.ci/kicad-library" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Keep the KiCad library LFS objects (per library commit)
+        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci/kicad-library/.git/lfs/objects
+          key: kicad-lfs-v1-${{ steps.libsha.outputs.sha }}
+          restore-keys: |
+            kicad-lfs-v1-
+      - name: Get the 3D models from Git LFS (the 3D Models folder only, not the datasheets)
+        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        run: git -C "$GITHUB_WORKSPACE/.ci/kicad-library" lfs pull --include "3D Models/**"
+      - name: Export the KiCad library paths
+        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        env:
+          LIB_PREFIX: ${{ vars.KICAD_LIB_PREFIX }}
+        run: |
+          set -euo pipefail
+          prefix="${LIB_PREFIX:-FABROLABS}"
+          lib="$GITHUB_WORKSPACE/.ci/kicad-library"
+          {
+            echo "KICAD_LIBRARY_DIR=$lib"
+            echo "KICAD_LIB_PREFIX=$prefix"
+            echo "${prefix}_LIB_DIR=$lib"
+            echo "${prefix}_3DMODEL_DIR=$lib/3D Models"
+            echo "${prefix}_DATASHEET_DIR=$lib/Datasheets"
+          } >> "$GITHUB_ENV"
+      - name: Install InteractiveHtmlBom at the pinned commit
+        env:
+          STD_IBOM_COMMIT: ${{ vars.STD_IBOM_COMMIT }}
+        run: |
+          set -euo pipefail
+          # The image has no InteractiveHtmlBom: fetch the pinned commit (v2.12.0) so the code cannot change under a run.
+          # The default pin; the repo variable STD_IBOM_COMMIT overrides it. KICAD_IBOM and the no-display flag are exported.
+          ibom="$RUNNER_TEMP/ibom"
+          git init --quiet "$ibom"
+          git -C "$ibom" fetch --quiet --depth 1 https://github.com/openscopeproject/InteractiveHtmlBom.git "${STD_IBOM_COMMIT:-5c192e794cd66fde04bab11810601b711bf8581b}"
+          git -C "$ibom" -c advice.detachedHead=false checkout --quiet FETCH_HEAD
+          echo "KICAD_IBOM=$ibom/InteractiveHtmlBom/generate_interactive_bom.py" >> "$GITHUB_ENV"
+      - name: Make the GitHub Release files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: make "$PART-github-release"
+

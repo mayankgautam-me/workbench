@@ -1,0 +1,22 @@
+# Git LFS only for 3D and CAD models (`make setup` runs `git lfs install`). Images, fonts, short videos and test
+# fixtures stay in plain git; the pre-commit hook refuses a file over 5 MB that is not in LFS, and such a file gets a
+# line of its own here, like the ones below with its path in place of the pattern. Build output (zip, hex) is a release file, not
+# committed. KiCad sources stay plain text so they diff and merge.
+*.step  filter=lfs diff=lfs merge=lfs -text
+*.stp   filter=lfs diff=lfs merge=lfs -text
+*.wrl   filter=lfs diff=lfs merge=lfs -text
+*.fcstd filter=lfs diff=lfs merge=lfs -text
+
+*.kicad_sch  text
+*.kicad_pcb  text
+*.kicad_pro  text
+*.kicad_sym  text
+*.kicad_mod  text
+*.kicad_dru  text
+*.kicad_wks  text
+fp-lib-table  text
+sym-lib-table text
+
+*.sh   text eol=lf
+*.mk   text eol=lf
+Makefile text eol=lf

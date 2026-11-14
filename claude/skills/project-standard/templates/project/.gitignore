@@ -1,0 +1,38 @@
+# base: every standard project
+.DS_Store
+*.swp
+*~
+/.cache/
+/tmp/
+# act (make ci-local): its work folder, and the local secrets file, which can hold secrets
+.act/
+.secrets
+
+# secrets never live in a project repo: they are in ~/.secrets (see secrets.schema)
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+.prod.vars
+*.pem
+*.p8
+*.p12
+*.key
+*.jks
+*.keystore
+/secrets/
+
+# binary documents are never committed: docs are Markdown in docs/, and a generated PDF is a release asset
+*.pdf
+*.doc
+*.docx
+*.xls
+*.xlsx
+*.ppt
+*.pptx
+*.odt
+*.ods
+*.odp
+
+# the CI jobs check the secrets repo and the KiCad library out here (never commit them)
+.ci/

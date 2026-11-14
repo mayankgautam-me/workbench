@@ -1,0 +1,31 @@
+{
+  "name": "local-mods",
+  "owner": {
+    "name": "Mayank Gautam"
+  },
+  "metadata": {
+    "description": "Mods for the Claude Code desktop app: a status band, session colours, a project map and a git graph"
+  },
+  "plugins": [
+    {
+      "name": "status-band",
+      "source": "./status-band",
+      "description": "Band above the message box: context, plan limits and session cost, live; agents and background tasks; folds to one row"
+    },
+    {
+      "name": "session-tint",
+      "source": "./session-tint",
+      "description": "Gives each session its own Tokyo Night colour: a rule above the message box (a bar on a folded status band), your prompts, the spinner and the turn's closing line; /tint changes it"
+    },
+    {
+      "name": "agent-map",
+      "source": "./agent-map",
+      "description": "Project map panel: the components of the project's PLAN.md as cards with their tasks, and live on them which agents are working where, on which files and at what"
+    },
+    {
+      "name": "git-graph",
+      "source": "./git-graph",
+      "description": "Git graph panel: commits as a graph with branch and tag labels, a branch filter, a find box, uncommitted changes, and confirmed git actions; /graph or the band's graph button shows it"
+    }
+  ]
+}

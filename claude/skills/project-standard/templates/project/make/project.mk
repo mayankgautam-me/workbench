@@ -1,0 +1,26 @@
+# make/project.mk: this project's own settings. The project-standard skill writes it once and never
+# overwrites it; edit it freely.
+#
+# PROJECT    the project's name: its folder in the secrets repo (~/.secrets/<PROJECT>/), the prefix of
+#            its CI variables and image names. Lowercase letters, digits and '-'.
+# PORT_BASE  dev ports are PORT_BASE + an offset per part, so two projects can run `make dev` at once.
+# PARTS      one entry per part, `name:kind[:dir]`; dir defaults to name. Every part gets the stage
+#            commands of its kind as `make <name>-<verb>`, and the root `make <verb>` runs them all.
+#            Kinds: zephyr espidf pio arm-gcc circuitpython hardware cloud-worker web-pages
+#                   app-flutter app-tauri app-xcode app-android docker go python
+# CI_TEMPLATES_REPO  optional: owner/name of the reusable CI workflows, over the user config's (default
+#            mayankgautam-me/ci-templates); scaffold the workflows again after changing it.
+#
+# Per-part settings are `<part>_<VAR> := value`, for example:
+#   firmware_BOARD := nrf9151dk/nrf9151/ns
+#   firmware_NCS   := v3.2.1
+# A value given on the command line wins: `make firmware-build BOARD=...`.
+
+PROJECT   := @@PROJECT@@
+PORT_BASE := @@PORT_BASE@@
+
+PARTS := \
+@@PARTS@@
+
+# Per-part settings
+@@SETTINGS@@

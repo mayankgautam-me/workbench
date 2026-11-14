@@ -1,0 +1,9 @@
+{
+  "name": "status-band",
+  "version": "1.5.2",
+  "description": "Band above the message box: context, plan limits and session cost, live; agents and background tasks; folds to one row",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Mayank Gautam"
+  }
+}

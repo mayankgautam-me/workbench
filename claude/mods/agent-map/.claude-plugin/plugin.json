@@ -1,0 +1,9 @@
+{
+  "name": "agent-map",
+  "version": "0.12.0",
+  "description": "Project map panel: the components of the project's PLAN.md as cards with their tasks, and live on them which agents are working where, on which files and at what; a session card lists every agent at work",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Mayank Gautam"
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "permissions": {
+    "allow": [
+      "Bash(brew info *)",
+      "Bash(brew list *)",
+      "Bash(brew search *)",
+      "Read(~/.zshrc)",
+      "Read(~/.tmux.conf)",
+      "Edit(~/.tmux.conf)"
+    ],
+    "deny": [
+      "Bash(sudo *)"
+    ],
+    "additionalDirectories": [
+      "~/.config"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.claude/hooks/detect-project.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "worktree": {
+    "baseRef": "head"
+  },
+  "enabledPlugins": {
+    "status-band@local-mods": true,
+    "session-tint@local-mods": true,
+    "cc-plugin-you-should-know@builtin": true,
+    "agent-teams@claude-code-workflows": true,
+    "arm-cortex-microcontrollers@claude-code-workflows": true,
+    "backend-development@claude-code-workflows": true,
+    "code-documentation@claude-code-workflows": true,
+    "code-refactoring@claude-code-workflows": true,
+    "comprehensive-review@claude-code-workflows": true,
+    "data-engineering@claude-code-workflows": true,
+    "developer-essentials@claude-code-workflows": true,
+    "documentation-generation@claude-code-workflows": true,
+    "error-debugging@claude-code-workflows": true,
+    "frontend-mobile-development@claude-code-workflows": true,
+    "frontend-mobile-security@claude-code-workflows": true,
+    "full-stack-orchestration@claude-code-workflows": true,
+    "llm-application-dev@claude-code-workflows": true,
+    "llm-finetuning@claude-code-workflows": true,
+    "machine-learning-ops@claude-code-workflows": true,
+    "multi-platform-apps@claude-code-workflows": true,
+    "reverse-engineering@claude-code-workflows": true,
+    "security-compliance@claude-code-workflows": true,
+    "security-scanning@claude-code-workflows": true,
+    "shell-scripting@claude-code-workflows": true,
+    "systems-programming@claude-code-workflows": true,
+    "ui-design@claude-code-workflows": true,
+    "unit-testing@claude-code-workflows": true,
+    "agent-map@local-mods": true,
+    "git-graph@local-mods": true,
+    "brag@brag": true
+  },
+  "extraKnownMarketplaces": {
+    "claude-code-workflows": {
+      "source": {
+        "source": "github",
+        "repo": "wshobson/agents"
+      }
+    },
+    "brag": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/latent-spaces/brag.git"
+      }
+    }
+  },
+  "modelSettings": {
+    "claude-opus-5-5": {
+      "autoCompactWindow": 750000
+    }
+  },
+  "theme": "auto",
+  "inputNeededNotifEnabled": true,
+  "agentPushNotifEnabled": true
+}

@@ -1,0 +1,290 @@
+# project-standard ci-templates v1.6: circuitpython (CircuitPython image; the build runs on the runner's Docker, no DinD).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/circuitpython.yml@v1.6.
+
+on:
+  workflow_call:
+    inputs:
+      part: { type: string, required: true }
+      part_dir: { type: string, required: true }
+      run_check: { type: boolean, default: true }
+      run_build: { type: boolean, default: true }
+      run_release: { type: boolean, default: false }
+      confirm: { type: string, default: '' }
+      source_run_id: { type: string, default: '' }
+    secrets:
+      SECRETS_DEPLOY_KEY:
+        required: false
+      SOPS_AGE_KEY:
+        required: false
+      KICAD_LIBRARY_DEPLOY_KEY:
+        required: false
+
+jobs:
+  check:
+    if: ${{ inputs.run_check }}
+    runs-on: ${{ vars.STD_RUNNER || 'ubuntu-24.04' }}
+    container: python:3.12-slim@sha256:4840d514c583a4d3d8cad3940e68dee6f0f6f3635c12fcd0a3d74c21a5b93a54
+    env:
+      PART: ${{ inputs.part }}
+      PART_DIR: ${{ inputs.part_dir }}
+      STD_APT_PACKAGES: ${{ vars.STD_APT_PACKAGES }}
+    steps:
+      - name: Install system packages (apt)
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends make git ${STD_APT_PACKAGES:-}
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Keep the Git LFS objects of this part
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .git/lfs
+          key: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+          restore-keys: |
+            lfs-${{ inputs.part }}-
+      - name: Get the Git LFS files of this part only
+        shell: bash
+        env:
+          PART_DIR: ${{ inputs.part_dir }}
+        run: |
+          set -euo pipefail
+          if ! command -v git-lfs >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+            sudo_cmd=""
+            [ "$(id -u)" = 0 ] || sudo_cmd=sudo
+            $sudo_cmd apt-get update -qq
+            $sudo_cmd apt-get install -y -qq git-lfs
+          fi
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git lfs install --local
+          git lfs pull --include "$PART_DIR/**"
+      - name: Check
+        run: make "$PART-check"
+
+  build:
+    if: ${{ inputs.run_build && !failure() && !cancelled() }}
+    needs: check
+    runs-on: ${{ vars.STD_RUNNER || 'ubuntu-24.04' }}
+    env:
+      PART: ${{ inputs.part }}
+      PART_DIR: ${{ inputs.part_dir }}
+      STD_APT_PACKAGES: ${{ vars.STD_APT_PACKAGES }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Keep the Git LFS objects of this part
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .git/lfs
+          key: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+          restore-keys: |
+            lfs-${{ inputs.part }}-
+      - name: Get the Git LFS files of this part only
+        shell: bash
+        env:
+          PART_DIR: ${{ inputs.part_dir }}
+        run: |
+          set -euo pipefail
+          if ! command -v git-lfs >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+            sudo_cmd=""
+            [ "$(id -u)" = 0 ] || sudo_cmd=sudo
+            $sudo_cmd apt-get update -qq
+            $sudo_cmd apt-get install -y -qq git-lfs
+          fi
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git lfs install --local
+          git lfs pull --include "$PART_DIR/**"
+      - name: Install dependencies (no CI key)
+        run: env -u SOPS_AGE_KEY make "$PART-setup"
+      - name: Build
+        run: make "$PART-build"
+      - name: Keep build
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.part }}-build
+          path: ${{ inputs.part_dir }}/build/
+          retention-days: 7
+
+  release:
+    if: ${{ inputs.run_release && !failure() && !cancelled() }}
+    needs: [check, build]
+    runs-on: ${{ vars.STD_RUNNER || 'ubuntu-24.04' }}
+    container: node:22-bookworm@sha256:7702d8aa4d5910871692af4480eb3ba86f23047a6417a44d857d06c95d060d3f
+    permissions:
+      actions: read
+      contents: write
+    env:
+      PART: ${{ inputs.part }}
+      PART_DIR: ${{ inputs.part_dir }}
+      STD_APT_PACKAGES: ${{ vars.STD_APT_PACKAGES }}
+    steps:
+      - name: Get the GitHub CLI (release.sh needs it; a container has none)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v gh >/dev/null 2>&1; then exit 0; fi
+          if ! command -v curl >/dev/null 2>&1; then s=""; [ "$(id -u)" = 0 ] || s=sudo; $s apt-get update -qq && $s apt-get install -y -qq --no-install-recommends curl ca-certificates; fi
+          ver=2.103.3
+          case "$(uname -m)" in
+            x86_64) arch=amd64; sha=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d ;;
+            aarch64) arch=arm64; sha=ee32df2323c8847f5fac6cb6b4b69ca75828e9329a8f22f677021f7b3306ce63 ;;
+            *) echo "gh: unsupported architecture $(uname -m)" >&2; exit 1 ;;
+          esac
+          tmp="$(mktemp -d)"
+          curl -fsSL -o "$tmp/gh.tgz" "https://github.com/cli/cli/releases/download/v${ver}/gh_${ver}_linux_${arch}.tar.gz"
+          echo "$sha  $tmp/gh.tgz" | sha256sum -c -
+          tar -xzf "$tmp/gh.tgz" -C "$tmp"
+          mkdir -p "$HOME/.local/bin"
+          install -m 755 "$tmp/gh_${ver}_linux_${arch}/bin/gh" "$HOME/.local/bin/gh"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Keep the Git LFS objects of this part
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .git/lfs
+          key: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+          restore-keys: |
+            lfs-${{ inputs.part }}-
+      - name: Get the Git LFS files of this part only
+        shell: bash
+        env:
+          PART_DIR: ${{ inputs.part_dir }}
+        run: |
+          set -euo pipefail
+          if ! command -v git-lfs >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+            sudo_cmd=""
+            [ "$(id -u)" = 0 ] || sudo_cmd=sudo
+            $sudo_cmd apt-get update -qq
+            $sudo_cmd apt-get install -y -qq git-lfs
+          fi
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git lfs install --local
+          git lfs pull --include "$PART_DIR/**"
+      - name: Install mise and the project's tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Explicit setup, carried over from the v8 .std-mise helper. Linux: make, git, curl and jq from apt when one is missing,
+          # and STD_APT_PACKAGES. mise comes from its pinned release tarball, sha256 checked (not curl | sh). Change the
+          # version and all four digests together.
+          if [ "$(uname -s)" = Linux ] && command -v apt-get >/dev/null 2>&1; then
+            sudo_cmd=""; [ "$(id -u)" = 0 ] || sudo_cmd=sudo
+            need=""; for t in make git curl jq; do command -v "$t" >/dev/null 2>&1 || need="$need $t"; done
+            if [ -n "$need" ] || { [ -n "${STD_APT_PACKAGES:-}" ] && ! dpkg -s ${STD_APT_PACKAGES:-} >/dev/null 2>&1; }; then
+              $sudo_cmd apt-get update -qq
+              $sudo_cmd apt-get install -y -qq --no-upgrade $need ca-certificates ${STD_APT_PACKAGES:-}
+            fi
+          fi
+          if ! command -v mise >/dev/null 2>&1; then
+            mise_v=v2026.11.3
+            case "$(uname -s)-$(uname -m)" in
+              Linux-x86_64) mise_os=linux-x64; mise_sha=837acae6defb8c9ad74823f6e38856633bacb04c65c1ac67d952749847543bd9; sha_cmd="sha256sum" ;;
+              Linux-aarch64) mise_os=linux-arm64; mise_sha=13547a80d1dc2d5f81bb183023732f4981486e894d060e30993cc4364b4af51d; sha_cmd="sha256sum" ;;
+              Darwin-arm64) mise_os=macos-arm64; mise_sha=de9a54330fee4edede51a3cf6196bbf522f01c5e3fd981e0bebea33f561a0431; sha_cmd="shasum -a 256" ;;
+              Darwin-x86_64) mise_os=macos-x64; mise_sha=88389a4a624a7279ec8d2d06e5c0fbd874ce4f5de791767883b32f62f4e1d62c; sha_cmd="shasum -a 256" ;;
+              *) echo "mise: unsupported platform $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+            esac
+            mise_d="$(mktemp -d)"
+            curl -fsSL -o "$mise_d/mise.tar.gz" "https://github.com/jdx/mise/releases/download/$mise_v/mise-$mise_v-$mise_os.tar.gz"
+            echo "$mise_sha  $mise_d/mise.tar.gz" | $sha_cmd -c -
+            tar -xzf "$mise_d/mise.tar.gz" -C "$mise_d" mise/bin/mise
+            mkdir -p "$HOME/.local/bin"
+            install -m 755 "$mise_d/mise/bin/mise" "$HOME/.local/bin/mise"
+            rm -rf "$mise_d"
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+          mise install
+      - name: Get the build from the build job
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.part }}-build
+          path: ${{ inputs.part_dir }}/build/
+          run-id: ${{ inputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Make the GitHub Release files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: make "$PART-github-release" NOBUILD=1
+
+  publish:
+    if: ${{ inputs.confirm == 'production' && !failure() && !cancelled() }}
+    needs: [check, build]
+    runs-on: ${{ vars.STD_RUNNER || 'ubuntu-24.04' }}
+    container: node:22-bookworm@sha256:7702d8aa4d5910871692af4480eb3ba86f23047a6417a44d857d06c95d060d3f
+    permissions:
+      actions: read
+      contents: read
+    env:
+      PART: ${{ inputs.part }}
+      PART_DIR: ${{ inputs.part_dir }}
+      STD_APT_PACKAGES: ${{ vars.STD_APT_PACKAGES }}
+    steps:
+      - name: Export the workspace paths (in a container, github.workspace is the host path)
+        shell: bash
+        run: |
+          echo "SECRETS_DIR=$GITHUB_WORKSPACE/.ci/secrets" >> "$GITHUB_ENV"
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out the secrets repo (sparse, for decryption)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ vars.SECRETS_REPO }}
+          ssh-key: ${{ secrets.SECRETS_DEPLOY_KEY }}
+          path: .ci/secrets
+          sparse-checkout: |
+            /${{ github.event.repository.name }}/
+            /recipients/
+          sparse-checkout-cone-mode: false
+      - name: Install mise and the project's tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Explicit setup, carried over from the v8 .std-mise helper. Linux: make, git, curl and jq from apt when one is missing,
+          # and STD_APT_PACKAGES. mise comes from its pinned release tarball, sha256 checked (not curl | sh). Change the
+          # version and all four digests together.
+          if [ "$(uname -s)" = Linux ] && command -v apt-get >/dev/null 2>&1; then
+            sudo_cmd=""; [ "$(id -u)" = 0 ] || sudo_cmd=sudo
+            need=""; for t in make git curl jq; do command -v "$t" >/dev/null 2>&1 || need="$need $t"; done
+            if [ -n "$need" ] || { [ -n "${STD_APT_PACKAGES:-}" ] && ! dpkg -s ${STD_APT_PACKAGES:-} >/dev/null 2>&1; }; then
+              $sudo_cmd apt-get update -qq
+              $sudo_cmd apt-get install -y -qq --no-upgrade $need ca-certificates ${STD_APT_PACKAGES:-}
+            fi
+          fi
+          if ! command -v mise >/dev/null 2>&1; then
+            mise_v=v2026.11.3
+            case "$(uname -s)-$(uname -m)" in
+              Linux-x86_64) mise_os=linux-x64; mise_sha=837acae6defb8c9ad74823f6e38856633bacb04c65c1ac67d952749847543bd9; sha_cmd="sha256sum" ;;
+              Linux-aarch64) mise_os=linux-arm64; mise_sha=13547a80d1dc2d5f81bb183023732f4981486e894d060e30993cc4364b4af51d; sha_cmd="sha256sum" ;;
+              Darwin-arm64) mise_os=macos-arm64; mise_sha=de9a54330fee4edede51a3cf6196bbf522f01c5e3fd981e0bebea33f561a0431; sha_cmd="shasum -a 256" ;;
+              Darwin-x86_64) mise_os=macos-x64; mise_sha=88389a4a624a7279ec8d2d06e5c0fbd874ce4f5de791767883b32f62f4e1d62c; sha_cmd="shasum -a 256" ;;
+              *) echo "mise: unsupported platform $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+            esac
+            mise_d="$(mktemp -d)"
+            curl -fsSL -o "$mise_d/mise.tar.gz" "https://github.com/jdx/mise/releases/download/$mise_v/mise-$mise_v-$mise_os.tar.gz"
+            echo "$mise_sha  $mise_d/mise.tar.gz" | $sha_cmd -c -
+            tar -xzf "$mise_d/mise.tar.gz" -C "$mise_d" mise/bin/mise
+            mkdir -p "$HOME/.local/bin"
+            install -m 755 "$mise_d/mise/bin/mise" "$HOME/.local/bin/mise"
+            rm -rf "$mise_d"
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+          mise install
+      - name: Install sops and age
+        shell: bash
+        run: command -v sops >/dev/null 2>&1 && command -v age >/dev/null 2>&1 || mise use -g --yes sops@3 age@1
+      - name: Get the build from the build job
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.part }}-build
+          path: ${{ inputs.part_dir }}/build/
+          run-id: ${{ inputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Publish (production)
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: make "$PART-release" ENV=production CONFIRM=production NOBUILD=1
+
