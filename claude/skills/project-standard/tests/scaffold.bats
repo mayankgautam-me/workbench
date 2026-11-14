@@ -6,7 +6,7 @@ if [[ -f "$BATS_TEST_DIRNAME/helpers.bash" ]]; then
   load helpers
 fi
 
-SA_HEADER='# project-standard v1.6 (managed: refresh with the project-standard skill, put project changes in make/local.mk)'
+SA_HEADER='# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)'
 SA_KINDS="zephyr espidf pio arm-gcc circuitpython hardware cloud-worker web-pages app-flutter app-tauri app-xcode app-android docker go python"
 
 # One part per kind. Dirs are explicit (the dir equals the part name unless nested), so the tree below stays
@@ -46,12 +46,12 @@ setup() {
   printf 'GITHUB_OWNER := example-owner\n' >"$STD_CONFIG/config.mk"
 }
 
-# sa_uses_ok FILE: every uses: line is the CI templates' reusable workflow at @v1.6, or actions/checkout pinned by SHA
+# sa_uses_ok FILE: every uses: line is the CI templates' reusable workflow at @v1.7, or actions/checkout pinned by SHA
 sa_uses_ok() {
   local ref
   while IFS= read -r ref; do
     case $ref in
-      mayankgautam-me/ci-templates/.github/workflows/*.yml@v1.6) ;;
+      mayankgautam-me/ci-templates/.github/workflows/*.yml@v1.7) ;;
       actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1) ;;
       *)
         echo "unexpected uses in $1: $ref" >&2
@@ -98,7 +98,7 @@ sa_scaffold_all() {
   # managed files
   cmp "$d/Makefile" "$skill/templates/project/Makefile"
   [ "$(sed -n 1p "$d/Makefile")" = "$SA_HEADER" ]
-  [ "$(tr -d '[:space:]' <"$d/make/VERSION")" = 1.6 ]
+  [ "$(tr -d '[:space:]' <"$d/make/VERSION")" = 1.7 ]
   cmp "$d/make/common.mk" "$skill/templates/make/common.mk"
   for f in "$skill"/templates/make/bin/*.sh; do
     [ -x "$d/make/bin/$(basename "$f")" ]
@@ -179,8 +179,8 @@ sa_scaffold_all() {
   grep -Fxq '  contents: read' "$rel"
   grep -Fxq '  contents: read' "$ci"   # the top level is read-only; a job grants what it needs
   for k in $SA_KINDS; do
-    grep -Fq "mayankgautam-me/ci-templates/.github/workflows/$k.yml@v1.6" "$ci"
-    grep -Fq "mayankgautam-me/ci-templates/.github/workflows/$k.yml@v1.6" "$rel"
+    grep -Fq "mayankgautam-me/ci-templates/.github/workflows/$k.yml@v1.7" "$ci"
+    grep -Fq "mayankgautam-me/ci-templates/.github/workflows/$k.yml@v1.7" "$rel"
   done
   grep -Fxq '  firmware:' "$ci"
   grep -Fxq "    if: needs.changes.outputs.firmware == 'true'" "$ci"
@@ -229,7 +229,7 @@ sa_scaffold_all() {
   sa_uses_ok "$rel"
   sa_absent -q 'OWNER' "$ci" "$rel"
   if command -v yq >/dev/null 2>&1; then
-    [ "$(yq '.jobs.firmware.uses' "$ci")" = 'mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.6' ]
+    [ "$(yq '.jobs.firmware.uses' "$ci")" = 'mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.7' ]
     [ "$(yq '.jobs.hardware.secrets.KICAD_LIBRARY_DEPLOY_KEY' "$ci")" = '${{ secrets.KICAD_LIBRARY_DEPLOY_KEY }}' ]
     [ "$(yq '.jobs.firmware-release.with.run_release' "$rel")" = true ]
     yq '.' "$ci" >/dev/null
@@ -419,8 +419,8 @@ sa_scaffold_all() {
   d="$BATS_TEST_TMPDIR/defrepo"
   run "$skill/scripts/scaffold.sh" "$d" --project defrepo --part api:go
   [ "$status" -eq 0 ]
-  grep -Fq '    uses: mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.6' "$d/.github/workflows/checks.yml"
-  grep -Fq '    uses: mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.6' "$d/.github/workflows/release.yml"
+  grep -Fq '    uses: mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.7' "$d/.github/workflows/checks.yml"
+  grep -Fq '    uses: mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.7' "$d/.github/workflows/release.yml"
   sa_absent -q 'example-owner/ci-templates' "$d/.github/workflows/checks.yml" "$d/.github/workflows/release.yml"
 }
 
@@ -430,15 +430,15 @@ sa_scaffold_all() {
   d="$BATS_TEST_TMPDIR/cfg"
   run "$skill/scripts/scaffold.sh" "$d" --project cfg --part api:go
   [ "$status" -eq 0 ]
-  grep -Fq 'example-group/ci-shared/.github/workflows/go.yml@v1.6' "$d/.github/workflows/checks.yml"
-  grep -Fq 'example-group/ci-shared/.github/workflows/go.yml@v1.6' "$d/.github/workflows/release.yml"
+  grep -Fq 'example-group/ci-shared/.github/workflows/go.yml@v1.7' "$d/.github/workflows/checks.yml"
+  grep -Fq 'example-group/ci-shared/.github/workflows/go.yml@v1.7' "$d/.github/workflows/release.yml"
   # the project's own setting wins; the workflows are written again from it
   printf 'CI_TEMPLATES_REPO := project-org/ci-templates\n' >>"$d/make/project.mk"
   rm "$d/.github/workflows/checks.yml" "$d/.github/workflows/release.yml"
   run "$skill/scripts/scaffold.sh" "$d" --project cfg --part api:go --force
   [ "$status" -eq 0 ]
-  grep -Fq 'project-org/ci-templates/.github/workflows/go.yml@v1.6' "$d/.github/workflows/checks.yml"
-  grep -Fq 'project-org/ci-templates/.github/workflows/go.yml@v1.6' "$d/.github/workflows/release.yml"
+  grep -Fq 'project-org/ci-templates/.github/workflows/go.yml@v1.7' "$d/.github/workflows/checks.yml"
+  grep -Fq 'project-org/ci-templates/.github/workflows/go.yml@v1.7' "$d/.github/workflows/release.yml"
   sa_absent -q 'example-group' "$d/.github/workflows/checks.yml"
 }
 
@@ -453,7 +453,7 @@ sa_scaffold_all() {
   run "$skill/scripts/scaffold.sh" "$d" --project oldsetting --part api:go
   [ "$status" -eq 0 ]
   [[ $output == *"CI_TEMPLATES_PROJECT in the user config is ignored"* ]]
-  grep -Fq 'mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.6' "$d/.github/workflows/checks.yml"
+  grep -Fq 'mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.7' "$d/.github/workflows/checks.yml"
   sa_absent -q 'example-owner/ci-templates' "$d/.github/workflows/checks.yml"
 }
 
@@ -463,7 +463,7 @@ sa_scaffold_all() {
   d="$BATS_TEST_TMPDIR/noowner"
   run "$skill/scripts/scaffold.sh" "$d" --project noowner --part api:go
   [ "$status" -eq 0 ]
-  grep -Fq 'mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.6' "$d/.github/workflows/checks.yml"
+  grep -Fq 'mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.7' "$d/.github/workflows/checks.yml"
   sa_absent -q 'OWNER/ci-templates' "$d/.github/workflows/checks.yml"
 }
 
@@ -479,7 +479,7 @@ sa_scaffold_all() {
   run "$skill/scripts/scaffold.sh" "$d" --project newowner --part api:go
   [ "$status" -eq 0 ]
   [[ $output == *"GITLAB_GROUP"*"ignored"* ]]
-  grep -Fq 'mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.6' "$d/.github/workflows/checks.yml"
+  grep -Fq 'mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.7' "$d/.github/workflows/checks.yml"
   sa_absent -q 'old-group' "$d/.github/workflows/checks.yml" "$d/.github/workflows/release.yml"
 }
 
@@ -916,7 +916,7 @@ PARTS
   sa_absent -Fxq '  board-production:' "$rel"
   sa_absent -Fxq '  worker-image-production:' "$rel"
   if command -v yq >/dev/null 2>&1; then
-    [ "$(yq '.jobs.firmware-release.uses' "$rel")" = 'mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.6' ]
+    [ "$(yq '.jobs.firmware-release.uses' "$rel")" = 'mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.7' ]
     [ "$(yq '.jobs.tools-release.permissions.contents' "$rel")" = write ]
   fi
 }

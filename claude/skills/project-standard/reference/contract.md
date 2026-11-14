@@ -1,4 +1,4 @@
-# project-standard v1.6: internal contract
+# project-standard v1.7: internal contract
 
 How the pieces of the skill fit together. `standard.md` is the user-facing spec; this file is for
 whoever writes or changes `common.mk`, a kind, a script, the CI templates, `scaffold.sh` or `audit.sh`.
@@ -51,16 +51,16 @@ and in no `.gitattributes` LFS line.
 Every managed file's first line is exactly:
 
 ```
-# project-standard v1.6 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 ```
 
 (`#!/usr/bin/env bash` first, then that line, for scripts.) `audit.sh` and the hook look for
-`project-standard v1.6` on line 1 or 2 of `make/common.mk`.
+`project-standard v1.7` on line 1 or 2 of `make/common.mk`.
 
 Root `Makefile`:
 
 ```make
-# project-standard v1.6 (managed: ...)
+# project-standard v1.7 (managed: ...)
 include make/project.mk
 include make/common.mk
 ```
@@ -405,7 +405,7 @@ from the environment, never from a command line. On a Mac gh uses its own login 
 ## CI workflows (`ci-templates/`)
 
 - `ci-templates/.github/workflows/<kind>.yml`: one reusable workflow per kind (`on: workflow_call`), in `CI_TEMPLATES_REPO`
-  (default `mayankgautam-me/ci-templates`, public, shared by every project owner), tagged `v1.6`. `scaffold.sh` and
+  (default `mayankgautam-me/ci-templates`, public, shared by every project owner), tagged `v1.7`. `scaffold.sh` and
   `audit.sh` resolve it the same way (`ci_project`: `make/project.mk`, else the environment or the user config, else
   the default); the audit warns on a `uses:` line on any other repository. Inputs: `part`, `part_dir`, `run_check`, `run_build`, `run_release`, `confirm`, `source_run_id`,
   `deploy_staging`, `production_only`, `target`. Secrets are declared in each file and passed explicitly by the caller (no

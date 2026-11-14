@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.6 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # secrets.sh: the secrets engine. One private git repo (SECRETS_DIR) holds every project's secrets,
 # encrypted with sops + age. Values reach processes through the environment only; nothing is ever
@@ -209,7 +209,7 @@ sync_secrets() {
 repo_hook_body() {
   cat <<'HOOK'
 #!/usr/bin/env bash
-# project-standard v1.6 secrets-repo pre-commit hook: refuses anything that is not SOPS-encrypted
+# project-standard v1.7 secrets-repo pre-commit hook: refuses anything that is not SOPS-encrypted
 set -euo pipefail
 bad=0
 while IFS= read -r -d '' f; do

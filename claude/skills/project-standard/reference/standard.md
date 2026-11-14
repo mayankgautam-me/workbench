@@ -1,4 +1,4 @@
-# The project standard, v1.6
+# The project standard, v1.7
 
 One set of commands for every stage of work, the same in every project: firmware, boards,
 Cloudflare services, apps and containers alike. The tools stay what they are (west, idf.py, pio,
@@ -74,7 +74,7 @@ second part of a kind arrives, the first moves into its own subfolder in the sam
 that name it).
 
 "Managed" files start with the line
-`# project-standard v1.6 (managed: ...)` and are refreshed by the skill's update mode; never edit
+`# project-standard v1.7 (managed: ...)` and are refreshed by the skill's update mode; never edit
 them in a project. Your own targets go in `make/local.mk`, written like this, and show under
 "project" in `make help`:
 
@@ -703,10 +703,10 @@ SSH deploy key (section 6). The same `make` wrapper decrypts. Set up once per pr
 ## 6. CI/CD
 
 The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/name`, default
-`mayankgautam-me/ci-templates`), tagged `v1.6`. It is a setting of its own, independent of the project's `GITHUB_OWNER`:
+`mayankgautam-me/ci-templates`), tagged `v1.7`. It is a setting of its own, independent of the project's `GITHUB_OWNER`:
 projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.6`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.7`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -986,6 +986,11 @@ Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) an
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
 
+- **1.7** (2026-11-15): `CI_TEMPLATES_REPO` (`owner/name`) names the repository of the reusable workflows, apart from
+  the project's `GITHUB_OWNER`: default `mayankgautam-me/ci-templates`, public, so projects of every owner (the
+  fabrolabs-innovations and i2sage-technologies organizations, the personal account) call the same workflows.
+  `make/project.mk` or the user config can set another. The audit reports a `uses:` line on another ci-templates repo
+  as outdated; `ci-setup` asks for the Actions Access setting only for a private one. `CI_TEMPLATES_PROJECT` is retired.
 - **1.6** (2026-11-14): `make cf-provision ENV=staging|production` also creates the project's OTA buckets
   (`OTA_BUCKET`, each `<part>_OTA_BUCKET`), in a project with Workers and in one whose only Cloudflare resource is that
   bucket (a firmware or app project); `cf-status` reports them. `OTA_PUBLIC := r2dev` in `make/project.mk` turns on

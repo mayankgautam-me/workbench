@@ -1,5 +1,5 @@
-# project-standard ci-templates v1.6: docker (an image built with buildx and pushed to ghcr.io with GITHUB_TOKEN).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/docker.yml@v1.6.
+# project-standard ci-templates v1.7: docker (an image built with buildx and pushed to ghcr.io with GITHUB_TOKEN).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/docker.yml@v1.7.
 
 on:
   workflow_call:

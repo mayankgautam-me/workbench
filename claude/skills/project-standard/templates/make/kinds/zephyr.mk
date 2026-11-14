@@ -1,4 +1,4 @@
-# project-standard v1.6 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind zephyr: a Zephyr / nRF Connect SDK firmware part (west, sysbuild, MCUboot).
 #
