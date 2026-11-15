@@ -190,7 +190,7 @@ links: [status-band, session-tint]
 - [x] Compared in the running app: park was smoothest, edge got no wheel; park kept as the only way and the probe removed in 0.11.0 {#graph-scroll-pick}
 
 ## Project standard {#project-standard}
-tech: skill, make fragments for GNU make 3.81+, bash, sops + age (Secure Enclave), GitLab CI templates
+tech: skill, make fragments for GNU make 3.81+, bash, sops + age (Secure Enclave), GitHub reusable workflows (ci-templates)
 files: [claude/skills/project-standard/**]
 needs: [instructions, detect, bootstrap]
 - [x] Contract: macro names, part registration, secrets wrapper, guards {#std-contract}
@@ -243,7 +243,6 @@ needs: [instructions, detect, bootstrap]
 - [x] v7 docs: project docs (docs/README.md, architecture, decisions/, operations when deployable) and per part README + CHANGELOG in the part folder, kind docs in docs/<part>/; Markdown only, pdf/docx/xlsx/pptx ignored; audit checks them {#std-v7-docs}
 - [x] v7 releases: make <part>-bump sets the version, moves the changelog and tags; a <part>-v<ver> tag builds the assets, uploads them to the package registry with SHA256SUMS and creates a GitLab Release with the changelog notes; publishing to stores, OTA or production stays manual {#std-v7-releases}
 - [x] v7: test on command-deck locally, publish ci-templates v7, move command-deck to v7 {#std-v7-ship}
-- [ ] Skill: audit flags a .gitlab-ci.yml whose ref differs from make/VERSION, missing <part>-gitlab-release jobs, and a .gitignore without <dir>/release/ {#std-audit-ci-ref}
 - [x] Skill: on a <part>-v tag pipeline run only that part's check, build and release jobs (today every part's check and build jobs run, spending runner minutes) {#std-tag-part-only} (done in v9: release.yml runs only the tagged part)
 - [ ] Skill: bump has no way to release the version a part already has (first release of an existing project); command-deck needed a placeholder version file. Add RELEASE_CURRENT=1 or allow VERSION= equal when no tag exists {#std-bump-current}
 - [x] v8 app releases: macOS universal from the Mac; Linux amd64 and arm64 and Windows x64 and arm64 (.msi and .exe) from tag pipeline runners into the same Release; per-platform SHA256SUMS; safe when jobs create the Release at once {#std-v8-app-matrix}
@@ -323,7 +322,7 @@ needs: [bootstrap, instructions, settings]
 - [x] bootstrap.sh all | apps | home | macos | claude | check, and a pre-commit home-path guard {#workbench-bootstrap}
 - [x] README and the CLAUDE.md sections "Dotfiles" and "This setup is a git repo" rewritten {#workbench-docs}
 - [x] Push to github.com/mayankgautam-me/workbench; `check` reports a clean Mac but for TextEdit {#workbench-publish}
-- [ ] You check GitHub, then delete the GitLab project yourself {#workbench-gitlab}
+- [x] The GitLab project is deleted {#workbench-gitlab}
 - [ ] TextEdit plain text: run `bash ~/.workbench/macos/defaults.sh` from Terminal (Claude's shell cannot write TextEdit's sandboxed settings) {#workbench-textedit}
 
 ## decisions
