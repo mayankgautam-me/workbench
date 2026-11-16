@@ -323,7 +323,7 @@ needs: [instructions, detect, bootstrap]
 - [x] 1.2: scaffold writes project.mk comments on their own line (no trailing spaces in values) {#std-1-2-projectmk-comments}
 - [x] 1.2: altium: *.PrjPcb and *.OutJob -text, *.PrjPcbVariants in lockable LFS {#std-1-2-altium-text}
 - [x] 1.2: silabs kind: pinned WiseConnect in setup, sdk_version and slt Java lookups, slc --overwrite-all, board stripped, pinned GCC, test verb, Commander needed for the .rps {#std-1-2-silabs}
-- [ ] 1.2: publish ci-templates v1.2 tag: waits on your go-ahead {#std-1-2-publish}
+- [x] 1.2: publish ci-templates v1.2 tag {#std-1-2-publish}
 
 ## Workbench {#workbench}
 tech: zsh, Brewfile, defaults, symlinks
