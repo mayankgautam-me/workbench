@@ -596,8 +596,8 @@ Altium project names its DbLib by a path relative to itself, the same on every m
   The audit warns about an altium part without the submodule, with the fix.
 - In CI, `altium.yml` asks `make <part>-lib-ref` for the submodule's path and pinned commit and, when the repository
   variable `ALTIUM_LIBRARY_REPO` is set, checks the library out there at that commit with the read-only deploy key
-  `ALTIUM_LIBRARY_DEPLOY_KEY`, pulls from LFS only its symbols and footprints (`--exclude "models/**"`, cached per
-  library commit) and the part's `.SchDoc` files, installs the tools and runs `<part>-check`. `make ci-setup` adds the
+  `ALTIUM_LIBRARY_DEPLOY_KEY`, pulls from LFS only its symbols and footprints (every `.step`/`.stp` is left out, cached per
+  library commit) and the part's `.SchDoc` and `.PcbDoc` files, installs the tools and runs `<part>-check`. `make ci-setup` adds the
   key to `ALTIUM_LIBRARY_PROJECT` and sets the variable whenever the project has an altium part.
 
 #### Mechanical (FreeCAD)

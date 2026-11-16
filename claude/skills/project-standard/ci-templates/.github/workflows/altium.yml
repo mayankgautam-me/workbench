@@ -78,13 +78,13 @@ jobs:
         if: ${{ vars.ALTIUM_LIBRARY_REPO != '' && steps.alib.outputs.sha != '' }}
         env:
           LIB: ${{ steps.alib.outputs.path }}
-        run: git -C "$GITHUB_WORKSPACE/$LIB" lfs pull --exclude "models/**"
-      - name: Get the schematics of this part from Git LFS (the library's check reads them)
+        run: git -C "$GITHUB_WORKSPACE/$LIB" lfs pull --exclude "*.step,*.stp,*.STEP,*.STP"
+      - name: Get the schematics and board of this part from Git LFS (the library's check reads both)
         if: ${{ vars.ALTIUM_LIBRARY_REPO != '' && steps.alib.outputs.sha != '' }}
         run: |
           set -euo pipefail
           git lfs install --local
-          git lfs pull --include "$PART_DIR/**/*.SchDoc"
+          git lfs pull --include "$PART_DIR/**/*.SchDoc,$PART_DIR/**/*.PcbDoc"
       - name: Install the Altium library's tools (no CI key)
         if: ${{ vars.ALTIUM_LIBRARY_REPO != '' && steps.alib.outputs.sha != '' }}
         run: env -u SOPS_AGE_KEY make "$PART-setup"
