@@ -317,7 +317,7 @@ needs: [instructions, detect, bootstrap]
 - [x] 1.1: adopt from a GitLab origin: create the GitHub repo, mirror branches and LFS, switch origin {#std-1-1-gitlab-move}
 - [x] 1.1: scaffold, standard.md, tools.md, contract.md, SKILL.md, version 1.1, tests {#std-1-1-integrate}
 - [x] 1.1: publish ci-templates v1.1 tag {#std-1-1-publish}
-- [~] Adopt i2sage-technologies/corelink on adopt-standard (gateway; KiCad, silabs firmware, FreeCAD case) {#std-corelink-adopt}
+- [x] Adopt i2sage-technologies/corelink on adopt-standard (Altium board, silabs firmware not started, FreeCAD case); merge into main waits on you {#std-corelink-adopt}
 
 ## Workbench {#workbench}
 tech: zsh, Brewfile, defaults, symlinks
