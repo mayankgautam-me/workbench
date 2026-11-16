@@ -19,6 +19,7 @@ It is one person's setup, published as it is used. The mods stand on their own a
 | Project map | Draws a project's `PLAN.md` as cards with their tasks and dependencies, and shows live which agent is working in which part, on which files. | [mods/agent-map](mods/agent-map/README.md) |
 | Git graph | The repository's commits as a graph, with a branch filter, a find box, and git actions that each show their command and wait for a yes. | [mods/git-graph](mods/git-graph/README.md) |
 | Project detection | A session-start hook that looks at the project's files and prints which agents and skills fit it. | [hooks/detect-project.sh](hooks/detect-project.sh) |
+| Open tasks | A Stop and SubagentStop hook: lists background commands and agents still running. The session sees them when it stops; an agent that started background work of its own cannot finish until that work is done or stopped. | [hooks/open-tasks.sh](hooks/open-tasks.sh) |
 | Global instructions | `CLAUDE.md`: preferences, the skill routes the hook prints, and the rules for keeping a `PLAN.md`. | [CLAUDE.md](CLAUDE.md) |
 | Bootstrap | Links these files into `~/.claude` and reinstalls skills and plugins (`bootstrap.sh claude`). | [bootstrap.sh](../bootstrap.sh) |
 
@@ -165,6 +166,7 @@ skills.txt                third-party skills, as owner/repo@skill
 versions.lock             skill, marketplace and plugin versions last installed
 docs/screenshots/         the images in the READMEs, and the script that generates them
 hooks/detect-project.sh   project detection
+hooks/open-tasks.sh       background tasks left running (Stop, SubagentStop)
 hooks/tests/              its bats tests
 skills/project-profile/   skill that re-runs the detection
 skills/project-standard/  one layout and command set for every project: templates, CI, secrets, tests
