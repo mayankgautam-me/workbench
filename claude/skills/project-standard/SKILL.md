@@ -245,8 +245,11 @@ Read-only until the user says yes.
    kind: `slc generate` without `--toolchain gcc` (it made WiseConnect's and the SDK's `toolchain_gcc` clash), and
    `POST_BUILD_EXE=<commander>` for the `.slcp`'s post-build. If the part publishes the `.rps` (an OTA bucket, or the
    release attaches it), add the two top-level lines `post_build:` and `  profile: wiseconnect_soc` to its `.slcp`
-   (WiseConnect's own `.rps` step; it is not a component), with Simplicity Commander on the Macs and runners that
-   build it; ask before adding them to a project that does not publish one, since the build then needs Commander.
+   (WiseConnect's own `.rps` step; it is not a component); ask before adding them to a project that does not publish
+   one, since the build then needs Commander. 1.3 setup installs Simplicity Commander through slt
+   (`commander/<part>_COMMANDER`, `1.25.0`): re-run `make <part>-setup` on each Mac (and the runners get it from their
+   setup) to get it; a `<part>_SLT_INSTALL` in `make/project.mk` overrides the default, so add
+   `commander/$(<part>_COMMANDER)` to it or remove it if it only repeats the old default.
    Remove a `<part>_SLC_ARGS := --toolchain gcc`, or a `POST_BUILD_EXE` in `make/local.mk`, that only worked around
    1.2. A `<dir>/tests/Makefile` (or `test/`) of a silabs part is no longer a sub-Makefile finding. Then run the audit:
    every `make` finding is a `make/project.mk` or `make/local.mk` assignment with a trailing `# comment`; list them and,

@@ -529,3 +529,77 @@ later: 1
   [ "$status" -eq 0 ]
   [[ "$output" == *"post_build wiseconnect_soc with"* ]] || false
 }
+
+# A stub slt that also answers `slt where commander/<ver>`: the Commander.app folder in the fake slt tree when that
+# version is "installed" (CMDR_VER), nothing otherwise (as the real slt prints nothing for a package it does not have).
+slt_with_where() {
+  cat >"$SLT/slt" <<STUB
+#!/bin/bash
+printf '%s\n' "\$@" >>"$STUB_LOG/slt.argv"; printf -- '--\n' >>"$STUB_LOG/slt.argv"
+if [ "\$1" = where ] && [ "\$2" = "commander/\${CMDR_VER:-none}" ]; then printf '%s\n' "$INST/archive/Commander.app"; fi
+exit 0
+STUB
+  chmod +x "$SLT/slt"
+  mkdir -p "$INST/archive/Commander.app/Contents/MacOS"
+  printf '#!/bin/bash\nprintf "%%s\\n" "$@" >>"%s/slt-commander.argv"; printf -- "--\\n" >>"%s/slt-commander.argv"\n' "$STUB_LOG" "$STUB_LOG" \
+    >"$INST/archive/Commander.app/Contents/MacOS/commander"
+  chmod +x "$INST/archive/Commander.app/Contents/MacOS/commander"
+}
+
+@test "silabs 1.3: setup installs Simplicity Commander through slt (commander/<COMMANDER>, pinned, after WiseConnect)" {
+  slproject
+  rm -f "$SLT/.std-setup-2025.12.2-4.0.1"
+  run make firmware-setup
+  [ "$status" -eq 0 ]
+  [[ "$(argv slt)" == $'install\nslc-cli\n--non-interactive\n--\ninstall\nwiseconnect/4.0.1\n--non-interactive\n--\ninstall\ncommander/1.25.0\n--non-interactive\n--'* ]] || false
+  # the pin follows COMMANDER; an empty COMMANDER installs none
+  rm -f "$SLT/.std-setup-2025.12.2-4.0.1" "$STUB_LOG/slt.argv"
+  run make firmware-setup firmware_COMMANDER=1.24.3
+  [ "$status" -eq 0 ]
+  [[ "$(argv slt)" == *$'install\ncommander/1.24.3\n--non-interactive'* ]] || false
+  rm -f "$SLT/.std-setup-2025.12.2-4.0.1" "$STUB_LOG/slt.argv"
+  run make firmware-setup firmware_COMMANDER=
+  [ "$status" -eq 0 ]
+  [[ "$(argv slt)" != *commander* ]] || false
+}
+
+@test "silabs 1.3: the Commander slt installed is found (slt where commander/<ver>, Commander.app/Contents/MacOS/commander)" {
+  slproject
+  slt_with_where
+  rm -f "$STUBS/commander"
+  CMDR_VER=1.25.0 run make firmware-build SILABS_COMMANDER_PATHS=
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"post_build wiseconnect_soc with $INST/archive/Commander.app/Contents/MacOS/commander"* ]] || false
+  [ "$(argv slt-commander)" = $'postbuild\n./app.slpb\n--parameter\nbuild_dir:build/debug\n--' ]
+  [[ "$(argv slt)" == *$'where\ncommander/1.25.0\n--non-interactive\n--ignore-slconf'* ]] || false
+  CMDR_VER=1.25.0 run make firmware-doctor SILABS_COMMANDER_PATHS=
+  [[ "$output" == *"ok    Simplicity Commander $INST/archive/Commander.app/Contents/MacOS/commander"* ]] || false
+  # commander on PATH still wins over the slt one
+  stub_recorder commander
+  CMDR_VER=1.25.0 run make firmware-doctor SILABS_COMMANDER_PATHS=
+  [[ "$output" == *"ok    Simplicity Commander $STUBS/commander"* ]] || false
+}
+
+@test "silabs 1.3: a part set up before Commander was in SLT_INSTALL gets it from setup; doctor's fix is make <part>-setup" {
+  slproject
+  slt_with_where
+  rm -f "$STUBS/commander"
+  # not installed yet: slt where finds nothing, and the archive has no Commander for the fallback either
+  rm -rf "$INST/archive/Commander.app"
+  run make firmware-doctor SILABS_COMMANDER_PATHS=
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"miss  Simplicity Commander missing: the build needs it"*": make firmware-setup (it installs Simplicity Commander 1.25.0 through slt), or set SILABS_COMMANDER"* ]] || false
+  [[ "$output" != *"from Silicon Labs"* ]] || false
+  SL_NO_POSTBUILD=1 slproject
+  run make firmware-doctor SILABS_COMMANDER_PATHS=
+  [[ "$output" == *"warn  Simplicity Commander missing, needed by flash, erase and power"*": make firmware-setup (it installs Simplicity Commander 1.25.0 through slt), or set SILABS_COMMANDER"* ]] || false
+  # the stamp is there, so setup skips the slt installs but still installs Commander
+  rm -f "$STUB_LOG/slt.argv"
+  run make firmware-setup SILABS_COMMANDER_PATHS=
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$(argv slt)" != *$'install\nslc-cli'* ]] || false
+  [[ "$(argv slt)" == *$'install\ncommander/1.25.0\n--non-interactive'* ]] || false
+  [[ "$output" == *"warn  Simplicity Commander not found"*"slt did not install commander/1.25.0"* ]] || false
+}

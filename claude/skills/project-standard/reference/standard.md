@@ -468,9 +468,16 @@ SiWx917 on Zephyr; `<part>_DEVICE` is its `--device` for erase), next to probe-r
 
 **silabs.** An slc project (`*.slcp`) on the Simplicity SDK and WiseConnect, for SiWx917 / SiWG917 (M4). slt,
 Silicon Labs' Simplicity Tools CLI, is pinned per part (`<part>_SLT`) and installed into `~/.toolchains/slt-<ver>`;
-it installs slc, a Java runtime, the GNU Arm toolchain, the Simplicity SDK (`<part>_SDK`) and WiseConnect
-(`<part>_WISECONNECT`) into its own folder (`slt install wiseconnect/<version>`: a bare `wiseconnect` would install the
-latest and a newer SDK). A build is `slc generate --overwrite-all` (a makefile project) into `<dir>/build/<board>`, then
+it installs slc, a Java runtime, the GNU Arm toolchain, the Simplicity SDK (`<part>_SDK`), WiseConnect
+(`<part>_WISECONNECT`) and Simplicity Commander (`<part>_COMMANDER`, `1.25.0`) into its own folder, `~/.silabs/slt`
+(`slt install wiseconnect/<version>`: a bare `wiseconnect` would install the latest and a newer SDK; likewise
+`commander/<version>`). The default `<part>_SLT_INSTALL` is `slc-cli wiseconnect/<WISECONNECT> commander/<COMMANDER>`;
+an empty `<part>_COMMANDER` leaves Commander out. The kind uses `SILABS_COMMANDER`, else `commander` on `PATH`, else
+`SILABS_COMMANDER_PATHS`, else the one slt installed (`slt where commander/<COMMANDER>`; on macOS the package is
+`Commander.app` and the CLI `Commander.app/Contents/MacOS/commander`). A part set up before Commander joined
+`SLT_INSTALL` gets it from `make <part>-setup`, which installs `commander/<COMMANDER>` when no Commander is found, and
+doctor names that as the fix. slt's packages, Commander among them, are not in the toolchain ledger (only
+`~/.toolchains/slt-<ver>` is), so `make teardown` and `make prune` leave them. A build is `slc generate --overwrite-all` (a makefile project) into `<dir>/build/<board>`, then
 the generated makefile with the pinned GNU Arm toolchain (`<part>_GCC`, `12.2.rel1`); `<part>_BOARD` is the slc board
 (`brd4338a`, spaces stripped). slc generate gets no `--toolchain`: on a SiWx917 the device brings WiseConnect's
 `wiseconnect_toolchain_gcc_standard`, which provides `toolchain_gcc`, and `--toolchain gcc` added the Simplicity SDK's
@@ -990,8 +997,9 @@ an exact comparison. The make target refuses a tag that does not match the part'
 that work for the tag.
 
 **The 1.1 kinds.** `silabs.yml` runs check, build, release and the OTA publish like the other firmware kinds, on the
-runner itself (no image): `<part>-setup` installs the pinned slt, slc, the Simplicity SDK and WiseConnect (about 2
-GB), kept in the Actions cache per version and saved right after setup; Simplicity Commander on the runner is needed to
+runner itself (no image): `<part>-setup` installs the pinned slt, slc, the Simplicity SDK, WiseConnect and (1.3)
+Simplicity Commander (about 2 GB), kept in the Actions cache per version and saved right after setup (a cache saved
+before Commander was in it gets Commander from that setup, which installs it when none is found); Commander is needed to
 build a `.slcp` with a `post_build` (it makes the `.rps`, 4.9; check skips the post-build without it) and for `SIGN=1`. `mechanical.yml` runs check, build (STEP and STL, kept 7 days) and release,
 with Ubuntu 24.04's FreeCAD. `altium.yml` runs the check only, on the LFS pointers: `checks.yml` has a job for an
 altium part and `release.yml` none, and its `run_build` and `run_release` do nothing (4.10, Altium). `hardware.yml`
@@ -1262,14 +1270,19 @@ the skill's update mode brings a project to it.
   - silabs: `slc generate` gets no `--toolchain gcc`; on a SiWx917 it added the Simplicity SDK's `toolchain_gcc` next to
     WiseConnect's `wiseconnect_toolchain_gcc_standard` ("Project is invalid even after autoselecting dependencies").
     The generated makefile is the same without it.
+  - silabs: setup installs Simplicity Commander through slt: `commander/<part>_COMMANDER` (`1.25.0`, pinned) joins the
+    default `<part>_SLT_INSTALL`, the kind finds the slt-installed one (`slt where`, `Commander.app/Contents/MacOS/commander`
+    on macOS) after `SILABS_COMMANDER`, `PATH` and `SILABS_COMMANDER_PATHS`, and doctor's and build's fix for a missing
+    Commander is `make <part>-setup` instead of a download from Silicon Labs. Like the SDK it lives in slt's own folder,
+    outside the toolchain ledger, so teardown and prune leave it (4.9).
   - The audit counts a silabs part's `<dir>/test/Makefile` and `<dir>/tests/Makefile` as the kind's (its
     `make <part>-test`), not as sub-Makefiles, and warns (area `make`) about a `make/project.mk` or `make/local.mk`
     assignment, commented out or not, with a `# comment` after its value (the 1.2 scaffold lint, now for every project).
   - `scaffold.sh --force` into a git repository (adopt, update) ends with `next: git diff to review, then make setup &&
     make doctor`, without the new project's `git init`.
   Update from 1.2: refresh the managed files and move the `uses:` lines to `@v1.3`. A silabs part that publishes the
-  `.rps` adds `post_build:` / `  profile: wiseconnect_soc` to its `.slcp`, and Simplicity Commander on the Macs and
-  runners that build it; drop a `<part>_SLC_ARGS` or `POST_BUILD_EXE` in `make/local.mk` that worked around either
+  `.rps` adds `post_build:` / `  profile: wiseconnect_soc` to its `.slcp`; `make <part>-setup`, re-run on the Macs and
+  runners, installs Simplicity Commander through slt; drop a `<part>_SLC_ARGS` or `POST_BUILD_EXE` in `make/local.mk` that worked around either
   problem. Move any trailing comment the audit reports onto its own line above the setting.
 - **1.2** (2026-11-16): reference documents are links, each kind's `.gitattributes` lines, and the silabs
   fixes from building real WiseConnect firmware. `make/VERSION`, the

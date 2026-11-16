@@ -5,7 +5,8 @@
 #
 # make/project.mk declares it as   <name>:silabs[:<dir>]   (dir usually firmware). slt, Silicon Labs' Simplicity
 # Tools CLI, is pinned per part and installed once into $(STD_TOOLCHAINS)/slt-<ver>; it installs slc-cli, a Java
-# runtime, the GNU Arm toolchain, the Simplicity SDK and WiseConnect into its own folder (~/.silabs/slt). A build is
+# runtime, the GNU Arm toolchain, the Simplicity SDK, WiseConnect and Simplicity Commander into its own folder
+# (~/.silabs/slt; none of it is in the toolchain ledger, so make teardown and prune leave it, as they leave the SDK). A build is
 # slc generate (a makefile project) into <dir>/build/<board>, then the generated makefile. Flash, erase and the
 # energy monitor go through Simplicity Commander (commander), the console through the kit's J-Link VCOM port, debug
 # through the J-Link GDB server. The image signing key never touches the project: it is decrypted from the secrets
@@ -185,7 +186,9 @@ endif
 
 # Where Silicon Labs publishes the slt (Simplicity Tools) CLI zips: <url>/slt-cli-<ver>-<mac-arm64|mac-x64|linux-x64>.zip
 SILABS_SLT_URL ?= https://www.silabs.com/documents/public/software
-# Simplicity Commander: on PATH, else these (the first that exists), else one slt installed. SILABS_COMMANDER= wins.
+# Simplicity Commander: on PATH, else these (the first that exists), else the one slt installed (slt where
+# commander/<part>_COMMANDER; on macOS the package is Commander.app and the CLI its Contents/MacOS/commander).
+# SILABS_COMMANDER= wins.
 SILABS_COMMANDER ?=
 SILABS_COMMANDER_PATHS ?= $(HOME)/.silabs/commander/Commander.app/Contents/MacOS/commander /Applications/Commander.app/Contents/MacOS/commander /opt/commander/commander
 
@@ -205,8 +208,14 @@ silabs_pb_lines = add post_build: with profile: wiseconnect_soc under it (two li
 silabs_cmdr = cmdr="$(SILABS_COMMANDER)"; \
   if [ -z "$$cmdr" ]; then cmdr=$$(command -v commander 2>/dev/null || true); fi; \
   if [ -z "$$cmdr" ]; then for c in $(SILABS_COMMANDER_PATHS); do if [ -x "$$c" ]; then cmdr="$$c"; break; fi; done; fi; \
-  if [ -z "$$cmdr" ]; then cmdr=$$(find "$($(1)_SLT_HOME)/installs" -name commander -type f -perm -u+x 2>/dev/null | head -n 1 || true); fi;
-silabs_need_cmdr = $(call silabs_cmdr,$(1)) [ -n "$$cmdr" ] || die "Simplicity Commander not found: install it from Silicon Labs (Simplicity Commander), put commander on PATH or set SILABS_COMMANDER";
+  if [ -z "$$cmdr" ] && [ -x "$($(1)_SLT_DIR)/slt" ]; then \
+    cpath=$$("$($(1)_SLT_DIR)/slt" where commander$(if $(strip $($(1)_COMMANDER)),/$(strip $($(1)_COMMANDER))) --non-interactive --ignore-slconf 2>/dev/null | head -n 1 || true); \
+    if [ -n "$$cpath" ]; then for c in "$$cpath/Contents/MacOS/commander" "$$cpath/commander" "$$cpath"; do if [ -f "$$c" ] && [ -x "$$c" ]; then cmdr="$$c"; break; fi; done; fi; \
+  fi; \
+  if [ -z "$$cmdr" ]; then cmdr=$$(find "$($(1)_SLT_HOME)/installs/archive" -maxdepth 4 -name commander -type f -perm -u+x 2>/dev/null | head -n 1 || true); fi;
+# The fix a missing Commander message gives.
+silabs_cmdr_fix = make $(1)-setup (it installs Simplicity Commander$(if $(strip $($(1)_COMMANDER)), $(strip $($(1)_COMMANDER))) through slt), or set SILABS_COMMANDER
+silabs_need_cmdr = $(call silabs_cmdr,$(1)) [ -n "$$cmdr" ] || die "Simplicity Commander not found: $(call silabs_cmdr_fix,$(1))";
 
 # $(call silabs_tools,part): what slt installed into <part>_SLT_HOME/installs. Sets slt, slc, java (a bin folder),
 # gccdir (the bin folder of the pinned GNU Arm toolchain, <part>_GCC: the package whose <ver>-*manifest.txt names it,
@@ -250,7 +259,9 @@ silabs_ready = [ -f "$(call silabs_stamp,$(1))" ]
 
 # Setup: the slt CLI of the pinned version from Silicon Labs into $(STD_TOOLCHAINS)/slt-<ver> (ledgered, shared), then
 # slt install of <part>_SLT_INSTALL (slt keeps its packages in <part>_SLT_HOME, its own folder: not in the ledger, so
-# make teardown and prune never remove them), then slc signature trust on the SDK and WiseConnect.
+# make teardown and prune never remove them; Simplicity Commander, commander/<part>_COMMANDER, is one of them), then slc
+# signature trust on the SDK and WiseConnect. A part whose stamp is already there (set up before Commander was in
+# SLT_INSTALL) skips those installs; setup still installs commander/<part>_COMMANDER through slt when none is found.
 silabs_setup = $(STD_FW_SH) dir="$($(1)_SLT_DIR)"; mkdir -p "$(STD_TOOLCHAINS)"; \
   if [ -x "$$dir/slt" ]; then ok "slt $($(1)_SLT) in $$dir"; \
   else \
@@ -268,6 +279,9 @@ silabs_setup = $(STD_FW_SH) dir="$($(1)_SLT_DIR)"; mkdir -p "$(STD_TOOLCHAINS)";
   fi; \
   $(call silabs_tools,$(1)) $(call silabs_need_tools,$(1)) \
   if PATH="$$java:$$PATH" "$$slc" signature trust --sdk-package-path "$$sdk,$$wc" >/dev/null 2>&1; then ok "slc trusts the SDK and WiseConnect"; else warn "slc signature trust failed (slc generate asks for it)"; fi; \
+  $(call silabs_cmdr,$(1)) \
+  if [ -z "$$cmdr" ] && [ -n "$(strip $($(1)_COMMANDER))" ]; then say "slt install commander/$(strip $($(1)_COMMANDER)) (Simplicity Commander)"; "$$dir/slt" install "commander/$(strip $($(1)_COMMANDER))" --non-interactive; $(call silabs_cmdr,$(1)) fi; \
+  if [ -n "$$cmdr" ]; then ok "Simplicity Commander $$cmdr"; else warn "Simplicity Commander not found (flash, erase, power and a .slcp post_build need it): $(if $(strip $($(1)_COMMANDER)),slt did not install commander/$(strip $($(1)_COMMANDER)) (slt list commander --versions shows what it has); pin another $(1)_COMMANDER,set $(1)_COMMANDER to have slt install it) or set SILABS_COMMANDER"; fi; \
   touch "$(call silabs_stamp,$(1))"; \
   ok "$(1): slt $($(1)_SLT), Simplicity SDK $($(1)_SDK), WiseConnect $($(1)_WISECONNECT)"
 
@@ -290,8 +304,8 @@ silabs_doctor = $(STD_FW_SH) say "$(1): silabs, slt $($(1)_SLT), Simplicity SDK 
     elif [ -n "$(strip $($(1)_OTA_BUCKET))" ]; then warn "no post_build in $$(basename "$$slcp"): the build makes no .rps and make $(1)-release refuses; $(silabs_pb_lines)"; \
     else ok "no post_build in $$(basename "$$slcp") (no .rps; release needs one: $(silabs_pb_lines))"; fi; fi; \
   $(call silabs_cmdr,$(1)) if [ -n "$$cmdr" ]; then ok "Simplicity Commander $$cmdr"; \
-  elif [ -n "$$pb" ]; then bad "Simplicity Commander missing: the build needs it (the .slcp's post_build $$pb runs commander postbuild to make the .rps), and flash, erase and power: install it from Silicon Labs or set SILABS_COMMANDER"; \
-  else warn "Simplicity Commander missing, needed by flash, erase and power (and to build once the .slcp has a post_build): install it from Silicon Labs or set SILABS_COMMANDER"; fi; \
+  elif [ -n "$$pb" ]; then bad "Simplicity Commander missing: the build needs it (the .slcp's post_build $$pb runs commander postbuild to make the .rps), and flash, erase and power: $(call silabs_cmdr_fix,$(1))"; \
+  else warn "Simplicity Commander missing, needed by flash, erase and power (and to build once the .slcp has a post_build): $(call silabs_cmdr_fix,$(1))"; fi; \
   case "$($(1)_P)" in \
     commander) ;; \
     jlink) if have JLinkExe; then ok "J-Link"; else bad "J-Link: brew install --cask segger-jlink"; fi; \
@@ -325,7 +339,7 @@ silabs_build = $(STD_FW_SH) $(call silabs_find,$(1),$(2)) $(silabs_postbuild) $(
   if [ -z "$$pb" ]; then say "no post_build in $$(basename "$$slcp"): no .rps (release needs one: $(silabs_pb_lines))"; \
   elif [ -n "$$cmdr" ]; then pbexe="$$cmdr"; say "post_build $$pb with $$cmdr"; \
   else \
-    $(if $(5),pbexe=true; warn "Simplicity Commander not found: the post_build $$pb (the .rps) is skipped in this check build";,die "Simplicity Commander not found: the .slcp's post_build $$pb runs it (commander postbuild) to make the .rps. Install it from Silicon Labs, put commander on PATH or set SILABS_COMMANDER";) \
+    $(if $(5),pbexe=true; warn "Simplicity Commander not found: the post_build $$pb (the .rps) is skipped in this check build";,die "Simplicity Commander not found: the .slcp's post_build $$pb runs it (commander postbuild) to make the .rps. Fix: $(call silabs_cmdr_fix,$(1))";) \
   fi; \
   say "slc generate $$(basename "$$slcp") for $$board into $$b"; \
   "$$slc" generate "$$slcp" -np -cp $(if $(filter 1,$(strip $($(1)_SLC_OVERWRITE))),--overwrite-all )-d "$$b" -o makefile --with "$$board" --sdk-package-path "$$sdk,$$wc" --force $(filter-out --overwrite-all,$($(1)_SLC_ARGS)); \
@@ -436,9 +450,13 @@ silabs_release_assets = $(STD_FW_SH) $(call silabs_need_build,$(1),$(2)) $(call 
 #   SLT            1.1.1     the slt CLI, in $(STD_TOOLCHAINS)/slt-<ver>, shared across projects
 #   SDK            2025.12.2 Simplicity SDK (simplicity_sdk) version the build uses
 #   WISECONNECT    4.0.1     WiseConnect 3 (wiseconnect3_sdk) version the build uses
-#   SLT_INSTALL    slc-cli wiseconnect/$(<part>_WISECONNECT)   what setup asks slt to install (slt keeps it in
-#                  SLT_HOME, ~/.silabs/slt); setup then checks that SDK and WISECONNECT are among what is installed.
-#                  The WiseConnect version is pinned: a bare wiseconnect installs the latest (and its newer SDK)
+#   SLT_INSTALL    slc-cli wiseconnect/$(<part>_WISECONNECT) commander/$(<part>_COMMANDER)   what setup asks slt to
+#                  install (slt keeps it in SLT_HOME, ~/.silabs/slt); setup then checks that SDK and WISECONNECT are
+#                  among what is installed. The WiseConnect version is pinned: a bare wiseconnect installs the latest
+#                  (and its newer SDK)
+#   COMMANDER      1.25.0    Simplicity Commander, slt's commander package (Commander.app on macOS): setup installs it,
+#                  and the kind uses it when no commander is on PATH or in SILABS_COMMANDER_PATHS; empty: slt
+#                  installs none (bring your own)
 #   GCC            12.2.rel1  the GNU Arm toolchain slt installs with the SDK (its <ver>-*manifest.txt); empty: the
 #                  first one found
 #   SLCP           (the one *.slcp in the part dir)   the slc project
@@ -466,7 +484,8 @@ $(1)_BOARD ?= brd4338a
 $(1)_SLT ?= 1.1.1
 $(1)_SDK ?= 2025.12.2
 $(1)_WISECONNECT ?= 4.0.1
-$(1)_SLT_INSTALL ?= slc-cli wiseconnect/$$(strip $$($(1)_WISECONNECT))
+$(1)_COMMANDER ?= 1.25.0
+$(1)_SLT_INSTALL ?= slc-cli wiseconnect/$$(strip $$($(1)_WISECONNECT))$$(if $$(strip $$($(1)_COMMANDER)), commander/$$(strip $$($(1)_COMMANDER)))
 $(1)_GCC ?= 12.2.rel1
 $(1)_SLT_HOME ?= $$(HOME)/.silabs/slt
 $(1)_SLT_DIR ?= $$(STD_TOOLCHAINS)/slt-$$($(1)_SLT)
@@ -508,7 +527,7 @@ $(call std_verb,$(1),doctor,firmware,Check slt and slc and the SDK and WiseConne
 $(1)-doctor:
 	@$$(call silabs_doctor,$(1),$(2))
 
-$(call std_verb,$(1),setup,firmware,Install slt $$($(1)_SLT) into $$(STD_TOOLCHAINS) and through it slc and Simplicity SDK $$($(1)_SDK) and WiseConnect $$($(1)_WISECONNECT))
+$(call std_verb,$(1),setup,firmware,Install slt $$($(1)_SLT) into $$(STD_TOOLCHAINS) and through it slc and Simplicity SDK $$($(1)_SDK) and WiseConnect $$($(1)_WISECONNECT) and Commander)
 $(1)-setup:
 	@$$(call std_skip_unstarted,$(1),$(2),setup) $$(call silabs_setup,$(1),$(2))
 
