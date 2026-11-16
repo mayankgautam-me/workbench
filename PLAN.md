@@ -316,8 +316,8 @@ needs: [instructions, detect, bootstrap]
 - [x] 1.1: audit.sh quotes paths with spaces, better slugs, reports folders with dots and underscores {#std-1-1-audit-fixes}
 - [x] 1.1: adopt from a GitLab origin: create the GitHub repo, mirror branches and LFS, switch origin {#std-1-1-gitlab-move}
 - [x] 1.1: scaffold, standard.md, tools.md, contract.md, SKILL.md, version 1.1, tests {#std-1-1-integrate}
-- [ ] 1.1: publish ci-templates v1.1 tag: waits on your go-ahead {#std-1-1-publish}
-- [ ] Adopt i2sage-technologies/corelink on adopt-standard (gateway; KiCad, silabs firmware, FreeCAD case) {#std-corelink-adopt}
+- [x] 1.1: publish ci-templates v1.1 tag {#std-1-1-publish}
+- [~] Adopt i2sage-technologies/corelink on adopt-standard (gateway; KiCad, silabs firmware, FreeCAD case) {#std-corelink-adopt}
 
 ## Workbench {#workbench}
 tech: zsh, Brewfile, defaults, symlinks
