@@ -1,4 +1,4 @@
-# project-standard v1.3 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.4 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind silabs: a Silicon Labs firmware part built from an slc project (*.slcp) on the Simplicity SDK and
 # WiseConnect 3, for SiWx917 / SiWG917 (Cortex-M4 SoC mode).

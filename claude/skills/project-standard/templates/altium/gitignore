@@ -8,3 +8,6 @@ __Previews/
 *.SchDocPreview
 *.PcbDocPreview
 .~lock.*
+
+# the Altium library tools of an altium part (make <part>-setup)
+.venv/

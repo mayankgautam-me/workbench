@@ -1,4 +1,4 @@
-# project-standard v1.3 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.4 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind app-xcode: a native Swift or SwiftUI app built with xcodebuild (iOS, iPadOS or macOS).
 # Needs a Mac with Xcode, not only the command line tools. Its CI jobs need a macOS runner.

@@ -203,14 +203,21 @@ checks out no KiCad library), and `ci-setup` skips the KiCad deploy key when eve
 
 | Target | What it does |
 |---|---|
-| doctor | Checks git-lfs, the layout, that the Altium binaries are in LFS, that the `.PrjPcb` and `.OutJob` are `-text` and that Altium's previews are ignored; warns, never fails |
-| check | The `.PrjPcb` and every document it lists (`DocumentPath=` relative, inside the layout, present), the layout (`<Board>.PrjPcb .SchDoc .PcbDoc .OutJob` at the root, `sheets/NN-Name.SchDoc` and `.Harness`, `library/<Board>.SchLib .PcbLib`, `library/models/*.step`, `bom/<Board>_BOM.csv`), Markdown docs in `docs/<part>/`, Git LFS on the pointers (`.SchDoc .PcbDoc .SchLib .PcbLib .IntLib .Harness .PrjPcbVariants`, lockable) and the `-text` lines of the `.PrjPcb` and `.OutJob` (CRLF, byte-exact); fails on any violation. No `*.PrjPcb` yet: not started |
+| doctor | Checks git-lfs, the layout, that the Altium binaries are in LFS, that the `.PrjPcb` and `.OutJob` are `-text` and that Altium's previews are ignored; names `ALTIUM_LIBRARY_PROJECT` (and where it came from) and warns when the library submodule is missing, not checked out or not at its pinned commit (behind it, or elsewhere), and when its tools are not installed; warns, never fails |
+| setup | The shared Altium library (1.4): adds the submodule `ALTIUM_LIBRARY` (default `hardware/altium-library`) from `ALTIUM_LIBRARY_URL` when the project has none (commit `.gitmodules` and it), else `git submodule update --init` when it is not checked out (a checked-out library is never moved); then a venv in `<dir>/.venv` with the library's `tools/requirements.txt` (made again only when that file changes). Without a GitHub owner or `ALTIUM_LIBRARY_PROJECT` it only warns |
+| lib-check *extra* | `tools/check.py project <dir>/<Board>.PrjPcb --root <library>` from `<dir>/.venv` (`WARN=1` adds `--warn`); fails on findings, and without the library checked out with the `git submodule update --init -- <ALTIUM_LIBRARY>` command |
+| check | The `.PrjPcb` and every document it lists (`DocumentPath=` relative, inside the layout, present; a path into the Altium library, such as its DbLib, is accepted inside or outside the part folder), the layout (`<Board>.PrjPcb .SchDoc .PcbDoc .OutJob` at the root, `sheets/NN-Name.SchDoc` and `.Harness`, `library/<Board>.SchLib .PcbLib`, `library/models/*.step`, `bom/<Board>_BOM.csv`), Markdown docs in `docs/<part>/`, Git LFS on the pointers (`.SchDoc .PcbDoc .SchLib .PcbLib .IntLib .Harness .PrjPcbVariants`, lockable) and the `-text` lines of the `.PrjPcb` and `.OutJob` (CRLF, byte-exact); then lib-check once the library is checked out (a submodule not checked out: a warning, the check skipped); fails on any violation. No `*.PrjPcb` yet: not started |
 | layout *extra* | Prints the `git mv` commands and the `DocumentPath=` edits that move the project into the layout; moves nothing |
 | build | Verifies the OutJob's outputs in `outputs/` (Gerber or ODB++, drill, pick and place, BOM, PDF), renders the Gerbers with gerbv when installed, and writes the fab zip `production/<Board>_v<rev>.zip` |
 | bom *extra* | Hands sourcing and pricing to the `bom` skill |
 | release | The board's GitHub Release from the outputs here, same as github-release. CI makes none: run `make <part>-github-release FORCE=1` where the outputs are |
 | version | Board revision from `VERSION` |
 | clean | Removes `outputs/`, which only the OutJob in Altium makes again (`make teardown` never removes it) |
+
+`make <part>-lib-ref` (not in help) prints `path=` and `sha=` of the library's submodule for `altium.yml`, which checks
+the library out there at that commit with the deploy key `ALTIUM_LIBRARY_DEPLOY_KEY` when `ALTIUM_LIBRARY_REPO` is set,
+and pulls only its symbols and footprints from LFS. `make ci-setup` adds that key to `ALTIUM_LIBRARY_PROJECT` and sets
+the variable whenever the project has an altium part.
 
 ## Mechanical
 
@@ -390,6 +397,6 @@ Vite, `<dir>/out` for Next, `<dir>` for a static site. Package binaries run thro
 | secrets-init, -set, -import, -edit, -list, -check, -keygen, -rotate, -ci, -enroll, -recovery, -add-machine, -remove-machine, -sync, -doctor | The project's encrypted secrets repo: one per GitHub owner, the owner of the project's `origin` (`~/.secrets-<owner>`); secrets-init clones it, or starts it from an empty remote with the Macs' and the recovery recipients |
 | ci-lint, ci-status, ci-logs, ci-run | `actionlint`; `gh run list` and `gh run view` on the current branch; `gh workflow run checks.yml` |
 | ci-local `JOB=` | One job of `checks.yml` in Docker with `act`; no `JOB` lists them. Partial: the reusable workflows come from the public `CI_TEMPLATES_REPO` with no token (`GITHUB_TOKEN` only for a private one); some steps may not run here |
-| ci-setup | Sets up CI once: the CI age key (secrets-ci), the read-only deploy keys (made in ~/.ssh when missing, added to the project's secrets repo and the KiCad library `KICAD_LIBRARY_PROJECT` unless every hardware part is `<part>_LIBRARY := local`), their repo secrets, and the variables SECRETS_REPO (owner/name of SECRETS_REMOTE) and KICAD_LIBRARY_REPO; warns only when `CI_TEMPLATES_REPO` is not public (it then needs Settings > Actions > General > Access); safe to run again; no values |
+| ci-setup | Sets up CI once: the CI age key (secrets-ci), the read-only deploy keys (made in ~/.ssh when missing, added to the project's secrets repo, the KiCad library `KICAD_LIBRARY_PROJECT` unless every hardware part is `<part>_LIBRARY := local`, and with an altium part the Altium library `ALTIUM_LIBRARY_PROJECT`), their repo secrets, and the variables SECRETS_REPO (owner/name of SECRETS_REMOTE), KICAD_LIBRARY_REPO and ALTIUM_LIBRARY_REPO; warns only when `CI_TEMPLATES_REPO` is not public (it then needs Settings > Actions > General > Access); safe to run again; no values |
 | ci-setup-help | Prints the commands ci-setup runs, for you to run by hand; no values |
 | clean, distclean | Build output / plus project-local dependencies |

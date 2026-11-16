@@ -1,4 +1,4 @@
-# project-standard v1.3 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.4 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind altium: an Altium Designer board (one *.PrjPcb per part dir). Altium is Windows only and licensed, so
 # nothing here runs Altium: the outputs come from the project's OutJob, run in Altium, into <dir>/outputs/ (never
@@ -13,8 +13,26 @@
 # The documents of the board are Markdown in docs/<dir>/ at the project root.
 # Per-part settings: none needed. The revision is <dir>/VERSION; a release's files go to <dir>/release/<rev>/.
 # Global: GERBV (gerbv, optional: build renders the Gerbers with it when it is installed).
+#
+# The shared Altium library (1.4): the repository ALTIUM_LIBRARY_PROJECT (default <owner>/altium-library; make/project.mk
+# wins over the user config, see common.mk) is a git submodule of the project at ALTIUM_LIBRARY (default
+# hardware/altium-library): a submodule, because an Altium project names its DbLib by a relative path. It holds
+# parts.csv, Library.DbLib, sym/*.SchLib, fp/*.PcbLib, models/<MPN>.step and tools/check.py. make <part>-setup adds the
+# submodule (or checks it out) and installs the check's requirements in <dir>/.venv; make <part>-lib-check runs
+#   tools/check.py project <dir>/<Board>.PrjPcb --root <library>   (WARN=1 adds --warn)
+# and make <part>-check runs it too once the library is checked out. make ci-setup gives CI a read-only deploy key for it
+# (ALTIUM_LIBRARY_DEPLOY_KEY) and the variable ALTIUM_LIBRARY_REPO; altium.yml checks the submodule out at its pinned
+# commit with that key (make <part>-lib-ref prints the path and the commit). A DocumentPath= into the library (the DbLib)
+# is accepted by the layout check wherever the library is.
+#   ALTIUM_LIBRARY      hardware/altium-library   the submodule, from the project root
+#   ALTIUM_LIBRARY_URL  (from ALTIUM_LIBRARY_PROJECT)  the URL setup adds: ../<name>.git when the library has the
+#                       project's own GitHub owner (it follows origin, https or ssh), else https://github.com/<owner>/<name>.git
+#   ALTIUM_PYTHON       python3                   the Python the tools' venv is made with
 
 GERBV ?= gerbv
+ALTIUM_LIBRARY ?= hardware/altium-library
+ALTIUM_PYTHON ?= python3
+ALTIUM_LIBRARY_URL ?= $(if $(strip $(ALTIUM_LIBRARY_PROJECT)),$(if $(and $(STD_ORIGIN_OWNER),$(filter $(STD_ORIGIN_OWNER),$(call std_lc,$(firstword $(subst /, ,$(ALTIUM_LIBRARY_PROJECT)))))),../$(lastword $(subst /, ,$(ALTIUM_LIBRARY_PROJECT))).git,https://github.com/$(strip $(ALTIUM_LIBRARY_PROJECT)).git))
 
 # The layout, document and Git LFS checks, a bash script run as bash -c "$$ALT_SH" altium MODE DIR REL PART with
 # MODE check (violations fail), doctor (violations warn) or plan (print the git mv commands and DocumentPath= edits).
@@ -25,10 +43,16 @@ define ALT_SH
 #   MODE plan    the git mv commands and the DocumentPath= edits that move the part into the layout
 # The layout (standard.md): <Board>.PrjPcb, <Board>.SchDoc (top sheet), <Board>.PcbDoc and <Board>.OutJob at the
 # part root; sheets/NN-Name.SchDoc and sheets/NN-Name.Harness; library/*.SchLib *.PcbLib *.IntLib and library/models/
-# for 3D models; bom/<Board>_BOM.csv; outputs/ and production/ generated.
+# for 3D models; bom/<Board>_BOM.csv; outputs/ and production/ generated. ALT_LIB is the shared Altium library (a
+# submodule, from the project root ALT_ROOT): its files are not the part's, and a DocumentPath= into it is accepted.
 set -euo pipefail
 mode=$$1 d=$$2 rel=$$3 part=$$4
 cd "$$d"
+lib=$${ALT_LIB:-} root=$${ALT_ROOT:-}
+lib=$${lib%/}
+# the library as a path from the part folder, when it is inside it (hardware/altium-library in hardware)
+libin=
+case $$lib in "$$rel"/*) libin=$${lib#"$$rel"/} ;; esac
 problems=0 warns=0
 c_err=$${c_err:-} c_warn=$${c_warn:-} c_info=$${c_info:-} c_0=$${c_0:-}
 say() { if [ "$$mode" != plan ]; then printf '%s>%s %s\n' "$$c_info" "$$c_0" "$$*"; fi; }
@@ -67,6 +91,22 @@ want() {
   esac
 }
 
+# norm PATH: PATH (relative to the part folder, / separated) as a path from the project root, with . and .. resolved;
+# fails when it leaves the project
+norm() (
+  out= rest=$$rel/$$1
+  while [ -n "$$rest" ]; do
+    s=$${rest%%/*}
+    case $$rest in */*) rest=$${rest#*/} ;; *) rest= ;; esac
+    case $$s in
+      '' | .) ;;
+      ..) [ -n "$$out" ] || exit 1; case $$out in */*) out=$${out%/*} ;; *) out= ;; esac ;;
+      *) out=$${out:+$$out/}$$s ;;
+    esac
+  done
+  printf '%s\n' "$$out"
+)
+
 # exists PATH: true when PATH exists, also in another letter case (Altium runs on case-insensitive Windows)
 exists() {
   [ -e "$$1" ] && return 0
@@ -87,7 +127,8 @@ files=()
 while IFS= read -r f; do files+=("$${f#./}"); done < <(find . -type f \( -iname '*.SchDoc' -o -iname '*.PcbDoc' -o -iname '*.SchLib' \
   -o -iname '*.PcbLib' -o -iname '*.IntLib' -o -iname '*.Harness' -o -iname '*.OutJob' -o -iname '*.PrjPcbVariants' -o -iname '*.step' -o -iname '*.stp' \) \
   -not -path './outputs/*' -not -path './production/*' -not -path './release/*' -not -path './History/*' \
-  -not -path './__Previews/*' -not -path './Project Logs for *' -not -path './Project Outputs for *' | LC_ALL=C sort)
+  -not -path './__Previews/*' -not -path './Project Logs for *' -not -path './Project Outputs for *' \
+  -not -path "./$${libin:-/}/*" | LC_ALL=C sort)
 for f in "$${files[@]+"$${files[@]}"}"; do
   w=$$(want "$$f")
   [ -n "$$w" ] || continue
@@ -123,6 +164,18 @@ while IFS= read -r line; do
   orig=$${line#DocumentPath=}
   orig=$${orig%$$'\r'}
   p=$${orig//\\//}
+  # a document of the shared Altium library (its DbLib): wherever the library is; present once it is checked out
+  if [ -n "$$lib" ]; then
+    np=$$(norm "$$p") || np=
+    case $$(lc "$$np") in
+      "$$(lc "$$lib")"/*)
+        if [ -n "$$(ls -A "$$root/$$lib" 2>/dev/null)" ] && [ ! -e "$$root/$$np" ] &&
+          [ -z "$$(find "$$root/$$lib" -ipath "$$root/$$np" -print 2>/dev/null | head -n 1)" ]; then
+          bad "DocumentPath=$$orig in $$prj: the file is not in the Altium library $$lib"
+        fi
+        continue ;;
+    esac
+  fi
   case $$p in
     /* | [A-Za-z]:*) bad "DocumentPath=$$orig in $$prj is absolute: make it relative to the project"; continue ;;
     ../* | */../* | ..) bad "DocumentPath=$$orig in $$prj points outside the part folder"; continue ;;
@@ -282,7 +335,8 @@ alt_find = d="$(CURDIR)/$(2)"; set -- "$$d"/*.PrjPcb; \
   prj="$$1"; name=$$(basename "$$prj" .PrjPcb); out="$$d/outputs";
 
 # $(call alt_run,part,dir,mode): the ALT_SH script on the part folder.
-alt_run = c_ok="$$c_ok" c_warn="$$c_warn" c_err="$$c_err" c_info="$$c_info" c_0="$$c_0" bash -c "$$ALT_SH" altium $(3) "$(CURDIR)/$(2)" "$(2)" "$(1)"
+alt_run = c_ok="$$c_ok" c_warn="$$c_warn" c_err="$$c_err" c_info="$$c_info" c_0="$$c_0" ALT_LIB="$(ALTIUM_LIBRARY)" ALT_ROOT="$(CURDIR)" \
+  bash -c "$$ALT_SH" altium $(3) "$(CURDIR)/$(2)" "$(2)" "$(1)"
 
 # Sets d and windows (1 on a Windows host: Git Bash, MSYS, Cygwin).
 alt_host = windows=; case "$$(uname -s)" in MINGW* | MSYS* | CYGWIN*) windows=1;; esac;
@@ -327,7 +381,7 @@ alt_layout = $(alt_sh) $(call alt_find,$(1),$(2)) $(call alt_run,$(1),$(2),plan)
 # drill files, or the ODB++, flat; also kept as <dir>/production/<Board>_v<rev>.zip for ordering), the pick and place,
 # BOM and PDF files of outputs/, and bom/<Board>_BOM.csv. Outside CI, uncommitted changes refuse.
 alt_release_assets = $(alt_sh) $(call alt_find,$(1),$(2)) \
-  if [ -z "$${CI:-}$${GITHUB_ACTIONS:-}" ] && [ -n "$$(git status --porcelain -- "$$d" ':!'"$$d/outputs" ':!'"$$d/production" ':!'"$$d/release" 2>/dev/null)" ]; then die "uncommitted changes in $(2): commit them, a release is made from its tag"; fi; \
+  if [ -z "$${CI:-}$${GITHUB_ACTIONS:-}" ] && [ -n "$$(git status --porcelain -- "$$d" ':!'"$$d/outputs" ':!'"$$d/production" ':!'"$$d/release" ':!'"$$d/.venv" 2>/dev/null)" ]; then die "uncommitted changes in $(2): commit them, a release is made from its tag"; fi; \
   $(call alt_outputs,$(1),$(2)) $(call alt_verify,$(1),$(2)) \
   $(call std_rel_begin,$(1),altium,$(2)) \
   zipf="$$d/production/$${name}_v$$ver.zip"; mkdir -p "$$d/production"; rm -f "$$zipf"; \
@@ -349,6 +403,76 @@ alt_bom = $(alt_sh) $(call alt_find,$(1),$(2)) \
 alt_version = $(alt_sh) d="$(CURDIR)/$(2)"; rev=; if [ -f "$$d/VERSION" ]; then rev=$$(head -n 1 "$$d/VERSION" | tr -d '[:space:]'); fi; \
   [ -n "$$rev" ] || die "no revision: write it to $(2)/VERSION"; printf '%s %s\n' "$(1)" "$$rev"
 
+# --- the shared Altium library (1.4) --------------------------------------------------------------
+
+# Sets lib (the library's folder), pin (the commit the project pins it at: its gitlink in the index; empty when it is no
+# submodule) and venv (the part's .venv for the library's tools); vpy prints its python (Scripts\python.exe on Windows).
+alt_lib = lib="$(CURDIR)/$(ALTIUM_LIBRARY)"; venv="$(CURDIR)/$(2)/.venv"; \
+  vpy() { if [ -x "$$venv/Scripts/python.exe" ]; then printf '%s\n' "$$venv/Scripts/python.exe"; else printf '%s\n' "$$venv/bin/python"; fi; }; \
+  pin=$$(git ls-files -s -- "$(ALTIUM_LIBRARY)" 2>/dev/null | awk '$$1 == "160000" { print $$2; exit }' || true);
+
+# The tools' venv: made with ALTIUM_PYTHON and the library's tools/requirements.txt installed, again only when that
+# file changed since (the copy in .venv/.std-requirements).
+alt_venv = req="$$lib/tools/requirements.txt"; \
+  if [ -x "$$(vpy)" ] && { [ ! -f "$$req" ] || cmp -s "$$req" "$$venv/.std-requirements"; }; then :; else \
+    have $(ALTIUM_PYTHON) || die "$(ALTIUM_PYTHON) not found: the Altium library's check is Python (mise use -g python@3.13, or ALTIUM_PYTHON=)"; \
+    say "the Altium library's tools into $(2)/.venv (tools/requirements.txt)"; \
+    $(ALTIUM_PYTHON) -m venv "$$venv" || die "$(ALTIUM_PYTHON) -m venv $(2)/.venv failed"; \
+    if [ -f "$$req" ]; then "$$(vpy)" -m pip install -q --disable-pip-version-check -r "$$req" || die "pip could not install $(ALTIUM_LIBRARY)/tools/requirements.txt into $(2)/.venv"; \
+      cp "$$req" "$$venv/.std-requirements"; fi; \
+  fi;
+
+# The fix for a library that is not checked out.
+alt_lib_fix = if [ -n "$$pin" ]; then die "$(1): the Altium library $(ALTIUM_LIBRARY) is not checked out: git submodule update --init -- $(ALTIUM_LIBRARY) (or make $(1)-setup)"; \
+  else die "$(1): no Altium library submodule at $(ALTIUM_LIBRARY): make $(1)-setup adds it ($(ALTIUM_LIBRARY_PROJECT)), then git submodule update --init -- $(ALTIUM_LIBRARY) in every other clone"; fi;
+
+alt_setup = $(alt_sh) $(call alt_lib,$(1),$(2)) say "$(1): the Altium library $(ALTIUM_LIBRARY)"; \
+  if ! git rev-parse --git-dir >/dev/null 2>&1; then warn "not in a git repository: the Altium library is a submodule (git init first)"; \
+  elif [ -z "$$pin" ]; then \
+    url="$(ALTIUM_LIBRARY_URL)"; \
+    if [ -z "$$url" ]; then warn "no Altium library submodule, and ALTIUM_LIBRARY_PROJECT is not set (no GitHub owner): add the remote origin or set ALTIUM_LIBRARY_PROJECT := <owner>/altium-library in make/project.mk"; \
+    else \
+      if [ -n "$$(ls -A "$$lib" 2>/dev/null)" ]; then die "$(ALTIUM_LIBRARY) exists and is not a submodule: move it away, then make $(1)-setup adds the submodule"; fi; \
+      say "adding $(ALTIUM_LIBRARY_PROJECT) as the submodule $(ALTIUM_LIBRARY) ($$url)"; \
+      git submodule add -- "$$url" "$(ALTIUM_LIBRARY)" || die "could not add the submodule: check that you can read $(ALTIUM_LIBRARY_PROJECT) (gh repo view $(ALTIUM_LIBRARY_PROJECT))"; \
+      ok "submodule $(ALTIUM_LIBRARY) added: commit .gitmodules and $(ALTIUM_LIBRARY)"; \
+    fi; \
+  elif [ ! -e "$$lib/.git" ]; then \
+    git submodule update --init -- "$(ALTIUM_LIBRARY)" || die "git submodule update --init -- $(ALTIUM_LIBRARY) failed: check that you can read $(ALTIUM_LIBRARY_PROJECT)"; \
+    ok "submodule $(ALTIUM_LIBRARY) checked out at its pinned commit $${pin:0:12}"; \
+  else \
+    at=$$(git -C "$$lib" rev-parse HEAD 2>/dev/null || true); \
+    if [ "$$at" = "$$pin" ]; then ok "submodule $(ALTIUM_LIBRARY) at its pinned commit $${pin:0:12}"; \
+    else warn "submodule $(ALTIUM_LIBRARY) is at $${at:0:12}, not its pinned $${pin:0:12}: git submodule update -- $(ALTIUM_LIBRARY) (or commit the new pin)"; fi; \
+  fi; \
+  if [ -f "$$lib/tools/check.py" ]; then $(call alt_venv,$(1),$(2)) ok "the Altium library's tools in $(2)/.venv"; fi
+
+alt_lib_check = $(alt_sh) $(call alt_find,$(1),$(2)) $(call alt_lib,$(1),$(2)) \
+  [ -f "$$lib/tools/check.py" ] || { $(call alt_lib_fix,$(1),$(2)) }; \
+  $(call alt_venv,$(1),$(2)) \
+  say "$(1): the Altium library's check of $(2)/$$name.PrjPcb"; \
+  "$$(vpy)" "$$lib/tools/check.py" project "$$prj" --root "$$lib" $(if $(filter 1,$(WARN)),--warn) || die "$(1): the Altium library's check found problems in $$name.PrjPcb (above)"; \
+  ok "$(1): $$name.PrjPcb passes the Altium library's check"
+
+# check: the library's check too once the library is checked out; a submodule not checked out is a warning.
+alt_check_lib = $(alt_sh) $(call alt_lib,$(1),$(2)) \
+  if [ -f "$$lib/tools/check.py" ]; then $(MAKE) --no-print-directory $(1)-lib-check; \
+  elif [ -n "$$pin" ]; then warn "$(1): the Altium library $(ALTIUM_LIBRARY) is not checked out, its check skipped: git submodule update --init -- $(ALTIUM_LIBRARY)"; fi
+
+# path= and sha= of the library's submodule, for $$GITHUB_OUTPUT (altium.yml checks it out at that commit).
+alt_lib_ref = $(alt_sh) $(call alt_lib,$(1),$(2)) printf 'path=%s\nsha=%s\n' "$(ALTIUM_LIBRARY)" "$$pin"
+
+alt_lib_doctor = $(call alt_lib,$(1),$(2)) \
+  if [ -n "$(ALTIUM_LIBRARY_PROJECT)" ]; then ok "Altium library repository: $(ALTIUM_LIBRARY_PROJECT) (from $(STD_ALTIUM_LIBRARY_PROJECT_FROM))"; fi; \
+  if [ -z "$$pin" ]; then warn "no Altium library submodule at $(ALTIUM_LIBRARY): make $(1)-setup adds it"; \
+  elif [ ! -e "$$lib/.git" ]; then warn "the Altium library $(ALTIUM_LIBRARY) is not checked out: git submodule update --init -- $(ALTIUM_LIBRARY)"; \
+  else at=$$(git -C "$$lib" rev-parse HEAD 2>/dev/null || true); \
+    if [ "$$at" = "$$pin" ]; then ok "Altium library $(ALTIUM_LIBRARY) at its pinned commit $${pin:0:12}"; \
+    elif git -C "$$lib" merge-base --is-ancestor "$$at" "$$pin" 2>/dev/null; then warn "the Altium library $(ALTIUM_LIBRARY) is behind its pinned commit ($${at:0:12}, pinned $${pin:0:12}): git submodule update -- $(ALTIUM_LIBRARY)"; \
+    else warn "the Altium library $(ALTIUM_LIBRARY) is at $${at:0:12}, not its pinned $${pin:0:12}: git submodule update -- $(ALTIUM_LIBRARY), or git add $(ALTIUM_LIBRARY) to pin it there"; fi; \
+    if [ -x "$$(vpy)" ]; then ok "the library's tools in $(2)/.venv"; else warn "the Altium library's tools are not installed: make $(1)-setup"; fi; \
+  fi;
+
 alt_doctor = $(alt_sh) $(alt_host) say "$(1): altium"; \
   if [ -n "$$windows" ]; then ok "Windows: Altium Designer runs the OutJob here"; \
   else ok "$$(uname -s): check, layout and release run here; the outputs come from Altium Designer on Windows"; fi; \
@@ -361,21 +485,34 @@ alt_doctor = $(alt_sh) $(alt_host) say "$(1): altium"; \
   if [ -d "$$d/outputs" ]; then ok "outputs in $(2)/outputs"; else warn "no $(2)/outputs yet: run the OutJob in Altium"; fi; \
   if have $(GERBV); then ok "gerbv (renders the Gerbers in build)"; else warn "gerbv not installed (optional): brew install gerbv"; fi; \
   if have gh; then ok "gh (GitHub Release)"; else warn "gh missing, needed by make $(1)-release: brew install gh"; fi; \
+  $(call alt_lib_doctor,$(1),$(2)) \
   if [ "$$problems" -eq 0 ]; then ok "$(1) ready"; else die "$(1): $$problems problem(s), fixes above"; fi
 
 define kind_altium
 # the part is started once its folder has an Altium project (std_started in common.mk)
 $(1)_START ?= *.PrjPcb
 
-.PHONY: $(1)-doctor $(1)-check $(1)-build $(1)-layout $(1)-bom $(1)-release $(1)-version $(1)-clean
+.PHONY: $(1)-doctor $(1)-setup $(1)-check $(1)-lib-check $(1)-lib-ref $(1)-build $(1)-layout $(1)-bom $(1)-release $(1)-version $(1)-clean
 
 $(call std_verb,$(1),doctor,hardware,Check git-lfs and the Altium layout and LFS and ignored previews read only)
 $(1)-doctor:
 	@$$(call alt_doctor,$(1),$(2))
 
-$(call std_verb,$(1),check,hardware,The PrjPcb and its documents and the folder layout and Git LFS and fail on violations)
+$(call std_verb,$(1),setup,hardware,Add or check out the shared Altium library submodule and install its tools in $(2)/.venv)
+$(1)-setup:
+	@$$(call alt_setup,$(1),$(2))
+
+$(call std_verb,$(1),check,hardware,The PrjPcb and its documents and the folder layout and Git LFS and the Altium library check and fail on violations)
 $(1)-check:
-	@$$(call std_skip_unstarted,$(1),$(2),check) $$(call alt_check,$(1),$(2))
+	@$$(call std_skip_unstarted,$(1),$(2),check) $$(call alt_check,$(1),$(2)); $$(call alt_check_lib,$(1),$(2))
+
+$(call std_extra,$(1),lib-check,hardware,Every part of the PrjPcb against the Altium library with its tools/check.py (WARN=1: findings as warnings))
+$(1)-lib-check:
+	@$$(call std_skip_unstarted,$(1),$(2),lib-check) $$(call alt_lib_check,$(1),$(2))
+
+# for CI (altium.yml): the library's path and pinned commit, as path= and sha= lines
+$(1)-lib-ref:
+	@$$(call alt_lib_ref,$(1),$(2))
 
 $(call std_verb,$(1),build,hardware,Verify the OutJob outputs in $(2)/outputs: Gerber or ODB++ and drill and pick and place and BOM and PDF)
 $(1)-build:

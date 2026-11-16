@@ -1,4 +1,4 @@
-# The project standard, v1.3
+# The project standard, v1.4
 
 One set of commands for every stage of work, the same in every project: firmware, boards, enclosures,
 Cloudflare services, apps and containers alike. The tools stay what they are (west, idf.py, pio, slc,
@@ -92,7 +92,7 @@ hardware/
 ```
 
 "Managed" files start with the line
-`# project-standard v1.3 (managed: ...)` and are refreshed by the skill's update mode; never edit
+`# project-standard v1.4 (managed: ...)` and are refreshed by the skill's update mode; never edit
 them in a project. Your own targets go in `make/local.mk`, written like this, and show under
 "project" in `make help`:
 
@@ -133,6 +133,7 @@ Per kind, in `docs/<part>/`:
 | zephyr, espidf, pio, arm-gcc, circuitpython | `protocol.md` (transports, commands, messages, versioning, errors); `flashing.md` (images, bootloader, updating, recovery, factory programming, board revisions) |
 | silabs | `protocol.md` and `flashing.md` as above; `power.md` (power modes, measurements, budget, battery life, how to measure with `make <part>-power`) |
 | hardware, altium | `bringup.md` (before power, first power, programming, functional tests, results, known issues); `manufacturing.md` (fabrication, stackup, design rules, assembly, suppliers, revisions) |
+| altium (also) | `library.md` (the shared Altium library: its submodule, what is in it, adding a part, the check; 1.4) |
 | mechanical | `assembly.md` (parts, fasteners and bought parts, assembly order, printing and machining, revisions) |
 | cloud-worker | `api.md` (base URLs, authentication, endpoints, errors, limits); `data.md` (D1 tables, KV keys, R2 layout, queues, migrations, backup) |
 | web-pages | none beyond the README |
@@ -441,7 +442,7 @@ means a new Worker, so they keep their names.
 | `make ci-status` / `make ci-logs` | `gh run list` for the current branch / `gh run view --log-failed` of its last failed run. |
 | `make ci-run` | `gh workflow run checks.yml` on the current branch (the workflow has a manual trigger). |
 | `make ci-local JOB=<job>` | Runs one job of `checks.yml` here, in Docker, with `act`; without `JOB` it lists the jobs. Jobs run as linux/amd64 like GitHub's Linux runners (`CI_LOCAL_PLATFORM=` for the machine's own). Partial: the reusable workflows come from the public `CI_TEMPLATES_REPO` with no token (`GITHUB_TOKEN` in the environment only for a private one, or a step that calls the GitHub API), and some steps may not run here. Run it from a normal clone, not a git worktree. |
-| `make ci-setup` | Sets up CI once the GitHub repository exists: the CI age key (`secrets-ci`), the read-only deploy keys (made in `~/.ssh` when missing, added to the project's secrets repo and, with a hardware part, the KiCad library when not there yet), their repository secrets, and the variables `SECRETS_REPO` (the `owner/name` of `SECRETS_REMOTE`) and `KICAD_LIBRARY_REPO`. Safe to run again. Prints no values. |
+| `make ci-setup` | Sets up CI once the GitHub repository exists: the CI age key (`secrets-ci`), the read-only deploy keys (made in `~/.ssh` when missing, added to the project's secrets repo and, with a hardware part, the KiCad library, with an altium part the Altium library, when not there yet), their repository secrets, and the variables `SECRETS_REPO` (the `owner/name` of `SECRETS_REMOTE`), `KICAD_LIBRARY_REPO` and `ALTIUM_LIBRARY_REPO`. Safe to run again. Prints no values. |
 | `make ci-setup-help` | Prints the commands `ci-setup` runs, for you to run by hand. Prints no values. |
 
 ### 4.9 Firmware (every firmware kind)
@@ -552,7 +553,9 @@ packages them.
 
 | Command | Does |
 |---|---|
-| `<part>-check` | The `.PrjPcb` and every document it lists (each `DocumentPath=` relative, inside the layout, present), the folder layout (section 1), Markdown docs in `docs/<part>/` and not in the part folder, and Git LFS: every Altium binary (`.SchDoc .PcbDoc .SchLib .PcbLib .IntLib .Harness .PrjPcbVariants`) is an LFS pointer and covered by an LFS line, and the `.PrjPcb` and `.OutJob` are `-text`. Fails on any violation. |
+| `<part>-setup` | Adds the shared Altium library as a submodule (`ALTIUM_LIBRARY`) when the project has none, checks it out when it is not, and installs its tools' requirements in `<dir>/.venv` (1.4, below). |
+| `<part>-check` | The `.PrjPcb` and every document it lists (each `DocumentPath=` relative, inside the layout, present; one into the Altium library, such as its DbLib, is accepted wherever the library is), the folder layout (section 1), Markdown docs in `docs/<part>/` and not in the part folder, and Git LFS: every Altium binary (`.SchDoc .PcbDoc .SchLib .PcbLib .IntLib .Harness .PrjPcbVariants`) is an LFS pointer and covered by an LFS line, and the `.PrjPcb` and `.OutJob` are `-text`. Then `<part>-lib-check` once the library is checked out (a submodule not checked out is a warning). Fails on any violation. |
+| `<part>-lib-check` | The library's `tools/check.py project <dir>/<Board>.PrjPcb --root <library>`, from `<dir>/.venv` (`WARN=1` adds `--warn`). Without the library checked out it fails with the `git submodule update --init` command. |
 | `<part>-layout` | Prints the `git mv` commands and the `DocumentPath=` edits that move an existing project into the layout; moves nothing. |
 | `<part>-build` | Verifies the OutJob's outputs in `outputs/` (Gerber or ODB++, drill, pick and place, BOM, PDF), renders the Gerbers with gerbv when it is installed, and writes the fab zip `production/<Board>_v<rev>.zip`. |
 | `<part>-bom` | Hands sourcing and pricing to the `bom` skill. |
@@ -569,6 +572,33 @@ the part's `outputs/` and `production/`. In CI only the check runs (`altium.yml`
 release.yml has no job for the part. After `make <part>-bump` and `make release-push`, the Release is made where the
 outputs are: `make <part>-github-release FORCE=1` on the Windows machine that ran the OutJob (Git Bash), or on a Mac
 the outputs were copied to.
+
+**The shared Altium library (1.4).** An altium part takes its parts from one library shared by every board of the owner,
+the repository `ALTIUM_LIBRARY_PROJECT` (`owner/name`, default `<owner>/altium-library`; `make/project.mk`, else the
+user config, else the default, section 9), as the KiCad boards take theirs from `kicad-library`. Unlike KiCad's, it is a
+git submodule of the project, at `ALTIUM_LIBRARY` (`make/project.mk`, default `hardware/altium-library`), because an
+Altium project names its DbLib by a path relative to itself, the same on every machine. The library holds `parts.csv`
+(one row per MPN), `Library.DbLib` (Altium's view of it), `sym/<name>.SchLib`, `fp/<name>.PcbLib`, `models/<MPN>.step`
+(Git LFS, lockable) and `tools/check.py` with `tools/requirements.txt`; its check is
+`python3 tools/check.py library` (the library itself) and `python3 tools/check.py project <X>.PrjPcb [--root DIR]
+[--warn]`, exit 0 when clean and 1 on findings.
+
+- The scaffold adds no submodule (it makes no network call): it documents it in the part's README and
+  `docs/<part>/library.md`. `make <part>-setup` adds it (`git submodule add`, the URL `ALTIUM_LIBRARY_URL`:
+  `../<name>.git` when the library has the project's own GitHub owner, so it follows `origin` over https or ssh, else
+  `https://github.com/<owner>/<name>.git`), then commit `.gitmodules` and the submodule. In a fresh clone setup runs
+  `git submodule update --init -- <ALTIUM_LIBRARY>`. Setup never moves a checked-out library: to take a newer one,
+  `git -C <ALTIUM_LIBRARY> pull`, then `git add <ALTIUM_LIBRARY>` and commit the new pin.
+- Setup makes `<dir>/.venv` with `ALTIUM_PYTHON` (default `python3`) and installs `tools/requirements.txt` (olefile),
+  again only when that file changes. `.venv/` is in `.gitignore`; `make teardown` removes it.
+- `make <part>-doctor` names the library repository and where it came from, and warns when there is no submodule, when
+  it is not checked out, and when the checkout is behind (or otherwise not at) the pinned commit, each with its command.
+  The audit warns about an altium part without the submodule, with the fix.
+- In CI, `altium.yml` asks `make <part>-lib-ref` for the submodule's path and pinned commit and, when the repository
+  variable `ALTIUM_LIBRARY_REPO` is set, checks the library out there at that commit with the read-only deploy key
+  `ALTIUM_LIBRARY_DEPLOY_KEY`, pulls from LFS only its symbols and footprints (`--exclude "models/**"`, cached per
+  library commit) and the part's `.SchDoc` files, installs the tools and runs `<part>-check`. `make ci-setup` adds the
+  key to `ALTIUM_LIBRARY_PROJECT` and sets the variable whenever the project has an altium part.
 
 #### Mechanical (FreeCAD)
 
@@ -949,10 +979,10 @@ of the project's repository (from stdin, never on a command line), adds the publ
 ## 6. CI/CD
 
 The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/name`, default
-`mayankgautam-me/ci-templates`), tagged `v1.3` (`v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
+`mayankgautam-me/ci-templates`), tagged `v1.4` (`v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
 own, independent of the project's `GITHUB_OWNER`: projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.3`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.4`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -1001,7 +1031,8 @@ runner itself (no image): `<part>-setup` installs the pinned slt, slc, the Simpl
 Simplicity Commander (about 2 GB), kept in the Actions cache per version and saved right after setup (a cache saved
 before Commander was in it gets Commander from that setup, which installs it when none is found); Commander is needed to
 build a `.slcp` with a `post_build` (it makes the `.rps`, 4.9; check skips the post-build without it) and for `SIGN=1`. `mechanical.yml` runs check, build (STEP and STL, kept 7 days) and release,
-with Ubuntu 24.04's FreeCAD. `altium.yml` runs the check only, on the LFS pointers: `checks.yml` has a job for an
+with Ubuntu 24.04's FreeCAD. `altium.yml` runs the check only, on the LFS pointers, with the shared Altium library
+checked out at its pinned commit when `ALTIUM_LIBRARY_REPO` is set (1.4): `checks.yml` has a job for an
 altium part and `release.yml` none, and its `run_build` and `run_release` do nothing (4.10, Altium). `hardware.yml`
 takes `library: shared` (default) or `local`: with `local` it checks out no KiCad library (4.10). A project whose only
 parts are altium has no `latest` job in `release.yml`.
@@ -1023,6 +1054,9 @@ on each job:
 - `KICAD_LIBRARY_REPO` = `<owner>/kicad-library`: the shared KiCad library for the hardware jobs (3D models only, see
   Limits and billing). `make ci-setup` sets it from `KICAD_LIBRARY_PROJECT` (section 9), and not at all when every
   hardware part has its own library (`<part>_LIBRARY := local`).
+- `ALTIUM_LIBRARY_REPO` = `<owner>/altium-library`: the shared Altium library, checked out by the altium jobs at the
+  commit the project's submodule pins (4.10). `make ci-setup` sets it from `ALTIUM_LIBRARY_PROJECT` when the project
+  has an altium part.
 - `STD_APT_PACKAGES`: extra Debian packages for every apt install, e.g. `libudev-dev` for the `hidapi` crate.
 - `STD_RUNNER`: the runner label for every Linux job (default `ubuntu-24.04`, GitHub's). Set it on the organization to
   a self-hosted runner's label (a Linux machine with Docker, amd64, since the jobs run amd64 containers) and every
@@ -1035,10 +1069,10 @@ on each job:
   `windows-11-arm`). Set it to a self-hosted Windows 11 runner's label (an ARM VM builds x64 under emulation).
 - `MACOS_CI` = `true`: enables the macOS jobs. Unset, they are skipped, because macOS minutes are the most expensive.
 
-**Keys.** The jobs read the secrets repository and, with a hardware part, the KiCad library with read-only SSH deploy
-keys, one per repository. `make ci-setup` creates and stores them (`make ci-setup-help` prints the same steps as commands). The public key goes
+**Keys.** The jobs read the secrets repository and, with a hardware part, the KiCad library (with an altium part, the
+Altium library) with read-only SSH deploy keys, one per repository. `make ci-setup` creates and stores them (`make ci-setup-help` prints the same steps as commands). The public key goes
 to the other repository with `gh repo deploy-key add` (without `--allow-write`), and the private key is stored as the
-project's secret `SECRETS_DEPLOY_KEY` (or `KICAD_LIBRARY_DEPLOY_KEY`). Values reach `gh` on stdin, never on a command line.
+project's secret `SECRETS_DEPLOY_KEY` (or `KICAD_LIBRARY_DEPLOY_KEY`, `ALTIUM_LIBRARY_DEPLOY_KEY`). Values reach `gh` on stdin, never on a command line.
 
 **Actions.** Only `actions/*` is used, each pinned by full commit SHA with a version comment: `actions/checkout` v7.0.1
 (`3d3c42e5aac5ba805825da76410c181273ba90b1`), `actions/upload-artifact` v7.0.2
@@ -1076,7 +1110,7 @@ Design consequences:
 
 ### Known gaps
 
-- Caches (actions/cache): Cargo registry and target directory, pnpm store, PlatformIO packages, pub and Gradle caches, and the kicad-library LFS objects keyed on the library commit. Each `hashFiles` key is worked out in a `Get the ... cache key before anything builds` step and reaches the cache step as `steps.<id>.outputs.key`: actions/cache evaluates its inputs again in its post step, after the build, where a `hashFiles` over the part folder failed on files the build left unreadable and failed a passing job. GitHub evicts caches past 10 GB per repository, so the library cache can churn when the library changes often.
+- Caches (actions/cache): Cargo registry and target directory, pnpm store, PlatformIO packages, pub and Gradle caches, and the kicad-library and altium-library LFS objects keyed on the library commit. Each `hashFiles` key is worked out in a `Get the ... cache key before anything builds` step and reaches the cache step as `steps.<id>.outputs.key`: actions/cache evaluates its inputs again in its post step, after the build, where a `hashFiles` over the part folder failed on files the build left unreadable and failed a passing job. GitHub evicts caches past 10 GB per repository, so the library cache can churn when the library changes often.
 - Real workflow runs are not yet verified on GitHub. The arm64 Windows image's Visual Studio components need a real run.
 
 ## 7. Cloudflare API token permissions
@@ -1208,6 +1242,7 @@ GITHUB_OWNER          := <owner>                              (the default owner
 DOCKER_REGISTRY       := ghcr.io/<owner>                      (optional: the default owner's registry)
 KICAD_LIBRARY_DIR     := <your kicad-library checkout>
 KICAD_LIBRARY_PROJECT := <owner>/kicad-library                (optional: the default is <owner>/kicad-library)
+ALTIUM_LIBRARY_PROJECT := <owner>/altium-library             (optional: the default is <owner>/altium-library)
 FREECADCMD            := <path to freecadcmd>                 (optional: when it is not found by itself)
 ```
 
@@ -1237,6 +1272,11 @@ owner. `make ci-setup` adds the KiCad deploy key to it and sets the CI variable 
 project with a hardware part that uses the shared library (none when every hardware part is `<part>_LIBRARY := local`);
 the hardware doctor prints it.
 
+`ALTIUM_LIBRARY_PROJECT` (`owner/name`, since 1.4) is the shared Altium library, read the same way: `make/project.mk`,
+else this file's (or the environment's), else `<owner>/altium-library`. An altium part's setup adds it as the submodule
+`ALTIUM_LIBRARY`, `make ci-setup` adds the Altium deploy key to it and sets `ALTIUM_LIBRARY_REPO`, and the altium doctor
+prints it (4.10).
+
 `OTA_BUCKET` is not a per-user setting (since v6): it is the project's, `OTA_BUCKET := <bucket>` in
 `make/project.mk` (the scaffold leaves a commented line for the kinds that release OTA). Each project has its own
 Cloudflare token and maybe its own account, and CI reads `make/project.mk` but never this file. A value left in
@@ -1259,6 +1299,25 @@ Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) an
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
 
+- **1.4** (2026-11-16): the shared Altium library. `make/VERSION`, the managed headers and the workflows' `@v1.4` say
+  1.4; `mayankgautam-me/ci-templates` gets the tag `v1.4` and keeps `v1.3`, `v1.2`, `v1.1` and `v1.0`.
+  - altium: the shared library `ALTIUM_LIBRARY_PROJECT` (default `<owner>/altium-library`) is a git submodule at
+    `ALTIUM_LIBRARY` (default `hardware/altium-library`). New: `<part>-setup` (adds or checks out the submodule,
+    installs the library's tools in `<dir>/.venv`), `<part>-lib-check` (the library's `tools/check.py project` on the
+    `.PrjPcb`, `WARN=1` for `--warn`), and `<part>-lib-ref` for CI. `<part>-check` runs the library check once the
+    library is checked out; the layout check skips the library's own files and accepts a `DocumentPath=` into it;
+    doctor reports the submodule and its pin (4.10).
+  - CI: `make ci-setup` adds the read-only deploy key `ALTIUM_LIBRARY_DEPLOY_KEY` to the Altium library and sets
+    `ALTIUM_LIBRARY_REPO` when the project has an altium part. `altium.yml` takes the secret `ALTIUM_LIBRARY_DEPLOY_KEY`,
+    checks the library out at the pinned commit, pulls only its symbols and footprints (cached per library commit) and
+    the part's schematics from LFS, installs the tools and runs the check with the library check (section 6).
+  - The scaffold documents the submodule in an altium part's README and writes `docs/<part>/library.md` (a new kind
+    doc of altium), passes `ALTIUM_LIBRARY_DEPLOY_KEY` to the altium job and adds `.venv/` to Altium's `.gitignore`
+    lines. The audit warns about an altium part without the submodule and about a missing `docs/<part>/library.md`.
+  Update from 1.3: refresh the managed files and move the `uses:` lines to `@v1.4`; for an altium part add
+  `ALTIUM_LIBRARY_DEPLOY_KEY: ${{ secrets.ALTIUM_LIBRARY_DEPLOY_KEY }}` to its job's `secrets:` in `checks.yml`, run
+  `scaffold.sh <dir> --force` (it adds `docs/<part>/library.md` and the `.venv/` ignore line), `make <part>-setup` to
+  add the submodule (commit `.gitmodules` and it), and `make ci-setup` once more for the key and the variable.
 - **1.3** (2026-11-16): the silabs `.rps` and toolchain, found building real WiseConnect 4.0.1 firmware, and audit
   fixes. `make/VERSION`, the managed headers and the workflows' `@v1.3` say 1.3; `mayankgautam-me/ci-templates` gets
   the tag `v1.3` and keeps `v1.2`, `v1.1` and `v1.0`.

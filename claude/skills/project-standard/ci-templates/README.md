@@ -1,6 +1,6 @@
 # ci-templates
 
-The source of the reusable GitHub Actions workflows in `mayankgautam-me/ci-templates`, tagged `v1.3` (`v1.2`, `v1.1` and `v1.0` stay,
+The source of the reusable GitHub Actions workflows in `mayankgautam-me/ci-templates`, tagged `v1.4` (`v1.3`, `v1.2`, `v1.1` and `v1.0` stay,
 for the projects not updated yet). Each file here is one part kind, at `.github/workflows/<kind>.yml`, and it has
 only `on: workflow_call`. A project's `.github/workflows/checks.yml` (pushes and pull requests) and `release.yml`
 (tags) call them with `uses:`. Every script line calls `make`, so CI runs what a developer runs locally. The v8
@@ -17,7 +17,7 @@ on:
   pull_request:
 jobs:
   cloud-api:
-    uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.3
+    uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.4
     with:
       part: cloud-api
       part_dir: cloud/api
@@ -39,7 +39,7 @@ jobs:
   firmware:
     needs: tag
     if: needs.tag.outputs.part == 'firmware'
-    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.3
+    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.4
     with:
       part: firmware
       part_dir: firmware
@@ -66,7 +66,7 @@ permissions:
   contents: write
 jobs:
   firmware:
-    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.3
+    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.4
     with:
       part: firmware
       part_dir: firmware
@@ -108,6 +108,7 @@ Declared in each file's `secrets:` block and passed explicitly by the caller (no
 | `SECRETS_DEPLOY_KEY` | every kind that decrypts | SSH private key of a read-only deploy key on the secrets repo. |
 | `SOPS_AGE_KEY` | the jobs that decrypt or sign | The CI age key, for the production and staging jobs only. Dependency installs run with it unset (`env -u SOPS_AGE_KEY make ...`). |
 | `KICAD_LIBRARY_DEPLOY_KEY` | hardware | SSH private key of a read-only deploy key on the KiCad library (for the 3D models). Not read with `library: local`. |
+| `ALTIUM_LIBRARY_DEPLOY_KEY` | altium | SSH private key of a read-only deploy key on the Altium library, the project's submodule (1.4). |
 
 ## Variables
 
@@ -118,6 +119,7 @@ Repository or organization variables (`vars.`), not secrets.
 | `SECRETS_REPO` | The project's secrets repository, e.g. `<owner>/secrets` (one per owner; `make ci-setup` sets it from the project's `SECRETS_REMOTE`). Checked out sparsely (the project's folder and `recipients`) into `.ci/secrets` inside the workspace; `SECRETS_DIR` points there. |
 | `KICAD_LIBRARY_REPO` | The KiCad library, e.g. `<owner>/kicad-library`. Optional; when set, the hardware jobs check it out with LFS and export `KICAD_LIBRARY_DIR` and the `<prefix>_LIB_DIR`, `_3DMODEL_DIR`, `_DATASHEET_DIR` paths. |
 | `KICAD_LIB_PREFIX` | Optional, default `FABROLABS`: the prefix of those path variables. |
+| `ALTIUM_LIBRARY_REPO` | The Altium library, e.g. `<owner>/altium-library`. Optional; when set, the altium job checks it out at the commit the project's submodule pins (`make <part>-lib-ref`), pulls only its symbols and footprints from LFS (cached per commit) and the check runs the library's check too. |
 | `STD_APT_PACKAGES` | Optional: extra Debian packages (space separated) that every apt install adds, e.g. `libudev-dev`. |
 | `STD_IBOM_COMMIT` | Optional: InteractiveHtmlBom commit for hardware; default `5c192e794cd66fde04bab11810601b711bf8581b` (v2.12.0). |
 | `STD_RUNNER` | Optional: the runner label of every Linux job; default `ubuntu-24.04`. Set it to a self-hosted amd64 Linux runner with Docker to run all CI there. |
@@ -131,7 +133,7 @@ Repository or organization variables (`vars.`), not secrets.
 This repository is public, so a project of any owner (a personal account or an organization) calls it with no
 setting; its projects set `CI_TEMPLATES_REPO` to it (the project-standard default). `<owner>` in this README is the calling
 project's owner. A private copy of these workflows would need, on that copy, Settings > Actions > General > Access to
-allow the callers' repositories. The private `secrets` and `kicad-library` repositories are read with deploy keys.
+allow the callers' repositories. The private `secrets`, `kicad-library` and `altium-library` repositories are read with deploy keys.
 
 ## Deploy keys
 

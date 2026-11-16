@@ -196,7 +196,8 @@ kind_docs() {
   case $1 in
     zephyr | espidf | pio | arm-gcc | circuitpython) echo "protocol flashing" ;;
     silabs) echo "protocol flashing power" ;;
-    hardware | altium) echo "bringup manufacturing" ;;
+    hardware) echo "bringup manufacturing" ;;
+    altium) echo "bringup manufacturing library" ;;
     mechanical) echo "assembly" ;;
     cloud-worker) echo "api data" ;;
     app-*) echo "distribution" ;;
@@ -744,6 +745,42 @@ else
   [[ -z $small ]] ||
     add warn lfs .gitattributes "routes small files to LFS:$small (since 1.1 only 3D and CAD models go there)" \
       "remove those lines, then git add --renormalize . and commit: the files go back to plain git (a file over 5 MB keeps a line of its own)"
+fi
+
+# An altium part takes its parts from the shared Altium library, a git submodule at ALTIUM_LIBRARY (make/project.mk,
+# default hardware/altium-library) of the repository ALTIUM_LIBRARY_PROJECT (default <owner>/altium-library) (1.4).
+# Without it in .gitmodules (or as a gitlink in the index) the part's library check cannot run.
+if has_part_kind altium; then
+  alib=''
+  [[ ! -f "$DIR/make/project.mk" ]] || alib=$(make_var "$DIR/make/project.mk" ALTIUM_LIBRARY)
+  alib=${alib##* }
+  alib=${alib:-hardware/altium-library}
+  alib=${alib%/}
+  have_sub=0
+  if [[ -f "$DIR/.gitmodules" ]] &&
+    git config -f "$DIR/.gitmodules" --get-regexp '^submodule\..*\.path$' 2>/dev/null | awk '{ print $2 }' | grep -Fxq -- "$alib"; then
+    have_sub=1
+  fi
+  if ((IS_GIT == 1)) && git -C "$DIR" ls-files -s -- "$alib" 2>/dev/null | grep -q '^160000 '; then have_sub=1; fi
+  if ((have_sub == 0)); then
+    aproj=''
+    [[ ! -f "$DIR/make/project.mk" ]] || aproj=$(make_var "$DIR/make/project.mk" ALTIUM_LIBRARY_PROJECT)
+    aproj=${aproj##* }
+    [[ -n $aproj ]] || aproj=$(config_value ALTIUM_LIBRARY_PROJECT)
+    if [[ -z $aproj ]]; then
+      aown=$(git -C "$DIR" remote get-url origin 2>/dev/null | sed -n -E 's#^.*github\.com[:/]([A-Za-z0-9-]+)/.*$#\1#p' | tr '[:upper:]' '[:lower:]' || true)
+      [[ -n $aown ]] || aown=$(config_value GITHUB_OWNER)
+      aproj="${aown:-<owner>}/altium-library"
+    fi
+    i=0
+    while ((i < ${#PART_NAMES[@]})); do
+      if [[ ${PART_KINDS[$i]} == altium ]]; then
+        add warn project "$alib" "part ${PART_NAMES[$i]} (altium) has no Altium library submodule at $alib: its parts are not checked against the shared library" \
+          "make ${PART_NAMES[$i]}-setup adds it (git submodule add https://github.com/$aproj.git $alib), then commit .gitmodules and $alib"
+      fi
+      i=$((i + 1))
+    done
+  fi
 fi
 
 # Tracked files that .gitattributes routes to LFS but that are committed as plain blobs (git shows them as

@@ -1,5 +1,5 @@
-# project-standard ci-templates v1.3: zephyr (Zephyr / nRF Connect SDK firmware, west, sysbuild, MCUboot).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.3.
+# project-standard ci-templates v1.4: zephyr (Zephyr / nRF Connect SDK firmware, west, sysbuild, MCUboot).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.4.
 #
 # check: MCUboot's development key, no secrets. build: signs with the MCUboot key from the secrets repo.
 # release (run_release, tags): the build's signed image, NOBUILD=1, no rebuild and no key.

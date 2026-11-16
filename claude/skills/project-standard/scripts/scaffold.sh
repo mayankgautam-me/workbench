@@ -32,7 +32,7 @@
 # the project owns (project.mk, local.mk, README.md, PLAN.md, ...) are kept when they exist.
 set -euo pipefail
 
-readonly STD_VERSION=1.3
+readonly STD_VERSION=1.4
 SKILL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 readonly SKILL_DIR
 readonly TPL_MAKE="$SKILL_DIR/templates/make"
@@ -319,7 +319,8 @@ kind_docs() {
   case $1 in
     zephyr | espidf | pio | arm-gcc | circuitpython) echo "protocol flashing" ;;
     silabs) echo "protocol flashing power" ;;
-    hardware | altium) echo "bringup manufacturing" ;;
+    hardware) echo "bringup manufacturing" ;;
+    altium) echo "bringup manufacturing library" ;;
     mechanical) echo "assembly" ;;
     cloud-worker) echo "api data" ;;
     app-*) echo "distribution" ;;
@@ -340,6 +341,7 @@ doc_title() {
     data) echo "Data" ;;
     distribution) echo "Distribution" ;;
     usage) echo "Usage" ;;
+    library) echo "Library" ;;
   esac
 }
 
@@ -355,6 +357,7 @@ doc_what() {
     data) echo "D1 tables, KV keys, R2 layout, migrations" ;;
     distribution) echo "bundle ids, signing, stores, OTA channel, permissions" ;;
     usage) echo "CLI or service usage, configuration, environment" ;;
+    library) echo "the shared Altium library: its submodule, adding a part, the library check" ;;
   esac
 }
 
@@ -537,6 +540,15 @@ readme_config() {
     altium)
       echo "The layout is fixed (\`<Board>.PrjPcb\`, \`.SchDoc\`, \`.PcbDoc\` and \`.OutJob\` here, \`sheets/\`, \`library/\`,"
       echo "\`bom/\`); \`make $p-check\` enforces it. The revision is \`VERSION\`."
+      echo
+      echo "Parts come from the shared Altium library, a git submodule at \`$(altium_library)\` (\`ALTIUM_LIBRARY\`;"
+      echo "the repository is \`ALTIUM_LIBRARY_PROJECT\`, by default \`<owner>/altium-library\`). \`make $p-setup\` adds it,"
+      echo "or in a fresh clone checks it out:"
+      echo
+      echo "    git submodule update --init -- $(altium_library)"
+      echo
+      echo "The board's project uses its \`Library.DbLib\` by a relative path; \`make $p-lib-check\` (and \`make $p-check\`)"
+      echo "checks every part against it (Library, under Docs)."
       ;;
     mechanical)
       echo "\`FREECADCMD\` (user config or environment) when freecadcmd is neither on PATH nor in FreeCAD.app."
@@ -1004,6 +1016,45 @@ _Where it runs, ports, volumes, the other services it needs._
 _Where the logs go and how to tell it is healthy._
 EOF
       ;;
+    library)
+      local lib
+      lib=$(altium_library)
+      cat <<EOF
+_The parts of this board come from the shared Altium library, never from a library of its own._
+
+## The submodule
+
+The library is the repository \`ALTIUM_LIBRARY_PROJECT\` (by default \`<owner>/altium-library\`), a git submodule of
+this project at \`$lib\` (\`ALTIUM_LIBRARY\` in \`make/project.mk\`). A submodule, because the board's project names
+the library's \`Library.DbLib\` by a relative path. \`make $p-setup\` adds it (\`git submodule add\`) when the project
+has none yet, and checks it out in a fresh clone; by hand:
+
+    git submodule update --init -- $lib
+
+The project pins one commit of the library. To move to a newer one: \`git -C $lib pull\`, then
+\`git add $lib\` and commit. \`make $p-doctor\` says when the checkout is not the pinned commit.
+
+## What is in it
+
+\`parts.csv\` (one row per MPN), \`Library.DbLib\` (Altium's view of \`parts.csv\`), \`sym/<name>.SchLib\`,
+\`fp/<name>.PcbLib\`, \`models/<MPN>.step\` (Git LFS, lockable) and \`tools/check.py\`.
+
+## Adding a part
+
+_Add it in the library repository (its row in \`parts.csv\`, its symbol, footprint and model), check it there with
+\`python3 tools/check.py library\`, push, then move this project's pin as above._
+
+## The check
+
+\`make $p-lib-check\` runs \`tools/check.py project\` on the board's \`.PrjPcb\` (in \`$d/.venv\`, which
+\`make $p-setup\` makes); \`make $p-check\` runs it too once the library is checked out. In CI the altium job checks
+the library out at the pinned commit with a read-only deploy key (\`make ci-setup\`).
+
+## Notes
+
+_Parts this board uses that are not in the library yet, and why._
+EOF
+      ;;
   esac
 }
 
@@ -1414,6 +1465,14 @@ readonly ACTIONS_CHECKOUT='actions/checkout@3d3c42e5aac5ba805825da76410c181273ba
 readonly CI_TEMPLATES_DEFAULT=mayankgautam-me/ci-templates
 
 # project_mk_value NAME: the last assignment of NAME in the project's make/project.mk; empty when none.
+# altium_library: where an altium part's shared library is a submodule: ALTIUM_LIBRARY in make/project.mk, else the
+# default hardware/altium-library (1.4). The scaffold writes no submodule (no network): make <part>-setup adds it.
+altium_library() {
+  local v
+  v=$(project_mk_value ALTIUM_LIBRARY)
+  printf '%s\n' "${v:-hardware/altium-library}"
+}
+
 project_mk_value() {
   local pm="$DEST/make/project.mk"
   [[ -f $pm ]] || return 0
@@ -1484,6 +1543,10 @@ ci_secrets() {
   echo '      SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}'
   if [[ $1 == hardware ]]; then
     echo '      KICAD_LIBRARY_DEPLOY_KEY: ${{ secrets.KICAD_LIBRARY_DEPLOY_KEY }}'
+  fi
+  # the shared Altium library, a submodule the altium job checks out with its own deploy key (1.4)
+  if [[ $1 == altium ]]; then
+    echo '      ALTIUM_LIBRARY_DEPLOY_KEY: ${{ secrets.ALTIUM_LIBRARY_DEPLOY_KEY }}'
   fi
 }
 

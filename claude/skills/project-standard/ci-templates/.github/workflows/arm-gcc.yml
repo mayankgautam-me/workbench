@@ -1,5 +1,5 @@
-# project-standard ci-templates v1.3: arm-gcc (bare-metal arm-none-eabi firmware, Debian's packaged GCC on a pinned image).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/arm-gcc.yml@v1.3.
+# project-standard ci-templates v1.4: arm-gcc (bare-metal arm-none-eabi firmware, Debian's packaged GCC on a pinned image).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/arm-gcc.yml@v1.4.
 
 on:
   workflow_call:

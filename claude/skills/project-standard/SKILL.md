@@ -32,7 +32,9 @@ offer adopt; never change it silently.
      `<kind folder>/<part>/` for each, several firmware parts named for their chips (`firmware/nrf9151/`, `firmware/stm32f042/`): `reference/standard.md` section 1. For firmware ask the board (and the MCU family when it
      is not obvious from the board; a SiWx917 is `silabs` on the Simplicity SDK, or `zephyr` with `<part>_ZEPHYR` on
      upstream Zephyr). For a KiCad board ask whether it uses the shared KiCad library or its own (`<part>_LIBRARY :=
-     local`). For every `cloud-worker` and `web-pages` part ask whether it has a staging
+     local`). An Altium board takes its parts from the shared Altium library, a git submodule at
+     `hardware/altium-library` (`ALTIUM_LIBRARY`, from `ALTIUM_LIBRARY_PROJECT`, default `<owner>/altium-library`): the
+     scaffold only documents it, and `make <part>-setup` adds it. For every `cloud-worker` and `web-pages` part ask whether it has a staging
      environment (a push to main deploys it) or is production-only (only its tag deploys): never assume either.
      For every `web-pages` part ask its custom domain (production; staging is `<label>-staging.<zone>`): the site is a
      static-assets Worker on that domain, its only address (no `*.workers.dev`, no preview URLs). Use Cloudflare Pages
@@ -80,10 +82,11 @@ offer adopt; never change it silently.
 7. `make doctor`, and report what it says is missing with the command that fixes each item. A `secrets.schema`
    row whose description starts with `optional:` (the app signing and store names, written only for the app kinds
    that read them) is a warning when missing, not a failure.
-   CI reads the secrets repo and, with a hardware part, the KiCad library with read-only deploy keys. Once the GitHub
+   CI reads the secrets repo and, with a hardware part, the KiCad library (with an altium part, the Altium library) with
+   read-only deploy keys. Once the GitHub
    repository exists, tell the user to run `make ci-setup` (it prints no values): the CI age key (`make secrets-ci`), the
    deploy keys (made in `~/.ssh` when missing, added to the repositories), their repository secrets and the variables
-   `SECRETS_REPO` and `KICAD_LIBRARY_REPO`. It is safe to run again. Do not run it yourself: it writes repository
+   `SECRETS_REPO`, `KICAD_LIBRARY_REPO` and `ALTIUM_LIBRARY_REPO`. It is safe to run again. Do not run it yourself: it writes repository
    secrets. `make ci-setup-help` prints the same steps as commands to run by hand. A crate or tool that needs a system library in CI gets it from the
    repository variable `STD_APT_PACKAGES` (e.g. `libudev-dev` for hidapi). `make ci-local JOB=<job>` runs a job in Docker
    before pushing (partial: see `reference/standard.md` section 6).
@@ -186,12 +189,18 @@ Read-only until the user says yes.
      succeeds), then `git add --renormalize .` and commit it on its
      own as "Move the binaries already tracked into Git LFS". The old blobs stay in history (purging them is a
      history rewrite: the user's decision).
-   - Deploy keys: the secrets repo and, with a hardware part, the KiCad library need a read-only deploy key whose
-     private half is the project's secret. Once the GitHub repository exists and the branch is pushed, the user runs
+   - Deploy keys: the secrets repo and, with a hardware part, the KiCad library (with an altium part, the Altium
+     library) need a read-only deploy key whose private half is the project's secret. Once the GitHub repository exists and the branch is pushed, the user runs
      `make ci-setup`; Claude does not create keys.
    - KiCad: before touching any `.kicad_*` file or renaming a folder that holds one, check KiCad
      does not have it open (`pgrep -x kicad`, and no `~*.lck` / `*.lck` next to the files). If it
      is open, stop and ask the user to close it. Never change footprints or net names.
+   - Altium: the board's parts come from the shared Altium library, a submodule at `ALTIUM_LIBRARY` (default
+     `hardware/altium-library`). The scaffold adds no submodule; with the user's go-ahead, `make <part>-setup` adds it
+     (commit `.gitmodules` and the submodule on the adopt branch), and `make <part>-lib-check` lists the parts the
+     board uses that the library does not have: report them, never rewrite the board's components or its own
+     `library/` to fix them. A DbLib or library path the project already uses stays as it is until the user moves it
+     to the submodule's `Library.DbLib` in Altium. The audit warns while the submodule is missing.
    - Existing Workers, per cloud-worker part, before the scaffold runs (it reads `wrangler.jsonc` to find
      production-only parts):
      1. Convert `wrangler.toml` to `wrangler.jsonc` (make and `cf.sh` read only jsonc or json); remove the toml.
@@ -241,6 +250,11 @@ Read-only until the user says yes.
    repository the audit names (`CI_TEMPLATES_REPO`, default `mayankgautam-me/ci-templates`, independent of
    `GITHUB_OWNER`; a line on the pre-1.7 `<owner>/ci-templates` is reported outdated) and the current version tag
    (`v` + `make/VERSION`); and add jobs for kinds that were added.
+   From v1.3 to v1.4: re-copy the managed files and set every `uses:` line to `@v1.4`. For an altium part, add
+   `ALTIUM_LIBRARY_DEPLOY_KEY: ${{ secrets.ALTIUM_LIBRARY_DEPLOY_KEY }}` to its job's `secrets:` in `checks.yml`, run
+   `scaffold.sh <worktree> --force` (it writes `docs/<part>/library.md` and adds `.venv/` to `.gitignore`), then, with the
+   user's go-ahead, `make <part>-setup` adds the Altium library submodule (commit `.gitmodules` and it), and the user
+   runs `make ci-setup` again for its deploy key and `ALTIUM_LIBRARY_REPO`.
    From v1.2 to v1.3: re-copy the managed files and set every `uses:` line to `@v1.3`. A silabs part gets the 1.3
    kind: `slc generate` without `--toolchain gcc` (it made WiseConnect's and the SDK's `toolchain_gcc` clash), and
    `POST_BUILD_EXE=<commander>` for the `.slcp`'s post-build. If the part publishes the `.rps` (an OTA bucket, or the
@@ -293,7 +307,7 @@ Read-only until the user says yes.
    From v8 to v9 (GitLab -> GitHub): `.gitlab-ci.yml` is replaced by `.github/workflows/checks.yml` and `release.yml`.
    `scaffold.sh <worktree> --force` writes the two workflows when they are missing; an existing one is kept, so move an
    old one aside first to regenerate it. Then the user runs, not Claude: `make ci-setup` (the CI age key, the deploy keys, and the
-   repository variables `SECRETS_REPO` and `KICAD_LIBRARY_REPO`); other variables with `gh variable set` (`STD_APT_PACKAGES` when needed, `MACOS_CI=true` only when macOS jobs should
+   repository variables `SECRETS_REPO`, `KICAD_LIBRARY_REPO` and, with an altium part, `ALTIUM_LIBRARY_REPO`); other variables with `gh variable set` (`STD_APT_PACKAGES` when needed, `MACOS_CI=true` only when macOS jobs should
    run); only for a private `CI_TEMPLATES_REPO`, access from the project's repositories on it (Settings > Actions >
    General > Access; the public default needs none); and, once the
    workflows are committed, `git rm .gitlab-ci.yml`. After that a tag runs `release.yml` and the GitHub Release. Old

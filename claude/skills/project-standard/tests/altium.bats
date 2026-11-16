@@ -312,3 +312,208 @@ outputs() {
   [ "$status" -eq 0 ]
   [ ! -e hardware/outputs ]
 }
+
+# --- the shared Altium library (1.4): a submodule at hardware/altium-library, from a local repo (no network) --------
+
+# mklib: a library repo in $R/altium-library as the other agent's layout has it, with a fake tools/check.py that
+# records its arguments in $STUB_LOG/check.argv and exits with $STUB_LOG/check.rc (0 when absent). Two commits; LIB1 and
+# LIB2 are their ids. Git refuses file:// submodules unless protocol.file.allow says otherwise (git 2.38.1).
+mklib() {
+  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=protocol.file.allow GIT_CONFIG_VALUE_0=always
+  local L="$R/altium-library"
+  mkdir -p "$L/sym" "$L/fp" "$L/models" "$L/tools"
+  git -C "$L" init -q -b main .
+  printf 'MPN,Symbol,Footprint\nRC0402FR-0710KL,Resistor,R0402\n' >"$L/parts.csv"
+  printf '[OutsideConnection]\r\nConnectionString=parts.csv\r\n' >"$L/Library.DbLib"
+  printf 'version https://git-lfs.github.com/spec/v1\noid sha256:%064d\nsize 1\n' 1 >"$L/sym/Resistor.SchLib"
+  printf '# olefile, none in the test\n' >"$L/tools/requirements.txt"
+  cat >"$L/tools/check.py" <<PY
+import os, sys
+open(os.path.join("$STUB_LOG", "check.argv"), "a").write(" ".join(sys.argv[1:]) + "\n")
+print("check.py ran")
+rc = os.path.join("$STUB_LOG", "check.rc")
+sys.exit(int(open(rc).read()) if os.path.exists(rc) else 0)
+PY
+  git -C "$L" add -A && git -C "$L" commit -q -m one
+  LIB1=$(git -C "$L" rev-parse HEAD)
+  printf 'MPN,Symbol,Footprint\nRC0402FR-0710KL,Resistor,R0402\nGRM155R71C104KA88D,Capacitor,C0402\n' >"$L/parts.csv"
+  git -C "$L" commit -q -am two
+  LIB2=$(git -C "$L" rev-parse HEAD)
+}
+
+# libproject: an altium project in the standard layout whose library URL is the local repo
+libproject() {
+  alproject "ALTIUM_LIBRARY_URL := $R/altium-library
+$1"
+  conforming
+}
+
+@test "altium setup 1.4: adds the library submodule from ALTIUM_LIBRARY_URL and its tools venv; doctor and lib-ref see the pin" {
+  mklib
+  libproject
+  run make hardware-setup
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"submodule hardware/altium-library added: commit .gitmodules and hardware/altium-library"* ]] || false
+  [[ "$output" == *"the Altium library's tools in hardware/.venv"* ]] || false
+  [ -x hardware/.venv/bin/python ]
+  grep -q 'path = hardware/altium-library' .gitmodules
+  [ "$(git ls-files -s -- hardware/altium-library | cut -d' ' -f1,2)" = "160000 $LIB2" ]
+  git commit -q -m library
+  # again: nothing to add, the venv stays
+  touch hardware/.venv/marker
+  run make hardware-setup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"submodule hardware/altium-library at its pinned commit ${LIB2:0:12}"* ]] || false
+  [ -f hardware/.venv/marker ]
+  run make hardware-doctor
+  echo "$output"
+  [[ "$output" == *"Altium library hardware/altium-library at its pinned commit"* ]] || false
+  [[ "$output" == *"the library's tools in hardware/.venv"* ]] || false
+  run make hardware-lib-ref
+  [ "$status" -eq 0 ]
+  [ "$output" = "path=hardware/altium-library
+sha=$LIB2" ]
+  # the library's files inside the part folder are not the part's, and its DbLib is a document: the layout check passes
+  prjpcb Board 'Board.SchDoc' 'sheets\02-Power.SchDoc' 'sheets\02-Power.Harness' 'sheets\03-MCU.SchDoc' 'Board.PcbDoc' \
+    'library\Board.SchLib' 'library\Board.PcbLib' 'altium-library\Library.DbLib'
+  git add hardware/Board.PrjPcb && git commit -q -m dblib
+  run make hardware-check
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"altium-library/sym"* ]] || false
+}
+
+@test "altium lib-check 1.4: runs tools/check.py project on the PrjPcb with --root; findings fail; WARN=1 passes --warn; check runs it" {
+  mklib
+  libproject
+  run make hardware-lib-check
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no Altium library submodule at hardware/altium-library: make hardware-setup adds it"*"git submodule update --init -- hardware/altium-library"* ]] || false
+  make hardware-setup >/dev/null
+  run make hardware-lib-check
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"check.py ran"* ]] || false
+  [ "$(cat "$STUB_LOG/check.argv")" = "project $P/hardware/Board.PrjPcb --root $P/hardware/altium-library" ]
+  echo 1 >"$STUB_LOG/check.rc"
+  run make hardware-lib-check
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the Altium library's check found problems in Board.PrjPcb"* ]] || false
+  run make hardware-check
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"layout, document paths and Git LFS"*"check.py ran"* ]] || false
+  rm "$STUB_LOG/check.rc"
+  run make hardware-lib-check WARN=1
+  [ "$status" -eq 0 ]
+  [ "$(tail -n 1 "$STUB_LOG/check.argv")" = "project $P/hardware/Board.PrjPcb --root $P/hardware/altium-library --warn" ]
+}
+
+@test "altium 1.4: a clone without the submodule checked out: check warns and skips the library check, doctor and lib-check give the command, setup checks it out" {
+  mklib
+  libproject
+  make hardware-setup >/dev/null
+  git commit -q -m library
+  git clone -q "$P" "$R/clone"
+  cd "$R/clone"
+  rm -rf hardware/outputs
+  run make hardware-check
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the Altium library hardware/altium-library is not checked out, its check skipped: git submodule update --init -- hardware/altium-library"* ]] || false
+  run make hardware-lib-check
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"is not checked out: git submodule update --init -- hardware/altium-library"* ]] || false
+  run make hardware-doctor
+  [[ "$output" == *"the Altium library hardware/altium-library is not checked out: git submodule update --init -- hardware/altium-library"* ]] || false
+  run make hardware-setup
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"checked out at its pinned commit"* ]] || false
+  [ -f hardware/altium-library/tools/check.py ]
+  # behind its pin: doctor says so
+  git -C hardware/altium-library checkout -q "$LIB1"
+  run make hardware-doctor
+  echo "$output"
+  [[ "$output" == *"the Altium library hardware/altium-library is behind its pinned commit (${LIB1:0:12}, pinned ${LIB2:0:12}): git submodule update -- hardware/altium-library"* ]] || false
+}
+
+@test "altium check 1.4: a DocumentPath into the library is accepted inside or outside the part folder; a file missing from it fails" {
+  mklib
+  alproject "ALTIUM_LIBRARY_URL := $R/altium-library
+PARTS := main:altium:hardware/main"
+  mkdir -p hardware/main
+  prjpcb Main 'Main.SchDoc' 'Main.PcbDoc' '..\altium-library\Library.DbLib'
+  mv hardware/Main.PrjPcb hardware/main/
+  pointer hardware/main/Main.SchDoc
+  pointer hardware/main/Main.PcbDoc
+  git add -A && git commit -q -m main
+  # not checked out yet: the DbLib is not looked for
+  run make main-check
+  echo "$output"
+  [ "$status" -eq 0 ]
+  make main-setup >/dev/null
+  run make main-check
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"check.py ran"* ]] || false
+  sed -i.bak 's/Library.DbLib/Missing.DbLib/' hardware/main/Main.PrjPcb && rm hardware/main/Main.PrjPcb.bak
+  run make main-check
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'DocumentPath=..\altium-library\Missing.DbLib in Main.PrjPcb: the file is not in the Altium library hardware/altium-library'* ]] || false
+  [[ "$output" != *"points outside the part folder"* ]] || false
+}
+
+@test "altium 1.4: ALTIUM_LIBRARY_PROJECT from make/project.mk, the config or the owner; the URL follows origin for the same owner" {
+  alproject ""
+  printf 'show:\n\t@echo "P=$(ALTIUM_LIBRARY_PROJECT) FROM=$(STD_ALTIUM_LIBRARY_PROJECT_FROM) URL=$(ALTIUM_LIBRARY_URL)"\n' >make/local.mk
+  git remote add origin git@github.com:Acme/demo.git
+  run make show
+  [ "$output" = "P=acme/altium-library FROM=owner URL=../altium-library.git" ]
+  mkdir -p "$STD_CONFIG"
+  printf 'ALTIUM_LIBRARY_PROJECT := beta/parts\n' >"$STD_CONFIG/config.mk"
+  run make show
+  [ "$output" = "P=beta/parts FROM=config URL=https://github.com/beta/parts.git" ]
+  printf 'ALTIUM_LIBRARY_PROJECT := acme/alib\n' >>make/project.mk
+  run make show
+  [ "$output" = "P=acme/alib FROM=make/project.mk URL=../alib.git" ]
+}
+
+@test "ci-setup-help 1.4: an altium part gets the Altium library's deploy key and ALTIUM_LIBRARY_REPO; no altium part, none" {
+  alproject "ALTIUM_LIBRARY_PROJECT := beta/alib"
+  git remote add origin git@github.com:acme/demo.git
+  run make ci-setup-help
+  echo "$output"
+  [[ "$output" == *"gh repo deploy-key add ~/.ssh/demo-ci-altium.pub --repo beta/alib --title demo-ci-read-only"* ]] || false
+  [[ "$output" == *"gh secret set ALTIUM_LIBRARY_DEPLOY_KEY --repo acme/demo < ~/.ssh/demo-ci-altium"* ]] || false
+  [[ "$output" == *"gh variable set ALTIUM_LIBRARY_REPO --repo acme/demo --body beta/alib"* ]] || false
+  [[ "$output" != *"KICAD_LIBRARY"* ]] || false
+  mkproject "$P" "PROJECT := demo
+PARTS :=
+ALTIUM_LIBRARY_PROJECT := beta/alib"
+  run make ci-setup-help
+  [[ "$output" != *"ALTIUM"* ]] || false
+}
+
+@test "ci-setup 1.4: an altium part's deploy key goes to the Altium library and its secret and variable to the project" {
+  alproject ""
+  git remote add origin git@github.com:acme/demo.git
+  mkdir -p "$HOME/.ssh"
+  stub_cmd gh 'printf "%s\n" "$*" >>"$STUB_LOG/gh.calls"
+case "$1 $2" in
+  "repo view") case "$*" in *visibility*) echo PUBLIC ;; esac; exit 0 ;;
+  "repo deploy-key") case "$3" in list) cat "$STUB_LOG/keys" 2>/dev/null ;; add) cut -d" " -f1,2 "$4" >>"$STUB_LOG/keys" ;; esac ;;
+  "secret set") printf "%s %s\n" "$3" "$(wc -c | tr -d " ")" >>"$STUB_LOG/secrets" ;;
+esac
+exit 0'
+  stub_cmd ssh-keygen 'while [ $# -gt 0 ]; do [ "$1" = -f ] && f=$2; shift; done
+printf "PRIVATE\n" >"$f"; printf "ssh-ed25519 AAAAfake%s c\n" "$RANDOM" >"$f.pub"'
+  run make ci-setup STD_SECRETS=:
+  echo "$output"
+  [ "$status" -eq 0 ]
+  grep -q 'repo deploy-key add .*demo-ci-altium.pub --repo acme/altium-library --title demo-ci-read-only' "$STUB_LOG/gh.calls"
+  grep -q '^ALTIUM_LIBRARY_DEPLOY_KEY [1-9]' "$STUB_LOG/secrets"
+  grep -q 'variable set ALTIUM_LIBRARY_REPO --repo acme/demo --body acme/altium-library' "$STUB_LOG/gh.calls"
+  ! grep -q KICAD "$STUB_LOG/gh.calls"
+  [[ "$output" != *"PRIVATE"* ]] || false
+}

@@ -1,10 +1,13 @@
-# project-standard ci-templates v1.3: altium (Altium Designer boards; nothing here runs Altium).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/altium.yml@v1.3.
+# project-standard ci-templates v1.4: altium (Altium Designer boards; nothing here runs Altium).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/altium.yml@v1.4.
 #
 # Altium Designer is Windows only and licensed, so no runner can make the outputs: the board's OutJob makes them in Altium,
 # into <dir>/outputs/, which is never committed. CI therefore runs the check only: the PrjPcb and every document it lists,
-# the folder layout, and that every Altium binary is a Git LFS pointer (checked on the pointers themselves, so nothing is
-# pulled from LFS). run_build and run_release do nothing here: the GitHub Release of a board is made where its outputs are,
+# the folder layout, and that every Altium binary is a Git LFS pointer (checked on the pointers themselves). With the
+# shared Altium library (a submodule, 1.4) and the variable ALTIUM_LIBRARY_REPO, the library is checked out at the commit
+# the project pins, with the read-only deploy key ALTIUM_LIBRARY_DEPLOY_KEY, and only its symbols and footprints and the
+# part's schematics come from LFS (not the 3D models, cached per library commit); the check then runs the library's
+# tools/check.py on the project too. run_build and run_release do nothing here: the GitHub Release of a board is made where its outputs are,
 # after make <part>-bump and pushing the tag, with
 #   make <part>-github-release FORCE=1
 # on the Windows machine that ran the OutJob (Git Bash), or on a Mac the outputs were copied to.
@@ -25,6 +28,8 @@ on:
         required: false
       KICAD_LIBRARY_DEPLOY_KEY:
         required: false
+      ALTIUM_LIBRARY_DEPLOY_KEY:
+        required: false
 
 jobs:
   check:
@@ -38,7 +43,9 @@ jobs:
       - name: Install system packages (apt)
         run: |
           set -euo pipefail
-          need=""; for t in make git; do command -v "$t" >/dev/null 2>&1 || need="$need $t"; done
+          need=""; for t in make git git-lfs python3; do command -v "$t" >/dev/null 2>&1 || need="$need $t"; done
+          # the Altium library's tools run in a venv
+          if command -v python3 >/dev/null 2>&1 && ! python3 -c 'import ensurepip' >/dev/null 2>&1; then need="$need python3-venv"; fi
           if [ -n "$need" ] || [ -n "${STD_APT_PACKAGES:-}" ]; then
             sudo apt-get update -qq
             sudo apt-get install -y -qq --no-install-recommends $need ${STD_APT_PACKAGES:-}
@@ -47,5 +54,39 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: false
+      - name: Get the Altium library's path and pinned commit
+        id: alib
+        run: make "$PART-lib-ref" >> "$GITHUB_OUTPUT"
+      - name: Check out the Altium library at its pinned commit (read-only deploy key)
+        if: ${{ vars.ALTIUM_LIBRARY_REPO != '' && steps.alib.outputs.sha != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ vars.ALTIUM_LIBRARY_REPO }}
+          ssh-key: ${{ secrets.ALTIUM_LIBRARY_DEPLOY_KEY }}
+          ref: ${{ steps.alib.outputs.sha }}
+          path: ${{ steps.alib.outputs.path }}
+          lfs: false
+      - name: Keep the Altium library LFS objects (per library commit)
+        if: ${{ vars.ALTIUM_LIBRARY_REPO != '' && steps.alib.outputs.sha != '' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.alib.outputs.path }}/.git/lfs/objects
+          key: altium-lfs-v1-${{ steps.alib.outputs.sha }}
+          restore-keys: |
+            altium-lfs-v1-
+      - name: Get the Altium library's symbols and footprints from Git LFS (not the 3D models)
+        if: ${{ vars.ALTIUM_LIBRARY_REPO != '' && steps.alib.outputs.sha != '' }}
+        env:
+          LIB: ${{ steps.alib.outputs.path }}
+        run: git -C "$GITHUB_WORKSPACE/$LIB" lfs pull --exclude "models/**"
+      - name: Get the schematics of this part from Git LFS (the library's check reads them)
+        if: ${{ vars.ALTIUM_LIBRARY_REPO != '' && steps.alib.outputs.sha != '' }}
+        run: |
+          set -euo pipefail
+          git lfs install --local
+          git lfs pull --include "$PART_DIR/**/*.SchDoc"
+      - name: Install the Altium library's tools (no CI key)
+        if: ${{ vars.ALTIUM_LIBRARY_REPO != '' && steps.alib.outputs.sha != '' }}
+        run: env -u SOPS_AGE_KEY make "$PART-setup"
       - name: Check
         run: make "$PART-check"

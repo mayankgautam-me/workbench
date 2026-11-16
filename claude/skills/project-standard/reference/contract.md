@@ -1,4 +1,4 @@
-# project-standard v1.3: internal contract
+# project-standard v1.4: internal contract
 
 How the pieces of the skill fit together. `standard.md` is the user-facing spec; this file is for
 whoever writes or changes `common.mk`, a kind, a script, the CI templates, `scaffold.sh` or `audit.sh`.
@@ -59,7 +59,7 @@ and in no `.gitattributes` LFS line.
 Every managed file's first line is exactly:
 
 ```
-# project-standard v1.3 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.4 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 ```
 
 (`#!/usr/bin/env bash` first, then that line, for scripts.) `audit.sh` and the hook look for
@@ -68,7 +68,7 @@ Every managed file's first line is exactly:
 Root `Makefile`:
 
 ```make
-# project-standard v1.3 (managed: ...)
+# project-standard v1.4 (managed: ...)
 include make/project.mk
 include make/common.mk
 ```
@@ -156,8 +156,8 @@ app-android`. A new kind touches: `templates/make/kinds/<kind>.mk`, `ci-template
 and the kind tables of `scaffold.sh` (`kind_group`, `kind_tech`, `kind_brew`, `kind_ignore`, `kind_settings`,
 `kind_tasks`, `kind_docs`, `kind_runs_on`, the README sections, the CI cases) and of `audit.sh` (`KINDS`, `kind_docs`,
 `part_group_at`), `STD_DIRS_<kind>` in common.mk, the version-source cases of `release.sh`, and `KINDS` in
-`tests/ci.bats`. altium's `STD_DIRS` is empty on purpose and teardown skips its `clean`: its `outputs/` come only
-from Altium on Windows.
+`tests/ci.bats`. altium's `STD_DIRS` is only `.venv` (the Altium library's tools, 1.4) and teardown skips its `clean`:
+its `outputs/` come only from Altium on Windows.
 
 Root targets for the firmware verbs (`flash`, `monitor`, ...) only run when exactly one part has the
 verb; with several they list the part targets and exit 2. Likewise a part's targets that talk to a board run
@@ -202,6 +202,7 @@ error otherwise, for every verb, because recipes and `teardown` remove things un
 | `STD_ORIGIN_REPO` | the repository name of the github.com `origin` (without `.git`) | read by the same `git remote get-url origin` as `STD_ORIGIN_OWNER`, exported with it; the docker kind's OCI source label outside CI |
 | `DOCKER_REGISTRY` | `ghcr.io/<GITHUB_OWNER, lowercase>` | `make/project.mk` or the environment, else config.mk's only when the project's owner is config.mk's `GITHUB_OWNER`, else the owner's ghcr.io; `STD_DOCKER_REGISTRY_FROM` = `make/project.mk`, `environment`, `command line`, `config` or `owner` (exported, so a sub-make keeps the parent's word) |
 | `KICAD_LIBRARY_PROJECT` | `<GITHUB_OWNER>/kicad-library` | owner/name of the shared KiCad library: `make/project.mk`, else config.mk or the environment, else the default; `STD_KICAD_LIBRARY_PROJECT_FROM` says which. `ci-setup` adds the KiCad deploy key there and sets `KICAD_LIBRARY_REPO` from it, only when a hardware part uses the shared library (`std_hw_shared_lib`: not `<part>_LIBRARY := local`) |
+| `ALTIUM_LIBRARY_PROJECT` | `<GITHUB_OWNER>/altium-library` | owner/name of the shared Altium library (1.4), resolved like `KICAD_LIBRARY_PROJECT`; `STD_ALTIUM_LIBRARY_PROJECT_FROM` says which. An altium part's setup adds it as the submodule `ALTIUM_LIBRARY`; `ci-setup` adds the Altium deploy key there and sets `ALTIUM_LIBRARY_REPO` from it when the project has an altium part (`std_altium_parts`) |
 | `NO_COLOR` | unset | plain output |
 
 `SECRETS_DIR` and `SECRETS_REMOTE` from the environment or `make/project.mk` (written `?=` there, so CI's environment
@@ -210,7 +211,7 @@ them before config.mk, so config.mk's own `SECRETS_DIR`, `SECRETS_REMOTE` and `G
 known apart. `-include $(STD_CONFIG)/config.mk` may set `SECRETS_REMOTE`, `GITHUB_OWNER` (the default owner),
 `DOCKER_REGISTRY` (its own owner's only, above), `CI_TEMPLATES_REPO` (owner/name, default `mayankgautam-me/ci-templates`, independent of
 `GITHUB_OWNER`; a value in `make/project.mk` wins over config.mk, and `CI_TEMPLATES_PROJECT` is ignored since 1.7), `KICAD_LIBRARY_DIR`,
-`KICAD_LIBRARY_PROJECT` (above) and `FREECADCMD` (the mechanical kind). `OTA_BUCKET` is a
+`KICAD_LIBRARY_PROJECT`, `ALTIUM_LIBRARY_PROJECT` (above) and `FREECADCMD` (the mechanical kind). `OTA_BUCKET` is a
 project setting in `make/project.mk`: common.mk keeps the project's value when config.mk sets one, and warns.
 
 `make help` filters the root entries at render time (`std_help_show`): `STD_HELP_ALWAYS`, then the
@@ -450,13 +451,15 @@ from the environment, never from a command line. On a Mac gh uses its own login 
 ## CI workflows (`ci-templates/`)
 
 - `ci-templates/.github/workflows/<kind>.yml`: one reusable workflow per kind (`on: workflow_call`), in `CI_TEMPLATES_REPO`
-  (default `mayankgautam-me/ci-templates`, public, shared by every project owner), tagged `v1.3` (`v1.2`, `v1.1` and `v1.0` are kept: a
+  (default `mayankgautam-me/ci-templates`, public, shared by every project owner), tagged `v1.4` (`v1.3`, `v1.2`, `v1.1` and `v1.0` are kept: a
   published tag never moves). `scaffold.sh` and
   `audit.sh` resolve it the same way (`ci_project`: `make/project.mk`, else the environment or the user config, else
   the default); the audit warns on a `uses:` line on any other repository. Inputs: `part`, `part_dir`, `run_check`, `run_build`, `run_release`, `confirm`, `source_run_id`,
   `deploy_staging`, `production_only`, `target`, and `library` (hardware: `shared`, the default, or `local`, which checks
   out no KiCad library; `ci_job` writes `library: local` when `make/project.mk` sets `<part>_LIBRARY := local`). Secrets are declared in each file and passed explicitly by the caller (no
-  `secrets: inherit`): `SECRETS_DEPLOY_KEY`, `SOPS_AGE_KEY`, and `KICAD_LIBRARY_DEPLOY_KEY` for hardware.
+  `secrets: inherit`): `SECRETS_DEPLOY_KEY`, `SOPS_AGE_KEY`, `KICAD_LIBRARY_DEPLOY_KEY` for hardware and
+  `ALTIUM_LIBRARY_DEPLOY_KEY` for altium (`ci_secrets`; `altium.yml` checks the library out at the commit
+  `make <part>-lib-ref` prints, 1.4).
 - Every job calls `make` only: `make "$PART-check"`, `-build`, `-github-release`, and the production verbs with
   `CONFIRM=production` set on the make line by the workflow (the guard accepts it because CI sets it).
 - `scaffold.sh` (`ci_workflow`, `ci_release_workflow`, `ci_job`, `ci_changes`) writes the project's `checks.yml` and `release.yml`
@@ -469,7 +472,7 @@ from the environment, never from a command line. On a Mac gh uses its own login 
   `run_release: true` (a cloud-worker or web-pages part's job also passes `confirm: production`: its tag deploys
   production, then makes the notes-only Release), then the production
   jobs, with `if: github.event_name == 'workflow_dispatch' && inputs.part == '<part>' && inputs.confirm == 'production'`.
-- Settings that apply to every job (`STD_APT_PACKAGES`, `KICAD_LIBRARY_REPO`, `SECRETS_REPO`, `MACOS_CI`) are repository
+- Settings that apply to every job (`STD_APT_PACKAGES`, `KICAD_LIBRARY_REPO`, `ALTIUM_LIBRARY_REPO`, `SECRETS_REPO`, `MACOS_CI`) are repository
   variables, read with defaults (`${NAME:-default}`). No workflow sets them on a job, where they would override the repository
   value. Every apt-get install line appends `${STD_APT_PACKAGES:-}`. `tests/ci.bats` checks it.
 - Production and store jobs run only with `confirm: production` (free private repositories have no environments). Store
