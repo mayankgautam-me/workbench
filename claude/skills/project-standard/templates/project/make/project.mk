@@ -6,8 +6,8 @@
 # PORT_BASE  dev ports are PORT_BASE + an offset per part, so two projects can run `make dev` at once.
 # PARTS      one entry per part, `name:kind[:dir]`; dir defaults to name. Every part gets the stage
 #            commands of its kind as `make <name>-<verb>`, and the root `make <verb>` runs them all.
-#            Kinds: zephyr espidf pio arm-gcc circuitpython hardware cloud-worker web-pages
-#                   app-flutter app-tauri app-xcode app-android docker go python
+#            Kinds: zephyr espidf pio arm-gcc circuitpython silabs hardware altium mechanical
+#                   cloud-worker web-pages app-flutter app-tauri app-xcode app-android docker go python
 # CI_TEMPLATES_REPO  optional: owner/name of the reusable CI workflows, over the user config's (default
 #            mayankgautam-me/ci-templates); scaffold the workflows again after changing it.
 # The secrets repo follows the project's GitHub owner, the owner of its git remote origin: <owner>/secrets, checked

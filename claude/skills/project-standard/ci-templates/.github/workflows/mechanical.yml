@@ -1,5 +1,5 @@
-# project-standard ci-templates v1.1: mechanical (FreeCAD models, headless through freecadcmd).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/mechanical.yml@v1.1.
+# project-standard ci-templates v1.2: mechanical (FreeCAD models, headless through freecadcmd).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/mechanical.yml@v1.2.
 #
 # FreeCAD comes from Ubuntu 24.04's own archive (the freecad package, FreeCAD 0.21, with freecadcmd), so the version is
 # the distribution's and not pinned here: a model saved by a newer FreeCAD (1.x) may not open or recompute the same in

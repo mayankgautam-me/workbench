@@ -6,7 +6,7 @@ if [[ -f "$BATS_TEST_DIRNAME/helpers.bash" ]]; then
   load helpers
 fi
 
-SA_HEADER='# project-standard v1.1 (managed: refresh with the project-standard skill, put project changes in make/local.mk)'
+SA_HEADER='# project-standard v1.2 (managed: refresh with the project-standard skill, put project changes in make/local.mk)'
 SA_KINDS="zephyr espidf pio arm-gcc circuitpython silabs hardware altium mechanical cloud-worker web-pages app-flutter app-tauri app-xcode app-android docker go python"
 
 # One part per kind. Dirs are explicit (the dir equals the part name unless nested), so the tree below stays
@@ -49,12 +49,12 @@ setup() {
   printf 'GITHUB_OWNER := example-owner\n' >"$STD_CONFIG/config.mk"
 }
 
-# sa_uses_ok FILE: every uses: line is the CI templates' reusable workflow at @v1.1, or actions/checkout pinned by SHA
+# sa_uses_ok FILE: every uses: line is the CI templates' reusable workflow at @v1.2, or actions/checkout pinned by SHA
 sa_uses_ok() {
   local ref
   while IFS= read -r ref; do
     case $ref in
-      mayankgautam-me/ci-templates/.github/workflows/*.yml@v1.1) ;;
+      mayankgautam-me/ci-templates/.github/workflows/*.yml@v1.2) ;;
       actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1) ;;
       *)
         echo "unexpected uses in $1: $ref" >&2
@@ -101,7 +101,7 @@ sa_scaffold_all() {
   # managed files
   cmp "$d/Makefile" "$skill/templates/project/Makefile"
   [ "$(sed -n 1p "$d/Makefile")" = "$SA_HEADER" ]
-  [ "$(tr -d '[:space:]' <"$d/make/VERSION")" = 1.1 ]
+  [ "$(tr -d '[:space:]' <"$d/make/VERSION")" = 1.2 ]
   cmp "$d/make/common.mk" "$skill/templates/make/common.mk"
   for f in "$skill"/templates/make/bin/*.sh; do
     [ -x "$d/make/bin/$(basename "$f")" ]
@@ -182,12 +182,12 @@ sa_scaffold_all() {
   grep -Fxq '  contents: read' "$rel"
   grep -Fxq '  contents: read' "$ci"   # the top level is read-only; a job grants what it needs
   for k in $SA_KINDS; do
-    grep -Fq "mayankgautam-me/ci-templates/.github/workflows/$k.yml@v1.1" "$ci"
+    grep -Fq "mayankgautam-me/ci-templates/.github/workflows/$k.yml@v1.2" "$ci"
     # altium: CI checks the board only, its Release is made where Altium's outputs are (no release job)
     if [[ $k == altium ]]; then
-      sa_absent -Fq "mayankgautam-me/ci-templates/.github/workflows/$k.yml@v1.1" "$rel"
+      sa_absent -Fq "mayankgautam-me/ci-templates/.github/workflows/$k.yml@v1.2" "$rel"
     else
-      grep -Fq "mayankgautam-me/ci-templates/.github/workflows/$k.yml@v1.1" "$rel"
+      grep -Fq "mayankgautam-me/ci-templates/.github/workflows/$k.yml@v1.2" "$rel"
     fi
   done
   grep -Fxq '  firmware:' "$ci"
@@ -243,7 +243,7 @@ sa_scaffold_all() {
   sa_uses_ok "$rel"
   sa_absent -q 'OWNER' "$ci" "$rel"
   if command -v yq >/dev/null 2>&1; then
-    [ "$(yq '.jobs.firmware.uses' "$ci")" = 'mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.1' ]
+    [ "$(yq '.jobs.firmware.uses' "$ci")" = 'mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.2' ]
     [ "$(yq '.jobs.hardware.secrets.KICAD_LIBRARY_DEPLOY_KEY' "$ci")" = '${{ secrets.KICAD_LIBRARY_DEPLOY_KEY }}' ]
     [ "$(yq '.jobs.firmware-release.with.run_release' "$rel")" = true ]
     yq '.' "$ci" >/dev/null
@@ -436,8 +436,8 @@ sa_scaffold_all() {
   d="$BATS_TEST_TMPDIR/defrepo"
   run "$skill/scripts/scaffold.sh" "$d" --project defrepo --part api:go
   [ "$status" -eq 0 ]
-  grep -Fq '    uses: mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.1' "$d/.github/workflows/checks.yml"
-  grep -Fq '    uses: mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.1' "$d/.github/workflows/release.yml"
+  grep -Fq '    uses: mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.2' "$d/.github/workflows/checks.yml"
+  grep -Fq '    uses: mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.2' "$d/.github/workflows/release.yml"
   sa_absent -q 'example-owner/ci-templates' "$d/.github/workflows/checks.yml" "$d/.github/workflows/release.yml"
 }
 
@@ -447,15 +447,15 @@ sa_scaffold_all() {
   d="$BATS_TEST_TMPDIR/cfg"
   run "$skill/scripts/scaffold.sh" "$d" --project cfg --part api:go
   [ "$status" -eq 0 ]
-  grep -Fq 'example-group/ci-shared/.github/workflows/go.yml@v1.1' "$d/.github/workflows/checks.yml"
-  grep -Fq 'example-group/ci-shared/.github/workflows/go.yml@v1.1' "$d/.github/workflows/release.yml"
+  grep -Fq 'example-group/ci-shared/.github/workflows/go.yml@v1.2' "$d/.github/workflows/checks.yml"
+  grep -Fq 'example-group/ci-shared/.github/workflows/go.yml@v1.2' "$d/.github/workflows/release.yml"
   # the project's own setting wins; the workflows are written again from it
   printf 'CI_TEMPLATES_REPO := project-org/ci-templates\n' >>"$d/make/project.mk"
   rm "$d/.github/workflows/checks.yml" "$d/.github/workflows/release.yml"
   run "$skill/scripts/scaffold.sh" "$d" --project cfg --part api:go --force
   [ "$status" -eq 0 ]
-  grep -Fq 'project-org/ci-templates/.github/workflows/go.yml@v1.1' "$d/.github/workflows/checks.yml"
-  grep -Fq 'project-org/ci-templates/.github/workflows/go.yml@v1.1' "$d/.github/workflows/release.yml"
+  grep -Fq 'project-org/ci-templates/.github/workflows/go.yml@v1.2' "$d/.github/workflows/checks.yml"
+  grep -Fq 'project-org/ci-templates/.github/workflows/go.yml@v1.2' "$d/.github/workflows/release.yml"
   sa_absent -q 'example-group' "$d/.github/workflows/checks.yml"
 }
 
@@ -470,7 +470,7 @@ sa_scaffold_all() {
   run "$skill/scripts/scaffold.sh" "$d" --project oldsetting --part api:go
   [ "$status" -eq 0 ]
   [[ $output == *"CI_TEMPLATES_PROJECT in the user config is ignored"* ]]
-  grep -Fq 'mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.1' "$d/.github/workflows/checks.yml"
+  grep -Fq 'mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.2' "$d/.github/workflows/checks.yml"
   sa_absent -q 'example-owner/ci-templates' "$d/.github/workflows/checks.yml"
 }
 
@@ -480,7 +480,7 @@ sa_scaffold_all() {
   d="$BATS_TEST_TMPDIR/noowner"
   run "$skill/scripts/scaffold.sh" "$d" --project noowner --part api:go
   [ "$status" -eq 0 ]
-  grep -Fq 'mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.1' "$d/.github/workflows/checks.yml"
+  grep -Fq 'mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.2' "$d/.github/workflows/checks.yml"
   sa_absent -q 'OWNER/ci-templates' "$d/.github/workflows/checks.yml"
 }
 
@@ -496,7 +496,7 @@ sa_scaffold_all() {
   run "$skill/scripts/scaffold.sh" "$d" --project newowner --part api:go
   [ "$status" -eq 0 ]
   [[ $output == *"GITLAB_GROUP"*"ignored"* ]]
-  grep -Fq 'mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.1' "$d/.github/workflows/checks.yml"
+  grep -Fq 'mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.2' "$d/.github/workflows/checks.yml"
   sa_absent -q 'old-group' "$d/.github/workflows/checks.yml" "$d/.github/workflows/release.yml"
 }
 
@@ -948,7 +948,7 @@ PARTS
   sa_absent -Fxq '  board-production:' "$rel"
   sa_absent -Fxq '  worker-image-production:' "$rel"
   if command -v yq >/dev/null 2>&1; then
-    [ "$(yq '.jobs.firmware-release.uses' "$rel")" = 'mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.1' ]
+    [ "$(yq '.jobs.firmware-release.uses' "$rel")" = 'mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.2' ]
     [ "$(yq '.jobs.tools-release.permissions.contents' "$rel")" = write ]
   fi
 }
@@ -1205,7 +1205,8 @@ PARTS
   sa_links_resolve "$d/docs/README.md"
   grep -Fq '| mechanical | mechanical |' "$d/docs/architecture.md"
   # project.mk: the silabs settings as comments
-  grep -Fq '# firmware_BOARD       := brd4338a' "$d/make/project.mk"
+  grep -Fxq '# firmware_BOARD := brd4338a' "$d/make/project.mk"
+  grep -Fxq '# the slc board (radio board), see firmware/README.md' "$d/make/project.mk"
   grep -Fq '# hardware_LIBRARY := local' "$d/make/project.mk"
   # Brewfile, .gitignore, .gitattributes
   grep -Fxq 'cask "segger-jlink"' "$d/Brewfile"
@@ -1227,8 +1228,8 @@ PARTS
     grep -Fxq "  $p:" "$ci"
     grep -Fxq "  $p-release:" "$rel"
   done
-  grep -Fq 'workflows/silabs.yml@v1.1' "$ci"
-  grep -Fq 'workflows/mechanical.yml@v1.1' "$rel"
+  grep -Fq 'workflows/silabs.yml@v1.2' "$ci"
+  grep -Fq 'workflows/mechanical.yml@v1.2' "$rel"
   grep -Fxq '    needs: [tag, hardware-release, firmware-release, mechanical-release]' "$rel"
   sa_absent -Fxq '  firmware-production:' "$rel"
   sa_absent -Fxq '  mechanical-production:' "$rel"
@@ -1262,15 +1263,18 @@ PARTS
     grep -Fxq -- "$l" "$d/.gitignore"
   done
   sa_absent -Fxq 'outputs/' "$d/.gitignore"
-  # Altium's binary documents in LFS
-  for e in SchDoc PcbDoc SchLib PcbLib IntLib Harness; do
-    grep -Eq "^\*\.$e filter=lfs diff=lfs merge=lfs -text" "$d/.gitattributes"
+  # Altium's binary documents in LFS (the variants file too, 1.2), its project and OutJob byte-exact; no KiCad *.wrl
+  for e in SchDoc PcbDoc SchLib PcbLib IntLib Harness PrjPcbVariants; do
+    grep -Eq "^\*\.$e filter=lfs diff=lfs merge=lfs -text lockable$" "$d/.gitattributes"
   done
+  grep -Fxq '*.PrjPcb -text' "$d/.gitattributes"
+  grep -Fxq '*.OutJob -text' "$d/.gitattributes"
+  sa_absent -Eq '^\*\.wrl[[:space:]]' "$d/.gitattributes"
   # no KiCad or other Brewfile lines for it, no library key in CI
   sa_absent -Fq 'kicad' "$d/Brewfile"
   ci="$d/.github/workflows/checks.yml"
   rel="$d/.github/workflows/release.yml"
-  grep -Fq 'workflows/altium.yml@v1.1' "$ci"
+  grep -Fq 'workflows/altium.yml@v1.2' "$ci"
   sa_absent -Fq 'KICAD_LIBRARY_DEPLOY_KEY' "$ci"
   sa_absent -Fq 'altium.yml' "$rel"
   sa_absent -Fxq '  latest:' "$rel"
@@ -1288,12 +1292,16 @@ PARTS
   run "$skill/scripts/scaffold.sh" "$d" --project alt --part hardware:altium --force
   echo "$output"
   [ "$status" -eq 0 ]
-  [[ $output == *"added the Git LFS lines of the project's kinds"* ]]
+  [[ $output == *"added the .gitattributes lines of the project's kinds"* ]] || false
   [ "$(sed -n 1p "$d/.gitattributes")" = '# mine' ]
   [ "$(grep -c '^\*\.SchDoc ' "$d/.gitattributes")" -eq 1 ]
   grep -Eq '^\*\.PcbDoc filter=lfs' "$d/.gitattributes"
+  grep -Eq '^\*\.PrjPcbVariants filter=lfs' "$d/.gitattributes"
+  grep -Fxq '*.PrjPcb -text' "$d/.gitattributes"
+  grep -Fxq '*.OutJob -text' "$d/.gitattributes"
   [ "$(grep -c '^History/$' "$d/.gitignore")" -eq 1 ]
-  for l in '__Previews/' 'hardware/outputs/' 'hardware/production/' 'references/'; do grep -Fxq -- "$l" "$d/.gitignore"; done
+  for l in '__Previews/' 'hardware/outputs/' 'hardware/production/'; do grep -Fxq -- "$l" "$d/.gitignore"; done
+  sa_absent -Fxq 'references/' "$d/.gitignore"
   before_a=$(cat "$d/.gitattributes")
   before_i=$(cat "$d/.gitignore")
   run "$skill/scripts/scaffold.sh" "$d" --project alt --part hardware:altium --force
@@ -1342,18 +1350,48 @@ PARTS
   sa_absent -Fq 'library:' "$d2/.github/workflows/checks.yml"
 }
 
-@test "scaffold 1.1: docs/references.md (the refs-fetch table) in every project, references/ ignored, never overwritten" {
+@test "scaffold 1.2: docs/references.md is links only (headings and a hint, no table, no rows), nothing ignored, never overwritten" {
   skill=$(sa_skill_copy)
   d="$BATS_TEST_TMPDIR/refs"
   run "$skill/scripts/scaffold.sh" "$d" --project refs --part api:cloud-worker
   [ "$status" -eq 0 ]
-  grep -Fxq '| Title | Vendor | File | URL | SHA256 |' "$d/docs/references.md"
-  grep -Fq 'make refs-fetch' "$d/docs/references.md"
-  grep -Fq '[References](references.md)' "$d/docs/README.md"
-  grep -Fxq 'references/' "$d/.gitignore"
-  printf '# mine\n' >"$d/docs/references.md"
+  f="$d/docs/references.md"
+  [ "$(sed -n 1p "$f")" = '# refs: references' ]
+  grep -Fq -- '- [Title (MPN) — Vendor](URL)' "$f"
+  grep -Fxq '## Datasheets' "$f"
+  grep -Fxq '## Vendors and modules' "$f"
+  sa_absent -Eq '^[[:space:]]*\|' "$f"
+  sa_absent -Eq '^- \[' "$f"
+  sa_absent -Eiq 'sha256|refs-fetch|refs-check|references/' "$f"
+  grep -Fxq -- '- [References](references.md): links to the datasheets, manuals and drawings' "$d/docs/README.md"
+  sa_absent -Fxq 'references/' "$d/.gitignore"
+  sa_absent -Fq 'refs' "$d/make/common.mk"
+  [ ! -e "$d/make/bin/refs.sh" ]
+  printf '# mine\n' >"$f"
   run "$skill/scripts/scaffold.sh" "$d" --project refs --part api:cloud-worker --force
   [ "$status" -eq 0 ]
-  [ "$(cat "$d/docs/references.md")" = '# mine' ]
-  [ "$(grep -c '^references/$' "$d/.gitignore")" -eq 1 ]
+  [ "$(cat "$f")" = '# mine' ]
+  sa_absent -Fxq 'references/' "$d/.gitignore"
+}
+
+@test "scaffold 1.2: *.wrl in .gitattributes only with a KiCad board (hardware), added once, also by --force" {
+  skill=$(sa_skill_copy)
+  d="$BATS_TEST_TMPDIR/nowrl"
+  run "$skill/scripts/scaffold.sh" "$d" --project nowrl --part fw:zephyr --part case:mechanical --part board:altium
+  [ "$status" -eq 0 ]
+  sa_absent -Eq '^\*\.wrl[[:space:]]' "$d/.gitattributes"
+  for e in step stp fcstd FCStd; do grep -Eq "^\*\.$e +filter=lfs" "$d/.gitattributes"; done
+  d="$BATS_TEST_TMPDIR/kicad"
+  run "$skill/scripts/scaffold.sh" "$d" --project kicad --part board:hardware --part fw:zephyr
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^\*\.wrl filter=lfs diff=lfs merge=lfs -text$' "$d/.gitattributes")" -eq 1 ]
+  # a kept .gitattributes without it gets it from --force, once
+  printf '*.step filter=lfs diff=lfs merge=lfs -text\n' >"$d/.gitattributes"
+  run "$skill/scripts/scaffold.sh" "$d" --project kicad --part board:hardware --part fw:zephyr --force
+  [ "$status" -eq 0 ]
+  [[ $output == *"added the .gitattributes lines of the project's kinds"* ]] || false
+  [ "$(sed -n 1p "$d/.gitattributes")" = '*.step filter=lfs diff=lfs merge=lfs -text' ]
+  [ "$(grep -c '^\*\.wrl ' "$d/.gitattributes")" -eq 1 ]
+  run "$skill/scripts/scaffold.sh" "$d" --project kicad --part board:hardware --part fw:zephyr --force
+  [ "$(grep -c '^\*\.wrl ' "$d/.gitattributes")" -eq 1 ]
 }

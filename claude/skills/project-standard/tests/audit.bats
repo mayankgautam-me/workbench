@@ -6,7 +6,7 @@ if [[ -f "$BATS_TEST_DIRNAME/helpers.bash" ]]; then
   load helpers
 fi
 
-SA_HEADER='# project-standard v1.1 (managed: refresh with the project-standard skill, put project changes in make/local.mk)'
+SA_HEADER='# project-standard v1.2 (managed: refresh with the project-standard skill, put project changes in make/local.mk)'
 SA_KINDS="zephyr espidf pio arm-gcc circuitpython hardware cloud-worker web-pages app-flutter app-tauri app-xcode app-android docker go python"
 
 setup() {
@@ -96,7 +96,7 @@ EOF
   run "$(sa_skill_copy)/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -eq 0 ]
-  [[ $output == *"standard v1.1"* ]]
+  [[ $output == *"standard v1.2"* ]]
   [[ $output == *clean* ]]
 }
 
@@ -475,14 +475,14 @@ sa_git_lfs() {
   sa_fresh "$d"
   ci="$d/.github/workflows/checks.yml"
   sed -i.bak -e 's|actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1|actions/checkout@v7|' "$ci"
-  sed -i.bak -e 's|zephyr.yml@v1.1|zephyr.yml@v8|' "$ci"
+  sed -i.bak -e 's|zephyr.yml@v1.2|zephyr.yml@v8|' "$ci"
   printf '      - uses: some-org/deploy-tool@v1\n' >>"$ci"
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -eq 1 ]
   [[ $output == *"error    ci        .github/workflows/checks.yml: uses some-org/deploy-tool@v1: a third-party action"* ]]
   [[ $output == *"uses actions/checkout@v7: not pinned by a full commit SHA"* ]]
-  [[ $output == *"uses mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v8: the skill is at v1.1"* ]]
+  [[ $output == *"uses mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v8: the skill is at v1.2"* ]]
 }
 
 @test "audit: a reusable workflow with no @version is an error, and one from another owner is a warning" {
@@ -490,7 +490,7 @@ sa_git_lfs() {
   d="$BATS_TEST_TMPDIR/nover"
   sa_fresh "$d"
   ci="$d/.github/workflows/checks.yml"
-  sed -i.bak -e 's|zephyr.yml@v1.1|zephyr.yml|' -e 's|mayankgautam-me/ci-templates/.github/workflows/go|other-owner/ci-templates/.github/workflows/go|' "$ci"
+  sed -i.bak -e 's|zephyr.yml@v1.2|zephyr.yml|' -e 's|mayankgautam-me/ci-templates/.github/workflows/go|other-owner/ci-templates/.github/workflows/go|' "$ci"
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -508,7 +508,7 @@ sa_git_lfs() {
   sed -i.bak -e 's|mayankgautam-me/ci-templates/|fabrolabs-innovations/ci-templates/|' "$ci"
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
-  [[ $output == *"warn     ci        .github/workflows/checks.yml: uses fabrolabs-innovations/ci-templates/.github/workflows/zephyr.yml@v1.1: outdated, the CI templates are mayankgautam-me/ci-templates (CI_TEMPLATES_REPO), not fabrolabs-innovations/ci-templates"* ]]
+  [[ $output == *"warn     ci        .github/workflows/checks.yml: uses fabrolabs-innovations/ci-templates/.github/workflows/zephyr.yml@v1.2: outdated, the CI templates are mayankgautam-me/ci-templates (CI_TEMPLATES_REPO), not fabrolabs-innovations/ci-templates"* ]]
   [[ $output == *"change the uses lines to mayankgautam-me/ci-templates"* ]]
   [[ $output != *"release.yml: uses fabrolabs-innovations"* ]]
   # the project's CI_TEMPLATES_REPO makes that repo the right one, and the other file's lines outdated
@@ -801,9 +801,10 @@ GH
   echo "$output"
   [[ $output == *"routes small files to LFS: *.png *.zip"* ]]
   [[ $output == *"git add --renormalize ."* ]]
-  # step stp wrl, and FreeCAD's fcstd in both cases (1.1: git matches with case on Linux)
+  # step stp, and FreeCAD's fcstd in both cases (1.1: git matches with case on Linux); *.wrl comes with a KiCad
+  # board's kind lines (1.2)
   run grep -c 'filter=lfs' "$(sa_skill_copy)/templates/project/.gitattributes"
-  [ "$output" = 5 ]
+  [ "$output" = 4 ]
 }
 
 # sa_refs DIR: an unstandard repo with reference folders named the way vendors name them, a project-local KiCad
@@ -930,14 +931,130 @@ sa_refs() {
   d="$BATS_TEST_TMPDIR/old"
   sa_fresh "$d"
   printf '1.0\n' >"$d/make/VERSION"
-  sed -i.bak '1s/v1\.1/v1.0/' "$d/make/common.mk"
-  sed -i.bak 's/\.yml@v1\.1/.yml@v1.0/' "$d/.github/workflows/checks.yml"
+  sed -i.bak '1s/v1\.2/v1.0/' "$d/make/common.mk"
+  sed -i.bak 's/\.yml@v1\.2/.yml@v1.0/' "$d/.github/workflows/checks.yml"
   rm -f "$d"/make/*.bak "$d"/.github/workflows/*.bak
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -ne 0 ]
   [[ $output == *"standard v1.0"* ]]
-  [[ $output == *"make/common.mk: standard v1.0, the skill is at v1.1"* ]]
-  [[ $output == *"make/VERSION: says 1.0, the skill is at v1.1"* ]]
-  [[ $output == *"zephyr.yml@v1.0: the skill is at v1.1"* ]]
+  [[ $output == *"make/common.mk: standard v1.0, the skill is at v1.2"* ]]
+  [[ $output == *"make/VERSION: says 1.0, the skill is at v1.2"* ]]
+  [[ $output == *"zephyr.yml@v1.0: the skill is at v1.2"* ]]
+}
+
+# sa_on_11 DIR: a fresh scaffold turned back into a 1.1 project: make/VERSION, the managed headers, the @v1.1 uses
+# lines, the 1.1 make/bin/refs.sh and the references/ line of .gitignore
+sa_on_11() {
+  local d=$1 f
+  printf '1.1\n' >"$d/make/VERSION"
+  for f in "$d/Makefile" "$d/make/common.mk" "$d"/make/bin/*.sh "$d"/make/kinds/*.mk; do
+    sed -i.bak '1,2s/project-standard v1\.2 /project-standard v1.1 /' "$f"
+  done
+  sed -i.bak 's/\.yml@v1\.2/.yml@v1.1/' "$d/.github/workflows/checks.yml" "$d/.github/workflows/release.yml"
+  printf '#!/usr/bin/env bash\n%s\n' "$(sed -n 1p "$d/make/common.mk")" >"$d/make/bin/refs.sh"
+  printf '\n# reference documents (make refs-fetch downloads what docs/references.md lists; never committed)\nreferences/\n' >>"$d/.gitignore"
+  rm -f "$d"/make/*.bak "$d"/make/bin/*.bak "$d"/make/kinds/*.bak "$d"/*.bak "$d"/.github/workflows/*.bak
+}
+
+@test "audit 1.2: a 1.1 project with a links-only references.md and no KiCad board is outdated, with no wrl or references warning" {
+  skill=$(sa_skill_copy)
+  d="$BATS_TEST_TMPDIR/on11"
+  "$skill/scripts/scaffold.sh" "$d" --project on11 --part firmware:zephyr --part api:cloud-worker:cloud/api >/dev/null
+  sa_on_11 "$d"
+  printf '# on11: references\n\n## Datasheets\n\n### MCU\n\n- [nRF9151 (NRF9151-LACA) — Nordic](https://example.invalid/nrf9151.pdf)\n' >"$d/docs/references.md"
+  # a 1.1 .gitattributes had *.wrl in every project; one without it is fine without a KiCad board
+  sed -i.bak '/^\*\.wrl /d' "$d/.gitattributes" && rm -f "$d/.gitattributes.bak"
+  run "$skill/scripts/audit.sh" "$d"
+  echo "$output"
+  [ "$status" -ne 0 ]
+  [[ $output == *"make/common.mk: standard v1.1, the skill is at v1.2"* ]] || false
+  [[ $output == *"make/VERSION: says 1.1, the skill is at v1.2"* ]] || false
+  [[ $output == *"zephyr.yml@v1.1: the skill is at v1.2"* ]] || false
+  [[ $output == *"make/bin/refs.sh: a managed file the standard no longer has"*"git rm make/bin/refs.sh"* ]] || false
+  [[ $output != *"wrl"* ]] || false
+  [[ $output != *"docs      docs/references.md"* ]] || false
+  [[ $output != *"error"* ]] || false
+  # --json carries the same finding
+  run "$skill/scripts/audit.sh" "$d" --json
+  [[ $output == *"make/bin/refs.sh"* ]] || false
+}
+
+@test "audit 1.2: a references.md table with File or SHA256 columns is a docs warning with the conversion as its fix" {
+  skill=$(sa_skill_copy)
+  d="$BATS_TEST_TMPDIR/reftable"
+  sa_fresh "$d"
+  run "$skill/scripts/audit.sh" "$d"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  printf '# References\n\n| Title | Vendor | File | URL | SHA256 |\n|---|---|---|---|---|\n| Manual | Acme | acme/m.pdf | https://example.invalid/m.pdf | |\n' >"$d/docs/references.md"
+  run "$skill/scripts/audit.sh" "$d"
+  echo "$output"
+  [ "$status" -ne 0 ]
+  [[ $output == *"warn     docs      docs/references.md: a table with File / SHA256 columns (1.1)"* ]] || false
+  [[ $output == *"'- [Title (MPN) — Vendor](URL)'"*"keep Title, Vendor and URL; drop File and SHA256"*"remove references/ from .gitignore"*"git rm make/bin/refs.sh"* ]] || false
+  # a lowercase header with only one of the columns counts too; a table of other columns does not
+  printf '| title | sha256 | url |\n|---|---|---|\n' >"$d/docs/references.md"
+  run "$skill/scripts/audit.sh" "$d"
+  [[ $output == *"docs/references.md: a table with File / SHA256 columns"* ]] || false
+  printf '# References\n\n| Part | Notes |\n|---|---|\n| U1 | the profile picture of a file |\n' >"$d/docs/references.md"
+  run "$skill/scripts/audit.sh" "$d"
+  [ "$status" -eq 0 ]
+}
+
+@test "audit 1.2: *.wrl is required only with a hardware part; step, stp and fcstd always" {
+  skill=$(sa_skill_copy)
+  d="$BATS_TEST_TMPDIR/wrlhw"
+  sa_fresh "$d"
+  grep -Eq '^\*\.wrl filter=lfs' "$d/.gitattributes"
+  sed -i.bak '/^\*\.wrl /d' "$d/.gitattributes" && rm -f "$d/.gitattributes.bak"
+  run "$skill/scripts/audit.sh" "$d"
+  echo "$output"
+  [[ $output == *".gitattributes: no LFS line for: *.wrl"* ]] || false
+  d="$BATS_TEST_TMPDIR/nokicad"
+  "$skill/scripts/scaffold.sh" "$d" --project nokicad --part firmware:zephyr --part case:mechanical >/dev/null
+  run "$skill/scripts/audit.sh" "$d"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  sed -i.bak '/^\*\.stp /d' "$d/.gitattributes" && rm -f "$d/.gitattributes.bak"
+  run "$skill/scripts/audit.sh" "$d"
+  [[ $output == *".gitattributes: no LFS line for: *.stp"* ]] || false
+  [[ $output != *"wrl"* ]] || false
+}
+
+@test "audit 1.2: an altium part needs the PrjPcbVariants LFS line and the -text lines of its project and OutJob" {
+  skill=$(sa_skill_copy)
+  d="$BATS_TEST_TMPDIR/altattrs"
+  "$skill/scripts/scaffold.sh" "$d" --project altattrs --part hardware:altium >/dev/null
+  run "$skill/scripts/audit.sh" "$d"
+  [ "$status" -eq 0 ]
+  grep -Ev '^\*\.(PrjPcbVariants|PrjPcb|OutJob) ' "$d/.gitattributes" >"$d/ga" && mv "$d/ga" "$d/.gitattributes"
+  run "$skill/scripts/audit.sh" "$d"
+  echo "$output"
+  [[ $output == *".gitattributes: no LFS line for Altium's: *.PrjPcbVariants"* ]] || false
+  [[ $output == *".gitattributes: no -text line for: *.PrjPcb *.OutJob"*"scaffold.sh <dir> --force appends"* ]] || false
+  # scaffold --force puts them back, and the audit is clean again
+  "$skill/scripts/scaffold.sh" "$d" --project altattrs --part hardware:altium --force >/dev/null
+  run "$skill/scripts/audit.sh" "$d"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  # a project without an altium part is not asked for them
+  d="$BATS_TEST_TMPDIR/noalt"
+  sa_fresh "$d"
+  run "$skill/scripts/audit.sh" "$d"
+  [[ $output != *"PrjPcb"* ]] || false
+}
+
+@test "audit 1.2: a .PrjPcbVariants committed as a plain blob is an Altium binary error" {
+  skill=$(sa_skill_copy)
+  d="$BATS_TEST_TMPDIR/variants"
+  "$skill/scripts/scaffold.sh" "$d" --project variants --part hardware:altium >/dev/null
+  sa_git "$d" init -q -b main
+  printf '\xD0\xCF\x11\xE0binary\0variants' >"$d/hardware/Board.PrjPcbVariants"
+  # committed before the LFS line was there: a plain blob
+  grep -Ev '^\*\.PrjPcbVariants ' "$d/.gitattributes" >"$d/ga" && mv "$d/ga" "$d/.gitattributes"
+  sa_git "$d" add -A
+  run "$skill/scripts/audit.sh" "$d"
+  echo "$output"
+  [[ $output == *"hardware/Board.PrjPcbVariants: Altium binary document committed as a plain git blob"* ]] || false
 }

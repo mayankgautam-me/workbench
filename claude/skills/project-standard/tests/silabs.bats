@@ -23,19 +23,24 @@ setup() {
   fake_installs
 }
 
-# What slt installs, as a fake tree: slc (a stub that generates a makefile project), a Java runtime, the GNU Arm
-# toolchain, two Simplicity SDKs and two WiseConnects (the pinned one and another).
+# What slt installs, as a fake tree: slc (a stub that generates a makefile project), a Java runtime (at slt's
+# jre/bin/java), two GNU Arm toolchains (the pinned 12.2.rel1 and a newer one, each with its manifest), two Simplicity
+# SDKs (the pinned one says sdk_version:, as real .slcs files do) and two WiseConnects (the pinned one and another).
 fake_installs() {
-  mkdir -p "$INST/archive/slc-cli-6.0.1/slc_cli" "$INST/archive/java-21/jre/lib/bin" "$INST/conan/p/gcc12/bin" \
-    "$INST/conan/p/sdk-old" "$INST/conan/p/sdk-new" "$INST/conan/p/wc-old" "$INST/conan/p/wc-new"
-  : >"$INST/archive/java-21/jre/lib/bin/java"
-  chmod +x "$INST/archive/java-21/jre/lib/bin/java"
-  for t in arm-none-eabi-gcc arm-none-eabi-size arm-none-eabi-gdb; do
-    printf '#!/bin/bash\nprintf "%%s\\n" "$@" >>"%s/%s.argv"\n' "$STUB_LOG" "$t" >"$INST/conan/p/gcc12/bin/$t"
-    chmod +x "$INST/conan/p/gcc12/bin/$t"
+  mkdir -p "$INST/archive/slc-cli-6.0.1/slc_cli" "$INST/archive/java-21/jre/bin" "$INST/conan/p/gcc12/bin" \
+    "$INST/conan/p/gcc14/bin" "$INST/conan/p/sdk-old" "$INST/conan/p/sdk-new" "$INST/conan/p/wc-old" "$INST/conan/p/wc-new"
+  : >"$INST/archive/java-21/jre/bin/java"
+  chmod +x "$INST/archive/java-21/jre/bin/java"
+  for g in gcc12 gcc14; do
+    for t in arm-none-eabi-gcc arm-none-eabi-size arm-none-eabi-gdb; do
+      printf '#!/bin/bash\nprintf "%%s\\n" "$@" >>"%s/%s.argv"\n' "$STUB_LOG" "$t" >"$INST/conan/p/$g/bin/$t"
+      chmod +x "$INST/conan/p/$g/bin/$t"
+    done
   done
+  : >"$INST/conan/p/gcc12/12.2.rel1-darwin-arm64-arm-none-eabi-manifest.txt"
+  : >"$INST/conan/p/gcc14/14.2.rel1-darwin-arm64-arm-none-eabi-manifest.txt"
   printf 'id: simplicity_sdk\nversion: "2024.6.0"\n' >"$INST/conan/p/sdk-old/simplicity_sdk.slcs"
-  printf 'id: simplicity_sdk\nversion: "2025.12.2"\n' >"$INST/conan/p/sdk-new/simplicity_sdk.slcs"
+  printf 'id: simplicity_sdk\nlabel: Simplicity SDK\nsdk_version: 2025.12.2\n' >"$INST/conan/p/sdk-new/simplicity_sdk.slcs"
   printf 'id: wiseconnect3_sdk\nversion: 3.5.0\n' >"$INST/conan/p/wc-old/wiseconnect.slce"
   printf 'id: wiseconnect3_sdk\nversion: 4.0.1\n' >"$INST/conan/p/wc-new/wiseconnect.slce"
   # slc generate SLCP ... -d DIR ...: a makefile project in DIR whose make writes the image files and the CC it got
@@ -100,7 +105,7 @@ OUT() { printf '%s\n' "$P/firmware/build/brd4338a/build/debug"; }
   run make firmware-build
   [ "$status" -eq 0 ]
   a="$(argv slc)"
-  [[ "$a" == $'generate\n'"$P/firmware/app.slcp"$'\n-np\n-cp\n-d\n'"$P/firmware/build/brd4338a"$'\n-o\nmakefile\n--with\nbrd4338a\n--toolchain\ngcc\n'* ]]
+  [[ "$a" == $'generate\n'"$P/firmware/app.slcp"$'\n-np\n-cp\n--overwrite-all\n-d\n'"$P/firmware/build/brd4338a"$'\n-o\nmakefile\n--with\nbrd4338a\n--toolchain\ngcc\n'* ]]
   [[ "$a" == *$'--sdk-package-path\n'"$INST/conan/p/sdk-new,$INST/conan/p/wc-new"$'\n--force'* ]]
   [ -f "$(OUT)/app.hex" ] && [ -f "$(OUT)/app.rps" ]
   # no -Werror and no signing on a plain build (SIGN=0)
@@ -131,7 +136,7 @@ OUT() { printf '%s\n' "$P/firmware/build/brd4338a/build/debug"; }
   : >"$SLT/.std-setup-2099.1.0-4.0.1"
   run make firmware-build
   [ "$status" -ne 0 ]
-  [[ "$output" == *"Simplicity SDK 2099.1.0 not found"*"installed: 2024.6.0 2025.12.2 3.5.0 4.0.1"* ]]
+  [[ "$output" == *"Simplicity SDK 2099.1.0 not found"*"installed: 2024.6.0 2025.12.2 3.5.0 4.0.1"* ]] || false
   [ ! -f "$STUB_LOG/slc.argv" ]
 }
 
@@ -141,7 +146,7 @@ OUT() { printf '%s\n' "$P/firmware/build/brd4338a/build/debug"; }
   run make firmware-build
   [ "$status" -eq 0 ]
   [[ "$output" == *"> firmware: not set up yet, running make firmware-setup first"* ]]
-  [[ "$(argv slt)" == $'install\nslc-cli\n--non-interactive\n--\ninstall\nwiseconnect\n--non-interactive\n--'* ]]
+  [[ "$(argv slt)" == $'install\nslc-cli\n--non-interactive\n--\ninstall\nwiseconnect/4.0.1\n--non-interactive\n--'* ]]
   [[ "$(argv slc)" == $'signature\ntrust\n--sdk-package-path\n'"$INST/conan/p/sdk-new,$INST/conan/p/wc-new"* ]]
   [ -f "$SLT/.std-setup-2025.12.2-4.0.1" ]
   rm -f "$STUB_LOG/slt.argv"
@@ -315,4 +320,121 @@ firmware_PROBE_ID := 440123456'
   a="$(cat "$STUB_LOG/script.argv")"
   [[ "$a" == *"$P/firmware/build/monitor.log"* ]]
   [[ "$a" == *$'tio\n-b\n115200\n'"$PORTS_DIR/cu.usbmodem0004401234561"* ]]
+}
+
+@test "silabs 1.2: slt installs the pinned WiseConnect (wiseconnect/<ver>), and the setting follows WISECONNECT" {
+  slproject 'firmware_WISECONNECT := 3.5.0'
+  rm -f "$SLT/.std-setup-2025.12.2-4.0.1"
+  run make firmware-setup
+  [[ "$(argv slt)" == *$'install\nwiseconnect/3.5.0\n--non-interactive'* ]] || false
+  [[ "$(argv slt)" != *$'install\nwiseconnect\n'* ]] || false
+}
+
+@test "silabs 1.2: the SDK is found by sdk_version: (doctor and build), Java at slt's jre/bin/java" {
+  slproject
+  run make firmware-doctor
+  echo "$output"
+  [[ "$output" == *"ok    Simplicity SDK 2025.12.2"* ]] || false
+  [[ "$output" == *"ok    java for slc"* ]] || false
+  # no java on PATH: only slt's jre/bin/java can satisfy slc
+  run make firmware-build
+  [ "$status" -eq 0 ]
+  [[ "$(argv slc)" == *$'--sdk-package-path\n'"$INST/conan/p/sdk-new,$INST/conan/p/wc-new"* ]] || false
+  rm -rf "$INST/archive/java-21"
+  mkdir -p "$INST/archive/java-17/jre/lib/bin" && : >"$INST/archive/java-17/jre/lib/bin/java" && chmod +x "$INST/archive/java-17/jre/lib/bin/java"
+  run make firmware-doctor
+  [[ "$output" == *"ok    java for slc"* ]] || false
+}
+
+@test "silabs 1.2: slc generate gets --overwrite-all by default, once; SLC_OVERWRITE=0 leaves it out" {
+  slproject 'firmware_SLC_ARGS := --overwrite-all --foo'
+  run make firmware-build
+  [ "$status" -eq 0 ]
+  [ "$(argv slc | grep -c -- '^--overwrite-all$')" -eq 1 ]
+  [[ "$(argv slc)" == *$'--force\n--foo'* ]] || false
+  rm -f "$STUB_LOG/slc.argv"
+  run make firmware-build firmware_SLC_OVERWRITE=0 firmware_SLC_ARGS=
+  [ "$status" -eq 0 ]
+  [ "$(argv slc | grep -c -- '^--overwrite-all$')" -eq 0 ]
+}
+
+@test "silabs 1.2: a board with trailing spaces in make/project.mk is stripped in slc, the build folder and doctor" {
+  slproject 'firmware_BOARD := brd4338a   '
+  run make firmware-check
+  [ "$status" -eq 0 ]
+  [[ "$(argv slc)" == *$'--with\nbrd4338a\n--toolchain'* ]] || false
+  [ -d "$P/firmware/build/check-brd4338a" ]
+  [ -z "$(find "$P/firmware/build" -maxdepth 1 -name '* *')" ]
+  run make firmware-build BOARD=' brd4325b '
+  [ "$status" -eq 0 ]
+  [ -f firmware/build/brd4325b/build/debug/app.hex ]
+  run make firmware-doctor
+  [[ "$output" == *"probe commander"*"board brd4338a"* ]] || false
+  [[ "$output" != *"board brd4338a "* ]] || false
+}
+
+@test "silabs 1.2: the pinned toolchain's gcc, never the first found; a missing pin names what is installed" {
+  slproject
+  run make firmware-check
+  [ "$status" -eq 0 ]
+  [ "$(cat firmware/build/check-brd4338a/cc.txt)" = "CC=$INST/conan/p/gcc12/bin/arm-none-eabi-gcc -Werror" ]
+  run make firmware-check firmware_GCC=14.2.rel1
+  [ "$status" -eq 0 ]
+  [ "$(cat firmware/build/check-brd4338a/cc.txt)" = "CC=$INST/conan/p/gcc14/bin/arm-none-eabi-gcc -Werror" ]
+  rm -f "$STUB_LOG/slc.argv"
+  run make firmware-check firmware_GCC=13.3.rel1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"GNU Arm toolchain 13.3.rel1 not found"*"installed: 12.2.rel1 14.2.rel1"*"firmware_GCC"* ]] || false
+  [ ! -f "$STUB_LOG/slc.argv" ]
+  run make firmware-doctor firmware_GCC=13.3.rel1
+  [[ "$output" == *"GNU Arm toolchain 13.3.rel1 missing (installed: 12.2.rel1 14.2.rel1)"* ]] || false
+}
+
+@test "silabs 1.2: test runs the Makefile in test/ (else tests/) with cc and BUILD_DIR under build/; none is fine; clean removes build/ only" {
+  slproject
+  run make firmware-test
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no host tests (no Makefile in firmware/test or firmware/tests)"* ]] || false
+  mkdir -p firmware/tests
+  printf 'all:\n\tmkdir -p $(BUILD_DIR)\n\techo "CC=$(CC)" > $(BUILD_DIR)/cc.txt\n\techo tests > here.txt\n' >firmware/tests/Makefile
+  run make firmware-test
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ "$(cat firmware/build/test/cc.txt)" = "CC=cc" ]
+  [[ "$output" == *"host tests in firmware/tests with cc"*"host tests passed"* ]] || false
+  # test/ wins over tests/; a failing test fails the target
+  mkdir -p firmware/test
+  printf 'all:\n\t@echo FAILED; exit 1\n' >firmware/test/Makefile
+  run make firmware-test
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"host tests in firmware/test with cc"* ]] || false
+  rm -rf firmware/test
+  # the root make test runs it
+  run make test
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"host tests passed"* ]] || false
+  # clean removes firmware/build (the test build under it), never what a test Makefile wrote elsewhere
+  run make firmware-clean
+  [ ! -e firmware/build ]
+  [ -f firmware/tests/here.txt ]
+  run make help
+  [[ "$output" == *"firmware-test"* ]] || false
+}
+
+@test "silabs 1.2: without Simplicity Commander the build warns about the post-build, and release refuses with no .rps" {
+  slproject
+  rm -f "$STUBS/commander"
+  # the stub slc's makefile still writes an .rps; drop it to be what a failed POST_BUILD_EXE leaves
+  run make firmware-build SILABS_COMMANDER_PATHS=
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Simplicity Commander not found: the wiseconnect_soc post-build (POST_BUILD_EXE) that makes the .rps will fail"* ]] || false
+  rm -f "$(OUT)/app.rps"
+  run make firmware-release ENV=staging NOBUILD=1 SILABS_COMMANDER_PATHS=
+  echo "$output"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no app.rps in $(OUT): the wiseconnect_soc post-build (POST_BUILD_EXE) makes it with Simplicity Commander"*"Nothing was uploaded"* ]] || false
+  [ ! -f "$STUB_LOG/npx.argv" ]
+  run make firmware-doctor SILABS_COMMANDER_PATHS=
+  [[ "$output" == *"Simplicity Commander missing: the build needs it (the wiseconnect_soc post-build, POST_BUILD_EXE, makes the .rps with it)"* ]] || false
 }

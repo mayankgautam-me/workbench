@@ -91,8 +91,8 @@ offer adopt; never change it silently.
    tasks; mark the scaffold task done and keep it current as work goes.
 9. The scaffold wrote the documents, each with its headings and a one-line hint per section (`reference/standard.md`,
    "Documents"): `docs/README.md` (the index), `docs/architecture.md` (a Mermaid node per part: draw the links
-   with the user), `docs/operations.md` with a cloud-worker, web-pages or docker part, `docs/references.md` (the
-   datasheets and manuals, one row each, that `make refs-fetch` downloads into the ignored `references/`), and per part
+   with the user), `docs/operations.md` with a cloud-worker, web-pages or docker part, `docs/references.md` (links
+   to the datasheets and manuals, one line each, `- [Title (MPN) — Vendor](URL)`, under `##` headings), and per part
    `<dir>/README.md`, `<dir>/CHANGELOG.md` and the kind's docs in `docs/<part>/`. List them in the report; fill in
    what the user already said (purpose, protocol, board).
 10. Report in a few lines: folder, parts, the docs created, the commands to start with (`make dev`, `make check`).
@@ -241,9 +241,26 @@ Read-only until the user says yes.
    repository the audit names (`CI_TEMPLATES_REPO`, default `mayankgautam-me/ci-templates`, independent of
    `GITHUB_OWNER`; a line on the pre-1.7 `<owner>/ci-templates` is reported outdated) and the current version tag
    (`v` + `make/VERSION`); and add jobs for kinds that were added.
-   From v1.0 to v1.1: re-copy the managed files (the bin folder gains `refs.sh` and `ghcr.sh`) and set every `uses:`
+   From v1.1 to v1.2: re-copy the managed files, delete `make/bin/refs.sh` (a managed file 1.2 removed; `make
+   refs-fetch` and `refs-check` are gone) and set every `uses:` line to `@v1.2`. Convert a `docs/references.md` table
+   to links: one line per row, `- [Title (MPN) — Vendor](URL)`, under `##` headings (datasheets by category, then per
+   vendor or module), keeping Title, Vendor and URL and dropping File and SHA256; remove the `references/` line (and
+   its comment) from `.gitignore`, and delete a local `references/` folder only when the user says so.
+   `scaffold.sh <worktree> --force` with the project's parts then adds what 1.2 needs and changes nothing else:
+   `*.wrl` in `.gitattributes` with a hardware part, and with an altium part `*.PrjPcbVariants` (LFS, lockable),
+   `*.PrjPcb -text` and `*.OutJob -text`. A project with no KiCad board may drop its `*.wrl` line. A `.PrjPcbVariants`
+   already committed as a plain blob moves to LFS with `git add --renormalize .`, as in adopt; a `.PrjPcb` or `.OutJob`
+   whose line ends git changed is put back from the Windows copy Altium saved.
+   A silabs part gets the 1.2 fixes with its refreshed `make/kinds/silabs.mk`: in `make/project.mk` remove a
+   `<part>_SLT_INSTALL := slc-cli wiseconnect/<ver>` and a `<part>_SLC_ARGS := --overwrite-all` that worked around them
+   (both are now the defaults; keep any other SLC_ARGS), and pin `<part>_GCC` only when the SDK brings another GNU Arm
+   toolchain than `12.2.rel1`. A `<part>-test` target in `make/local.mk` now clashes with the kind's: move its compile
+   and run lines into `<dir>/tests/Makefile` (CC and BUILD_DIR come from the kind; outputs under `$(BUILD_DIR)` so
+   `make <part>-clean` removes them), then delete the local target. Simplicity Commander must be on the Mac (and the CI
+   runner) that builds: the `.rps` comes from the post-build that runs it.
+   From v1.0 to v1.1: re-copy the managed files (the bin folder gains `refs.sh`, removed again in 1.2, and `ghcr.sh`) and set every `uses:`
    line to `@v1.1`. `scaffold.sh <worktree> --force` with the project's parts adds what 1.1 needs and changes nothing
-   else: `references/` in `.gitignore`, `docs/references.md`, `*.FCStd` (with a mechanical part) and Altium's LFS lines
+   else (the 1.2 scaffold no longer adds `references/` to `.gitignore`): `docs/references.md`, `*.FCStd` (with a mechanical part) and Altium's LFS lines
    (with an altium part) in `.gitattributes`, and the missing docs of the new kinds. Add `library: local` by hand to the
    jobs of a hardware part that sets `<part>_LIBRARY := local` (an existing workflow is kept). A FreeCAD model already
    committed under `*.FCStd` was routed to LFS only on a Mac: `git add --renormalize .` after the new line, as in adopt.

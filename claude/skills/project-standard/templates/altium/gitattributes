@@ -1,6 +1,12 @@
+# Altium Designer: the binary documents in Git LFS, lockable (they never merge: git lfs lock before editing one); the
+# variants file is an OLE compound file like them. The project and the OutJob are text that Altium writes with CRLF
+# (the .PrjPcb with a UTF-8 BOM): -text keeps them byte-exact between Windows and a Mac.
 *.SchDoc filter=lfs diff=lfs merge=lfs -text lockable
 *.PcbDoc filter=lfs diff=lfs merge=lfs -text lockable
 *.SchLib filter=lfs diff=lfs merge=lfs -text lockable
 *.PcbLib filter=lfs diff=lfs merge=lfs -text lockable
 *.IntLib filter=lfs diff=lfs merge=lfs -text lockable
 *.Harness filter=lfs diff=lfs merge=lfs -text lockable
+*.PrjPcbVariants filter=lfs diff=lfs merge=lfs -text lockable
+*.PrjPcb -text
+*.OutJob -text

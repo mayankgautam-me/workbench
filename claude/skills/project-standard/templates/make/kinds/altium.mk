@@ -1,4 +1,4 @@
-# project-standard v1.1 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.2 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind altium: an Altium Designer board (one *.PrjPcb per part dir). Altium is Windows only and licensed, so
 # nothing here runs Altium: the outputs come from the project's OutJob, run in Altium, into <dir>/outputs/ (never
@@ -7,7 +7,7 @@
 #
 # make/project.mk declares it as   <name>:altium[:<dir>]   (dir usually hardware, or hardware/<board> for several).
 # The layout of the part folder (make <part>-check enforces it, make <part>-layout prints the moves to it):
-#   <Board>.PrjPcb  <Board>.SchDoc (top sheet)  <Board>.PcbDoc  <Board>.OutJob (writes to outputs\)
+#   <Board>.PrjPcb (.PrjPcbVariants)  <Board>.SchDoc (top sheet)  <Board>.PcbDoc  <Board>.OutJob (writes to outputs\)
 #   sheets/NN-Name.SchDoc  sheets/NN-Name.Harness   library/<Board>.SchLib .PcbLib (.IntLib)  library/models/*.step
 #   bom/<Board>_BOM.csv   VERSION README.md CHANGELOG.md   outputs/ production/ (generated, ignored)
 # The documents of the board are Markdown in docs/<dir>/ at the project root.
@@ -58,7 +58,7 @@ want() {
   base=$${p##*/}
   ext=$$(lc "$${base##*.}")
   case $$ext in
-    prjpcb | pcbdoc | outjob) printf '%s\n' "$$base" ;;
+    prjpcb | prjpcbvariants | pcbdoc | outjob) printf '%s\n' "$$base" ;;
     schdoc) if [ "$$(lc "$$base")" = "$$(lc "$$board.SchDoc")" ]; then printf '%s\n' "$$base"; else printf 'sheets/%s\n' "$$base"; fi ;;
     harness) printf 'sheets/%s\n' "$$base" ;;
     schlib | pcblib | intlib) printf 'library/%s\n' "$$base" ;;
@@ -85,7 +85,7 @@ say "$$part: Altium layout of $$rel ($$prj)"
 # 1. Every Altium document on disk is where the layout puts it.
 files=()
 while IFS= read -r f; do files+=("$${f#./}"); done < <(find . -type f \( -iname '*.SchDoc' -o -iname '*.PcbDoc' -o -iname '*.SchLib' \
-  -o -iname '*.PcbLib' -o -iname '*.IntLib' -o -iname '*.Harness' -o -iname '*.OutJob' -o -iname '*.step' -o -iname '*.stp' \) \
+  -o -iname '*.PcbLib' -o -iname '*.IntLib' -o -iname '*.Harness' -o -iname '*.OutJob' -o -iname '*.PrjPcbVariants' -o -iname '*.step' -o -iname '*.stp' \) \
   -not -path './outputs/*' -not -path './production/*' -not -path './release/*' -not -path './History/*' \
   -not -path './__Previews/*' -not -path './Project Logs for *' -not -path './Project Outputs for *' | LC_ALL=C sort)
 for f in "$${files[@]+"$${files[@]}"}"; do
@@ -178,7 +178,7 @@ if [ -d docs ]; then
   while IFS= read -r f; do add_move "$${f#./}" "ROOT:docs/$$rel/$${f##*/}"; done < <(find ./docs -type f -iname '*.md' | LC_ALL=C sort)
 fi
 
-# 6. Git: the binaries in LFS, no Altium previews, locks or history tracked.
+# 6. Git: the binaries in LFS, the project and OutJob -text, no Altium previews, locks or history tracked.
 if git rev-parse --git-dir >/dev/null 2>&1; then
   prefix=$$(git rev-parse --show-prefix)
   while IFS= read -r f; do
@@ -186,7 +186,7 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
       *.schdocpreview | *.pcbdocpreview | *.prjpcbstructure | .~lock.* | */.~lock.* | history/* | */history/* | __previews/* | */__previews/* | "project logs for "* | "project outputs for "*)
         bad "$$f is tracked: Altium's previews, locks, history and logs stay out of git (git rm --cached $$(q "$$f"))"
         continue ;;
-      *.schdoc | *.pcbdoc | *.schlib | *.pcblib | *.intlib | *.harness) ;;
+      *.schdoc | *.pcbdoc | *.schlib | *.pcblib | *.intlib | *.harness | *.prjpcbvariants) ;;
       *) continue ;;
     esac
     hdr=$$(git cat-file -p ":$$prefix$$f" 2>/dev/null | head -c 64 | tr -d '\000' || true)
@@ -196,9 +196,15 @@ if git rev-parse --git-dir >/dev/null 2>&1; then
     esac
   done < <(git ls-files -- . | LC_ALL=C sort)
   for f in "$${files[@]+"$${files[@]}"}"; do
-    case $$(lc "$$f") in *.schdoc | *.pcbdoc | *.schlib | *.pcblib | *.intlib | *.harness) ;; *) continue ;; esac
+    case $$(lc "$$f") in *.schdoc | *.pcbdoc | *.schlib | *.pcblib | *.intlib | *.harness | *.prjpcbvariants) ;; *) continue ;; esac
     a=$$(git check-attr filter -- "$$f" | sed 's/.*: filter: //')
     [ "$$a" = lfs ] || bad "$$f is not covered by a Git LFS line in .gitattributes (*.$${f##*.} filter=lfs diff=lfs merge=lfs -text lockable)"
+  done
+  # the project and the OutJob are CRLF text (the .PrjPcb with a UTF-8 BOM): -text keeps them byte-exact (1.2)
+  for f in *.PrjPcb *.prjpcb *.PRJPCB *.OutJob *.outjob *.OUTJOB; do
+    [ -f "$$f" ] || continue
+    a=$$(git check-attr text -- "$$f" | sed 's/.*: text: //')
+    [ "$$a" = unset ] || bad "$$f is not marked -text in .gitattributes: git may change its CRLF line ends (add the line *.$${f##*.} -text)"
   done
 else
   note "$$rel is not in a git repository: Git LFS not checked"

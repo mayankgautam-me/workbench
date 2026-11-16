@@ -1,4 +1,4 @@
-# project-standard v1.1 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.2 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind silabs: a Silicon Labs firmware part built from an slc project (*.slcp) on the Simplicity SDK and
 # WiseConnect 3, for SiWx917 / SiWG917 (Cortex-M4 SoC mode).
@@ -10,6 +10,15 @@
 # energy monitor go through Simplicity Commander (commander), the console through the kit's J-Link VCOM port, debug
 # through the J-Link GDB server. The image signing key never touches the project: it is decrypted from the secrets
 # repo into a temporary file for the one commander call that signs (secrets.sh with-file), then removed.
+#
+# Simplicity Commander is required to build, not only to flash: the wiseconnect_soc post-build step of the generated
+# makefile (POST_BUILD_EXE) runs commander to make the .rps image the SiWx917 boots and OTA delivers. Without it the
+# build stops at that step (no .rps), and make <part>-release refuses. make <part>-doctor reports it missing.
+#
+# Host unit tests (make <part>-test): the Makefile in <dir>/test/, else in <dir>/tests/, run with the Mac's cc
+# (CC=<part>_TEST_CC, default cc) and BUILD_DIR=<dir>/build/test passed to it. No such Makefile: "no host tests", exit 0.
+# make <part>-clean removes <dir>/build only, so a test build is cleaned only when it is under <dir>/build/ (put it in
+# BUILD_DIR); a test Makefile that builds elsewhere keeps its output.
 
 # --- shared firmware helpers --------------------------------------------------------------------
 # The same block is in every firmware kind (zephyr, espidf, pio, arm-gcc, circuitpython, silabs); the first
@@ -181,27 +190,34 @@ silabs_cmdr = cmdr="$(SILABS_COMMANDER)"; \
 silabs_need_cmdr = $(call silabs_cmdr,$(1)) [ -n "$$cmdr" ] || die "Simplicity Commander not found: install it from Silicon Labs (Simplicity Commander), put commander on PATH or set SILABS_COMMANDER";
 
 # $(call silabs_tools,part): what slt installed into <part>_SLT_HOME/installs. Sets slt, slc, java (a bin folder),
-# gccdir (the bin folder of arm-none-eabi-gcc), sdk (the folder of the *.slcs of version <part>_SDK) and wc (the folder
-# of the *.slce of version <part>_WISECONNECT); each empty when missing. pkg EXT VER prints the folder of the first
-# *.EXT whose version: line is VER.
+# gccdir (the bin folder of the pinned GNU Arm toolchain, <part>_GCC: the package whose <ver>-*manifest.txt names it,
+# never just the first arm-none-eabi-gcc found; with <part>_GCC empty, the first found, else the one on PATH), sdk (the
+# folder of the *.slcs of version <part>_SDK) and wc (the folder of the *.slce of version <part>_WISECONNECT); each
+# empty when missing. pkg EXT VER prints the folder of the first *.EXT whose version line is VER (sdk_version: in a
+# .slcs, version: in a .slce).
 silabs_tools = slt="$($(1)_SLT_DIR)/slt"; inst="$($(1)_SLT_HOME)/installs"; \
   pkg() { find "$$inst/conan" -name "*.$$1" -type f 2>/dev/null | while IFS= read -r f; do \
-    if grep -qE "^version:[[:space:]]*\"?$$2\"?[[:space:]]*$$" "$$f"; then dirname "$$f"; break; fi; done; }; \
+    if grep -qE "^(sdk_)?version:[[:space:]]*\"?$$2\"?[[:space:]]*$$" "$$f"; then dirname "$$f"; break; fi; done; }; \
   slc=$$(ls "$$inst"/archive/slc-cli-*/slc_cli/slc 2>/dev/null | head -n 1 || true); [ -n "$$slc" ] || slc=$$(command -v slc 2>/dev/null || true); \
-  java=$$(find "$$inst/archive" -path '*/jre/*/bin/java' -type f 2>/dev/null | head -n 1 || true); [ -z "$$java" ] || java=$$(dirname "$$java"); \
-  gccdir=$$(find "$$inst/conan" -name arm-none-eabi-gcc -type f 2>/dev/null | head -n 1 || true); \
-  if [ -n "$$gccdir" ]; then gccdir=$$(dirname "$$gccdir"); elif command -v arm-none-eabi-gcc >/dev/null 2>&1; then gccdir=$$(dirname "$$(command -v arm-none-eabi-gcc)"); fi; \
+  java=$$(find "$$inst/archive" \( -path '*/jre/bin/java' -o -path '*/jre/*/bin/java' \) -type f 2>/dev/null | head -n 1 || true); [ -z "$$java" ] || java=$$(dirname "$$java"); \
+  gccver="$(strip $($(1)_GCC))"; gccdir=; \
+  if [ -n "$$gccver" ]; then gccdir=$$(find "$$inst/conan" -name "$$gccver-*manifest.txt" -type f 2>/dev/null | while IFS= read -r m; do \
+      if [ -x "$$(dirname "$$m")/bin/arm-none-eabi-gcc" ]; then printf '%s\n' "$$(dirname "$$m")/bin"; break; fi; done || true); \
+  else gccdir=$$(find "$$inst/conan" -name arm-none-eabi-gcc -type f 2>/dev/null | head -n 1 || true); \
+    if [ -n "$$gccdir" ]; then gccdir=$$(dirname "$$gccdir"); elif command -v arm-none-eabi-gcc >/dev/null 2>&1; then gccdir=$$(dirname "$$(command -v arm-none-eabi-gcc)"); fi; fi; \
   sdk=$$(pkg slcs "$($(1)_SDK)" || true); wc=$$(pkg slce "$($(1)_WISECONNECT)" || true);
 
-# The versions of what slt installed, for the messages: every *.slcs / *.slce version found.
+# The versions of what slt installed, for the messages: every *.slcs / *.slce version found, and the GNU Arm toolchains
+# (gccfound, from their <ver>-*manifest.txt).
 silabs_have_versions = found=$$(find "$$inst/conan" \( -name '*.slcs' -o -name '*.slce' \) -type f 2>/dev/null | while IFS= read -r f; do \
-    sed -nE 's/^version:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/p' "$$f" | head -n 1; done | sort -u | paste -sd' ' - || true);
+    sed -nE 's/^(sdk_)?version:[[:space:]]*"?([^"[:space:]]+)"?.*/\2/p' "$$f" | head -n 1; done | sort -u | paste -sd' ' - || true); \
+  gccfound=$$(find "$$inst/conan" -name '*-arm-none-eabi-manifest.txt' -type f 2>/dev/null | sed -E 's,.*/,,; s,-(darwin|linux|mingw|win).*,,' | sort -u | paste -sd' ' - || true);
 
 silabs_need_tools = [ -x "$$slt" ] || die "slt $($(1)_SLT) is not in $($(1)_SLT_DIR): run make $(1)-setup"; \
   [ -n "$$slc" ] || die "slc not found among the packages slt installed in $$inst: run make $(1)-setup"; \
   [ -n "$$java" ] || command -v java >/dev/null 2>&1 || die "no Java runtime for slc (slt installs one with slc-cli): run make $(1)-setup"; \
-  [ -n "$$gccdir" ] || die "arm-none-eabi-gcc not found (slt installs the GNU Arm toolchain with the SDK): run make $(1)-setup"; \
   $(silabs_have_versions) \
+  [ -n "$$gccdir" ] || die "GNU Arm toolchain $(if $(strip $($(1)_GCC)),$(strip $($(1)_GCC)) )not found (slt installs it with the SDK; installed: $${gccfound:-none}): run make $(1)-setup or pin $(1)_GCC"; \
   [ -n "$$sdk" ] || die "Simplicity SDK $($(1)_SDK) not found in $$inst (installed: $${found:-none}): run make $(1)-setup or pin $(1)_SDK"; \
   [ -n "$$wc" ] || die "WiseConnect $($(1)_WISECONNECT) not found in $$inst (installed: $${found:-none}): run make $(1)-setup or pin $(1)_WISECONNECT";
 
@@ -241,7 +257,7 @@ silabs_doctor = $(STD_FW_SH) say "$(1): silabs, slt $($(1)_SLT), Simplicity SDK 
   if [ -x "$$slt" ]; then ok "slt $$slt"; else bad "slt $($(1)_SLT) missing: make $(1)-setup"; fi; \
   if [ -n "$$slc" ]; then ok "slc $$slc"; else bad "slc missing: make $(1)-setup"; fi; \
   if [ -n "$$java" ] || have java; then ok "java for slc"; else bad "no Java runtime for slc: make $(1)-setup"; fi; \
-  if [ -n "$$gccdir" ]; then ok "arm-none-eabi-gcc in $$gccdir"; else bad "arm-none-eabi-gcc missing: make $(1)-setup"; fi; \
+  if [ -n "$$gccdir" ]; then ok "arm-none-eabi-gcc in $$gccdir"; else bad "GNU Arm toolchain $(strip $($(1)_GCC)) missing (installed: $${gccfound:-none}): make $(1)-setup or pin $(1)_GCC"; fi; \
   if [ -n "$$sdk" ]; then ok "Simplicity SDK $($(1)_SDK)"; else bad "Simplicity SDK $($(1)_SDK) missing (installed: $${found:-none}): make $(1)-setup"; fi; \
   if [ -n "$$wc" ]; then ok "WiseConnect $($(1)_WISECONNECT)"; else bad "WiseConnect $($(1)_WISECONNECT) missing (installed: $${found:-none}): make $(1)-setup"; fi; \
   $(call std_doctor_started,$(1),$(2)) \
@@ -250,7 +266,7 @@ silabs_doctor = $(STD_FW_SH) say "$(1): silabs, slt $($(1)_SLT), Simplicity SDK 
     if [ -n "$$slcp_wc" ] && [ "$$slcp_wc" != "$($(1)_WISECONNECT)" ]; then warn "$$(basename "$$slcp") asks for WiseConnect $$slcp_wc, $(1)_WISECONNECT is $($(1)_WISECONNECT)"; fi; \
   fi; \
   if [ -n "$($(1)_B)" ]; then ok "board $($(1)_B)"; else bad "no board: set $(1)_BOARD in make/project.mk (for example brd4338a)"; fi; \
-  $(call silabs_cmdr,$(1)) if [ -n "$$cmdr" ]; then ok "Simplicity Commander $$cmdr"; else bad "Simplicity Commander missing (flash, erase, power): install it from Silicon Labs or set SILABS_COMMANDER"; fi; \
+  $(call silabs_cmdr,$(1)) if [ -n "$$cmdr" ]; then ok "Simplicity Commander $$cmdr"; else bad "Simplicity Commander missing: the build needs it (the wiseconnect_soc post-build, POST_BUILD_EXE, makes the .rps with it), and flash, erase and power: install it from Silicon Labs or set SILABS_COMMANDER"; fi; \
   case "$($(1)_P)" in \
     commander) ;; \
     jlink) if have JLinkExe; then ok "J-Link"; else bad "J-Link: brew install --cask segger-jlink"; fi; \
@@ -269,15 +285,17 @@ silabs_update = $(STD_FW_SH) \
     $(call silabs_tools,$(1)) if [ -x "$$slt" ]; then say "what slt has (slt list)"; "$$slt" list || true; fi; \
     say "pin with make $(1)-update TO=<slt version> [SDK=<simplicity_sdk version>] [WISECONNECT=<version>] (keep the .slcp sdk: versions the same), then commit make/project.mk"; fi
 
-# $(call silabs_build,part,dir,build-dir,sign,check): slc generate from the .slcp into build-dir (a makefile project),
-# then the generated <name>.Makefile. check: the compiler runs with -Werror (CC overridden on the make line, which
+# $(call silabs_build,part,dir,build-dir,sign,check): slc generate from the .slcp into build-dir (a makefile project;
+# --overwrite-all with <part>_SLC_OVERWRITE := 1, the default: -cp copies the sources into it, and without it slc keeps
+# the old copies, so a later source edit was silently not rebuilt), then the generated <name>.Makefile. check: the compiler runs with -Werror (CC overridden on the make line, which
 # assumes the generated makefile compiles through $(CC), as slc's gcc makefiles do). sign: the .rps image is signed
 # with the key KEY from the secrets repo into <name>-signed.rps (see silabs_sign).
 silabs_build = $(STD_FW_SH) $(call silabs_find,$(1),$(2)) $(call silabs_tools,$(1)) $(call silabs_need_tools,$(1)) \
   board="$($(1)_B)"; [ -n "$$board" ] || die "no board: set $(1)_BOARD in make/project.mk or pass BOARD=... (for example brd4338a)"; \
   b="$(3)"; mkdir -p "$$b"; ARM_GCC_DIR=$$(dirname "$$gccdir"); export PATH="$${java:+$$java:}$$gccdir:$$PATH" ARM_GCC_DIR; \
+  $(call silabs_cmdr,$(1)) [ -n "$$cmdr" ] || warn "Simplicity Commander not found: the wiseconnect_soc post-build (POST_BUILD_EXE) that makes the .rps will fail (install it, or set SILABS_COMMANDER)"; \
   say "slc generate $$(basename "$$slcp") for $$board into $$b"; \
-  "$$slc" generate "$$slcp" -np -cp -d "$$b" -o makefile --with "$$board" --toolchain gcc --sdk-package-path "$$sdk,$$wc" --force $($(1)_SLC_ARGS); \
+  "$$slc" generate "$$slcp" -np -cp $(if $(filter 1,$(strip $($(1)_SLC_OVERWRITE))),--overwrite-all )-d "$$b" -o makefile --with "$$board" --toolchain gcc --sdk-package-path "$$sdk,$$wc" --force $(filter-out --overwrite-all,$($(1)_SLC_ARGS)); \
   [ -f "$$b/$$name.Makefile" ] || die "slc made no $$name.Makefile in $$b"; \
   jobs=$$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4); \
   say "make -f $$name.Makefile$(if $(5), with -Werror)"; \
@@ -329,6 +347,16 @@ silabs_debug = $(STD_FW_SH) $(call silabs_need_build,$(1),$(2)) $(call silabs_to
   "$$srv" -device "$($(1)_JLINK_DEVICE)" -if SWD -speed 4000 -port 2331 $(if $($(1)_PROBE_ID),-select USB="$($(1)_PROBE_ID)") & pid=$$!; trap 'kill $$pid 2>/dev/null || true' EXIT; sleep 1; \
   "$$gdb" "$$elf" -ex 'target remote :2331'
 
+# Host unit tests: make in <dir>/test (else <dir>/tests) when it has a Makefile, with the Mac's cc and BUILD_DIR under
+# <dir>/build/test (so make <part>-clean removes the test build); without one, nothing to run.
+silabs_test = $(STD_FW_SH) d="$(CURDIR)/$(2)"; t=; \
+  for x in test tests; do if [ -f "$$d/$$x/Makefile" ]; then t="$$x"; break; fi; done; \
+  if [ -z "$$t" ]; then say "$(1): no host tests (no Makefile in $(2)/test or $(2)/tests)"; exit 0; fi; \
+  have "$(firstword $($(1)_TEST_CC))" || die "$(firstword $($(1)_TEST_CC)) not found: the host tests build with the Mac's compiler (xcode-select --install)"; \
+  say "$(1): host tests in $(2)/$$t with $($(1)_TEST_CC)"; \
+  env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL make -C "$$d/$$t" CC="$($(1)_TEST_CC)" BUILD_DIR="$$d/build/test" $(TEST_ARGS); \
+  ok "$(1): host tests passed"
+
 silabs_size = $(STD_FW_SH) $(call silabs_need_build,$(1),$(2)) $(call silabs_tools,$(1)) \
   size="$$gccdir/arm-none-eabi-size"; [ -x "$$size" ] || size=arm-none-eabi-size; "$$size" -A -d "$$o/$$name.out"; "$$size" "$$o/$$name.out"
 
@@ -350,6 +378,7 @@ silabs_power_avg = $(STD_FW_SH) $(call silabs_need_cmdr,$(1)) \
 
 # OTA: the .rps image (signed with SIGN=1) to the OTA bucket as <part>.rps.
 silabs_release = $(STD_FW_SH) $(call silabs_need_build,$(1),$(2)) \
+  [ -f "$$o/$$name.rps" ] || die "no $$name.rps in $$o: the wiseconnect_soc post-build (POST_BUILD_EXE) makes it with Simplicity Commander, which make $(1)-doctor checks; install Commander, then make $(1)-build. Nothing was uploaded"; \
   if [ "$($(1)_SIGN)" = 1 ]; then f="$$o/$$name-signed.rps"; else f="$$o/$$name.rps"; warn "$(1)_SIGN is not 1: publishing an unsigned image"; fi; \
   $(call std_fw_release,$(1),$(2),$(1).rps)
 
@@ -364,15 +393,21 @@ silabs_release_assets = $(STD_FW_SH) $(call silabs_need_build,$(1),$(2)) $(call 
 # --- the kind -----------------------------------------------------------------------------------
 #
 # Per-part settings (make/project.mk, <part>_<VAR>), with their defaults:
-#   BOARD          brd4338a  the slc board (--with), for example brd4338a (SiWx917 radio board); BOARD= wins
+#   BOARD          brd4338a  the slc board (--with), for example brd4338a (SiWx917 radio board); BOARD= wins; stripped
+#                  of spaces wherever it is used (a trailing space in make/project.mk is not part of the board)
 #   SLT            1.1.1     the slt CLI, in $(STD_TOOLCHAINS)/slt-<ver>, shared across projects
 #   SDK            2025.12.2 Simplicity SDK (simplicity_sdk) version the build uses
 #   WISECONNECT    4.0.1     WiseConnect 3 (wiseconnect3_sdk) version the build uses
-#   SLT_INSTALL    slc-cli wiseconnect   what setup asks slt to install (slt keeps it in SLT_HOME, ~/.silabs/slt);
-#                  setup then checks that SDK and WISECONNECT are among what is installed
+#   SLT_INSTALL    slc-cli wiseconnect/$(<part>_WISECONNECT)   what setup asks slt to install (slt keeps it in
+#                  SLT_HOME, ~/.silabs/slt); setup then checks that SDK and WISECONNECT are among what is installed.
+#                  The WiseConnect version is pinned: a bare wiseconnect installs the latest (and its newer SDK)
+#   GCC            12.2.rel1  the GNU Arm toolchain slt installs with the SDK (its <ver>-*manifest.txt); empty: the
+#                  first one found
 #   SLCP           (the one *.slcp in the part dir)   the slc project
 #   OUT            build/debug   where the generated makefile puts <name>.hex/.out/.rps, under the build dir
 #   SLC_ARGS, MAKE_ARGS   extra slc generate / make arguments
+#   SLC_OVERWRITE  1  slc generate --overwrite-all (0: slc keeps the copied sources it generated before)
+#   TEST_CC        cc  the host compiler of make <part>-test (TEST_ARGS= extra make arguments)
 #   PROBE          commander  commander (Simplicity Commander) or jlink (PROBE= wins); DEVICE commander --device;
 #                  PROBE_ID the kit's J-Link serial (commander --serialno, J-Link -SelectEmuBySN)
 #   JLINK_DEVICE   the J-Link device name, for debug (JLinkGDBServer) and PROBE=jlink flash
@@ -393,12 +428,15 @@ $(1)_BOARD ?= brd4338a
 $(1)_SLT ?= 1.1.1
 $(1)_SDK ?= 2025.12.2
 $(1)_WISECONNECT ?= 4.0.1
-$(1)_SLT_INSTALL ?= slc-cli wiseconnect
+$(1)_SLT_INSTALL ?= slc-cli wiseconnect/$$(strip $$($(1)_WISECONNECT))
+$(1)_GCC ?= 12.2.rel1
 $(1)_SLT_HOME ?= $$(HOME)/.silabs/slt
 $(1)_SLT_DIR ?= $$(STD_TOOLCHAINS)/slt-$$($(1)_SLT)
 $(1)_SLCP ?=
 $(1)_OUT ?= build/debug
 $(1)_SLC_ARGS ?=
+$(1)_SLC_OVERWRITE ?= 1
+$(1)_TEST_CC ?= cc
 $(1)_MAKE_ARGS ?=
 $(1)_PROBE ?= commander
 $(1)_DEVICE ?=
@@ -418,7 +456,7 @@ STD_HELP_HIDE += $$(if $$(strip $$($(1)_OTA_BUCKET)),,$(1)-release)
 $(1)_OTA_PREFIX ?= $$(PROJECT)/$(1)/$$(ENV)
 $(1)_WRANGLER ?= npx --yes wrangler@4
 $(1)_RELEASE_HOOK ?=
-$(1)_B = $$(or $$(BOARD),$$($(1)_BOARD))
+$(1)_B = $$(strip $$(or $$(strip $$(BOARD)),$$($(1)_BOARD)))
 $(1)_P = $$(or $$(PROBE),$$($(1)_PROBE))
 $(1)_PW_S = $$(or $$(DURATION),$$($(1)_POWER_S))
 $(1)_AEM_RATE = $$(or $$(AEM_RATE_HZ),$$($(1)_AEM_RATE_HZ))
@@ -426,7 +464,7 @@ $(1)_AEM_WINDOW = $$(or $$(AEM_WINDOW_MS),$$($(1)_AEM_WINDOW_MS))
 $(1)_BUILD = $$(CURDIR)/$(2)/build/$$($(1)_B)
 $(1)_CHECK_BUILD = $$(CURDIR)/$(2)/build/check-$$($(1)_B)
 
-.PHONY: $(1)-release-run $(1)-doctor $(1)-setup $(1)-update $(1)-check $(1)-build $(1)-clean $(1)-distclean $(1)-flash $(1)-erase $(1)-monitor $(1)-debug $(1)-release $(1)-version $(1)-size $(1)-keygen $(1)-provision $(1)-power $(1)-power-live $(1)-power-avg
+.PHONY: $(1)-release-run $(1)-doctor $(1)-setup $(1)-update $(1)-check $(1)-test $(1)-build $(1)-clean $(1)-distclean $(1)-flash $(1)-erase $(1)-monitor $(1)-debug $(1)-release $(1)-version $(1)-size $(1)-keygen $(1)-provision $(1)-power $(1)-power-live $(1)-power-avg
 
 $(call std_verb,$(1),doctor,firmware,Check slt and slc and the SDK and WiseConnect and Commander and probe and ports read only)
 $(1)-doctor:
@@ -446,6 +484,10 @@ $(1)-update:
 $(call std_verb,$(1),check,firmware,slc generate and build with -Werror into $(2)/build/check-<board>)
 $(1)-check:
 	@$$(call std_skip_unstarted,$(1),$(2),check) $$(call silabs_build,$(1),$(2),$$($(1)_CHECK_BUILD),,1)
+
+$(call std_verb,$(1),test,test,Host unit tests from the Makefile in $(2)/test or $(2)/tests with the Mac cc and none is fine)
+$(1)-test:
+	@$$(call silabs_test,$(1),$(2))
 
 $(call std_verb,$(1),build,firmware,slc generate and build for $$($(1)_B) into $(2)/build and sign with SIGN=1)
 $(1)-build:
@@ -506,7 +548,7 @@ $(call std_release,$(1),silabs,$(2),silabs_release_assets,build)
 $(1)-version:
 	@$$(call std_fw_print_version,$(1),$(2))
 
-$(call std_verb,$(1),clean,firmware,Remove $(2)/build)
+$(call std_verb,$(1),clean,firmware,Remove $(2)/build and the host test build under it)
 $(1)-clean:
 	@rm -rf "$$(CURDIR)/$(2)/build"
 

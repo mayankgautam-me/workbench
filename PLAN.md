@@ -318,6 +318,12 @@ needs: [instructions, detect, bootstrap]
 - [x] 1.1: scaffold, standard.md, tools.md, contract.md, SKILL.md, version 1.1, tests {#std-1-1-integrate}
 - [x] 1.1: publish ci-templates v1.1 tag {#std-1-1-publish}
 - [x] Adopt i2sage-technologies/corelink on adopt-standard (Altium board, silabs firmware not started, FreeCAD case); merge into main waits on you {#std-corelink-adopt}
+- [x] 1.2: docs/references.md is a list of links only; refs-fetch, refs-check, refs.sh and references/ removed {#std-1-2-refs-links}
+- [x] 1.2: audit asks for the *.wrl LFS line only with a KiCad hardware part {#std-1-2-wrl}
+- [x] 1.2: scaffold writes project.mk comments on their own line (no trailing spaces in values) {#std-1-2-projectmk-comments}
+- [x] 1.2: altium: *.PrjPcb and *.OutJob -text, *.PrjPcbVariants in lockable LFS {#std-1-2-altium-text}
+- [x] 1.2: silabs kind: pinned WiseConnect in setup, sdk_version and slt Java lookups, slc --overwrite-all, board stripped, pinned GCC, test verb, Commander needed for the .rps {#std-1-2-silabs}
+- [ ] 1.2: publish ci-templates v1.2 tag: waits on your go-ahead {#std-1-2-publish}
 
 ## Workbench {#workbench}
 tech: zsh, Brewfile, defaults, symlinks

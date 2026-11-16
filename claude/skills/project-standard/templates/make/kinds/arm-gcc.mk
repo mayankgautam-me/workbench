@@ -1,4 +1,4 @@
-# project-standard v1.1 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.2 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind arm-gcc: a bare-metal arm-none-eabi firmware part (CubeMX export, libopencm3, own Makefile).
 #

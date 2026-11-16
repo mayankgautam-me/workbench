@@ -2,10 +2,10 @@
 # fixtures stay in plain git; the pre-commit hook refuses a file over 5 MB that is not in LFS, and such a file gets a
 # line of its own here, like the ones below with its path in place of the pattern. Build output (zip, hex) is a release file, not
 # committed. KiCad sources stay plain text so they diff and merge. Git matches these patterns with case on Linux (CI),
-# so FreeCAD's own spelling *.FCStd has a line next to *.fcstd.
+# so FreeCAD's own spelling *.FCStd has a line next to *.fcstd. The scaffold adds the lines of the project's kinds at
+# the end: *.wrl (KiCad's VRML models) with a KiCad board, Altium's documents with an Altium one.
 *.step  filter=lfs diff=lfs merge=lfs -text
 *.stp   filter=lfs diff=lfs merge=lfs -text
-*.wrl   filter=lfs diff=lfs merge=lfs -text
 *.fcstd filter=lfs diff=lfs merge=lfs -text
 *.FCStd filter=lfs diff=lfs merge=lfs -text
 

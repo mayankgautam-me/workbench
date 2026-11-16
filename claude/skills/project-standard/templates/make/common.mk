@@ -1,4 +1,4 @@
-# project-standard v1.1 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.2 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # The stage commands, the same in every project. GNU make 3.81 compatible (macOS /usr/bin/make):
 # no .ONESHELL, .SHELLFLAGS, $(file), .RECIPEPREFIX, undefine, != or ::=.
@@ -425,8 +425,6 @@ $(call std_h,setup,doctor,Check tools; pins; secrets and every part; print the f
 $(call std_h,setup,setup,Install brew and mise tools; each part's dependencies; git hooks and git-lfs)
 $(call std_h,setup,update,Bump the pinned SDKs and tools on purpose; then run setup)
 $(call std_h,setup,hooks,Install the pre-commit hook: gitleaks; LFS check; large files over 5 MB)
-$(call std_h,setup,refs-fetch,Download the documents listed in docs/references.md into references/ (ignored by git) and check their SHA256)
-$(call std_h,setup,refs-check,Check the files in references/ against docs/references.md without downloading)
 $(call std_h,setup,teardown,Undo setup for this project: lists with sizes; CONFIRM=teardown removes its folders and record and the shared tools no other project records; Homebrew stays)
 $(call std_h,setup,prune,Machine wide: lists with sizes; CONFIRM=prune removes shared tools and SDKs no project records; stale records; the pnpm store)
 $(call std_h,dev,dev,Start the whole local stack (dev-<part> style: PART=<part>))
@@ -614,18 +612,6 @@ update:
 .PHONY: hooks
 hooks:
 	@bash $(STD_BIN)/lib.sh install-hook
-
-# Reference documents (datasheets, manuals, application notes) are not committed: docs/references.md lists them in a
-# Markdown table (Title | Vendor | File | URL | SHA256) and refs-fetch downloads them into references/, which .gitignore
-# ignores. A row without SHA256 gets its value printed, to paste into the table; the file is never edited. Listed in
-# make help only when docs/references.md exists.
-STD_REFS := bash $(STD_BIN)/refs.sh --file docs/references.md --dir references
-STD_HELP_HIDE += $(if $(wildcard $(CURDIR)/docs/references.md),,refs-fetch refs-check)
-.PHONY: refs-fetch refs-check
-refs-fetch:
-	@$(STD_REFS) fetch
-refs-check:
-	@$(STD_REFS) check
 
 # teardown and prune only list what they would remove, with sizes. Removing needs CONFIRM=teardown or CONFIRM=prune on the
 # command line. They remove what the standard installed (the ledger) and no project records any more, never a Homebrew

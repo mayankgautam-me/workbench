@@ -159,11 +159,12 @@ never what is meant.
 
 | Target | What it does |
 |---|---|
-| doctor | Checks slt, slc, the pinned SDK and WiseConnect, Simplicity Commander, the probe, the signing key and the ports |
-| setup | Installs the pinned slt (`<part>_SLT`) into `~/.toolchains/slt-<ver>`, and through it slc, a Java runtime, the GNU Arm toolchain, the Simplicity SDK (`<part>_SDK`) and WiseConnect (`<part>_WISECONNECT`) into `~/.silabs/slt`, then `slc signature trust` on both |
+| doctor | Checks slt, slc, the pinned SDK, WiseConnect and GNU Arm toolchain (`<part>_GCC`, `12.2.rel1`), Simplicity Commander (the build's `wiseconnect_soc` post-build makes the `.rps` with it), the probe, the signing key and the ports |
+| setup | Installs the pinned slt (`<part>_SLT`) into `~/.toolchains/slt-<ver>`, and through it (`slt install slc-cli wiseconnect/<WISECONNECT>`: the pinned version, never the latest) slc, a Java runtime, the GNU Arm toolchain, the Simplicity SDK (`<part>_SDK`) and WiseConnect (`<part>_WISECONNECT`) into `~/.silabs/slt`, then `slc signature trust` on both |
 | update | Shows the pinned slt and SDK versions, or pins `TO= [SDK=] [WISECONNECT=]` in `make/project.mk` and sets them up |
 | check | `slc generate` and the generated makefile with `-Werror`, into `build/check-<board>` |
-| build | `slc generate` (a makefile project) into `build/<board>` for `<part>_BOARD` (`brd4338a`), then make; signs the `.rps` with the key `silabs-m4` when `<part>_SIGN := 1` (Touch ID) |
+| test | Host unit tests: `make` in `<dir>/test/` (else `<dir>/tests/`) when it has a Makefile, with the Mac's `cc` (`<part>_TEST_CC`) and `BUILD_DIR=<dir>/build/test`; none: "no host tests", exit 0 |
+| build | `slc generate --overwrite-all` (a makefile project; `<part>_SLC_OVERWRITE := 0` leaves the flag out) into `build/<board>` for `<part>_BOARD` (`brd4338a`, spaces stripped), then make with the pinned toolchain; the `wiseconnect_soc` post-build makes the `.rps` with Simplicity Commander; signs the `.rps` with the key `silabs-m4` when `<part>_SIGN := 1` (Touch ID) |
 | flash | Builds, then flashes with `PROBE=commander` (Simplicity Commander, the default) or `jlink` (`NOBUILD=1` skips the build) |
 | erase | Mass erase with Simplicity Commander (`CONFIRM=erase`) |
 | monitor | Serial console on the kit's J-Link VCOM port (or `PORT`), logged to `build/monitor.log` |
@@ -174,8 +175,8 @@ never what is meant.
 | power-avg *extra* | The average current over `AEM_WINDOW_MS`, from Simplicity Commander |
 | keygen *extra* | Creates the SiWx917 M4 image signing key `silabs-m4` (ECDSA P-256) in the secrets repo; never overwrites one |
 | provision *extra* | Per-device setup, `SERIAL=`, through `<part>_PROVISION` (else flash only) |
-| release | The `.rps` image to the OTA store as `<ver>/` and `latest/`; `PROMOTE=1` marks it stable. No OTA bucket: skipped with one line, exit 0 |
-| version / clean / distclean | Version from `VERSION`; remove `build/` (distclean keeps the shared slt and SDK) |
+| release | The `.rps` image to the OTA store as `<ver>/` and `latest/`; `PROMOTE=1` marks it stable. No OTA bucket: skipped with one line, exit 0. No `.rps` (Simplicity Commander missing at build time): refuses, uploading nothing |
+| version / clean / distclean | Version from `VERSION`; remove `build/`, the host test build in `build/test` with it, never a test build elsewhere (distclean keeps the shared slt and SDK) |
 
 ## Hardware
 
@@ -202,8 +203,8 @@ checks out no KiCad library), and `ci-setup` skips the KiCad deploy key when eve
 
 | Target | What it does |
 |---|---|
-| doctor | Checks git-lfs, the layout, that the Altium binaries are in LFS and that Altium's previews are ignored; warns, never fails |
-| check | The `.PrjPcb` and every document it lists (`DocumentPath=` relative, inside the layout, present), the layout (`<Board>.PrjPcb .SchDoc .PcbDoc .OutJob` at the root, `sheets/NN-Name.SchDoc` and `.Harness`, `library/<Board>.SchLib .PcbLib`, `library/models/*.step`, `bom/<Board>_BOM.csv`), Markdown docs in `docs/<part>/`, and Git LFS on the pointers; fails on any violation. No `*.PrjPcb` yet: not started |
+| doctor | Checks git-lfs, the layout, that the Altium binaries are in LFS, that the `.PrjPcb` and `.OutJob` are `-text` and that Altium's previews are ignored; warns, never fails |
+| check | The `.PrjPcb` and every document it lists (`DocumentPath=` relative, inside the layout, present), the layout (`<Board>.PrjPcb .SchDoc .PcbDoc .OutJob` at the root, `sheets/NN-Name.SchDoc` and `.Harness`, `library/<Board>.SchLib .PcbLib`, `library/models/*.step`, `bom/<Board>_BOM.csv`), Markdown docs in `docs/<part>/`, Git LFS on the pointers (`.SchDoc .PcbDoc .SchLib .PcbLib .IntLib .Harness .PrjPcbVariants`, lockable) and the `-text` lines of the `.PrjPcb` and `.OutJob` (CRLF, byte-exact); fails on any violation. No `*.PrjPcb` yet: not started |
 | layout *extra* | Prints the `git mv` commands and the `DocumentPath=` edits that move the project into the layout; moves nothing |
 | build | Verifies the OutJob's outputs in `outputs/` (Gerber or ODB++, drill, pick and place, BOM, PDF), renders the Gerbers with gerbv when installed, and writes the fab zip `production/<Board>_v<rev>.zip` |
 | bom *extra* | Hands sourcing and pricing to the `bom` skill |
@@ -378,7 +379,6 @@ Vite, `<dir>/out` for Next, `<dir>` for a static site. Package binaries run thro
 |---|---|
 | help | Every command, grouped by stage, then by part |
 | doctor, setup, update | Base tools (Brewfile, mise, git-lfs, hooks), then every part |
-| refs-fetch, refs-check | The reference documents of `docs/references.md` (`Title \| Vendor \| File \| URL \| SHA256`): downloaded into `references/` (ignored) and checked by SHA256 / checked only |
 | hooks | Pre-commit hook: gitleaks, LFS check, files over 5 MB |
 | dev, stop, status, logs, reset | The local stack, across parts |
 | check, test, test-e2e, test-device, format | Across parts |

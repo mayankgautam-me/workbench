@@ -1,4 +1,4 @@
-# project-standard v1.1: internal contract
+# project-standard v1.2: internal contract
 
 How the pieces of the skill fit together. `standard.md` is the user-facing spec; this file is for
 whoever writes or changes `common.mk`, a kind, a script, the CI templates, `scaffold.sh` or `audit.sh`.
@@ -28,28 +28,28 @@ make/bin/cf.sh           managed: Cloudflare engine
 make/bin/lib.sh          managed: shared shell helpers (colours, die, confirm, log)
 make/bin/release.sh      managed: versions, release notes and GitHub Releases
 make/bin/toolchain.sh    managed: usage record, installed ledger, make teardown and make prune (since v17)
-make/bin/refs.sh         managed: make refs-fetch / refs-check from docs/references.md into references/ (1.1)
 make/bin/ghcr.sh         managed: the docker kind's ghcr.io login, write:packages check and prune-images (1.1)
 make/bin/secret-patterns.sh, sign-windows.sh   managed: the secret file patterns; the Tauri Windows signing helper
 make/local.mk            the project's own targets, documented with `## ` comments
-make/VERSION             the standard version the managed files came from: `1.1`
+make/VERSION             the standard version the managed files came from: `1.2`
 ```
 
 Besides these, `scaffold.sh` writes the project-owned files once (kept with `--force`): `README.md`, `CLAUDE.md`,
 `PLAN.md`, `.gitattributes`, `Brewfile`, `mise.toml`, `secrets.schema`, `.github/workflows/checks.yml` and `release.yml`, and `.gitignore`
-(`templates/project/.gitignore` + `kind_ignore` per kind + `references/` + `<dir>/production/` per hardware or altium
+(`templates/project/.gitignore` + `kind_ignore` per kind + `<dir>/production/` per hardware or altium
 part + `<dir>/outputs/` per altium part + `<dir>/release/` per part). An existing `.gitignore` gets the missing required
-lines appended (`gitignore_required`: `.ci/`, the ci-local ones, `references/`, the per-part lines, and Altium's own
-lines with an altium part); an existing `.gitattributes` gets the missing LFS lines of the kinds appended
-(`gitattributes_required`: `*.FCStd` with a mechanical part, `templates/altium/gitattributes` with an altium part),
-matched by pattern, never removed or reordered. Each part README has a Release section (bump, push the tag, what the tag pipeline publishes). It places
+lines appended (`gitignore_required`: `.ci/`, the ci-local ones, the per-part lines, and Altium's own
+lines with an altium part); a new or existing `.gitattributes` gets the missing lines of the kinds appended
+(`gitattributes_required`: `*.wrl` with a hardware part, `*.FCStd` with a mechanical part, `templates/altium/gitattributes`
+with an altium part: its binaries in LFS, lockable, and `*.PrjPcb -text`, `*.OutJob -text`), matched by pattern, never
+removed or reordered. The template has no `*.wrl` line (1.2): only KiCad boards have VRML models. Each part README has a Release section (bump, push the tag, what the tag pipeline publishes). It places
 `tests/smoke/README.md` and `tests/remote/README.md` only when a part's kind has `smoke` / `test-remote`
 (cloud-worker, web-pages). Nothing in common.mk, the kinds or `audit.sh` needs a root `tests/`.
 
 Documents are project-owned too, and each is written only when it does not exist (also in a part folder that
 exists, where no starter code is written): `docs/README.md`, `docs/architecture.md`, `docs/operations.md` (only
-when a part is cloud-worker, web-pages or docker), `docs/references.md` (always: the empty `Title | Vendor | File | URL |
-SHA256` table refs.sh reads), and per part `<dir>/README.md`, `<dir>/CHANGELOG.md` and
+when a part is cloud-worker, web-pages or docker), `docs/references.md` (always: `##` headings and a hint, the links
+`- [Title (MPN) — Vendor](URL)` added by hand; since 1.2 nothing reads or downloads them), and per part `<dir>/README.md`, `<dir>/CHANGELOG.md` and
 `docs/<part>/<doc>.md` for the kind's docs (`kind_docs` in `scaffold.sh`; `audit.sh` has the same table and checks
 it). The CHANGELOG format is fixed, because the release targets read it: Keep a Changelog 1.1.0, `## [Unreleased]`
 then `### Added`, `### Changed`, `### Fixed`, version sections `## [<version>] - YYYY-MM-DD`, tags `<part>-v<version>`.
@@ -59,7 +59,7 @@ and in no `.gitattributes` LFS line.
 Every managed file's first line is exactly:
 
 ```
-# project-standard v1.1 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.2 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 ```
 
 (`#!/usr/bin/env bash` first, then that line, for scripts.) `audit.sh` and the hook look for
@@ -68,7 +68,7 @@ Every managed file's first line is exactly:
 Root `Makefile`:
 
 ```make
-# project-standard v1.1 (managed: ...)
+# project-standard v1.2 (managed: ...)
 include make/project.mk
 include make/common.mk
 ```
@@ -79,8 +79,10 @@ include make/common.mk
 ## project.mk
 
 ```make
-PROJECT   := cryptogaurd                # = folder in the secrets repo, CI variables, image names
-PORT_BASE := 8100                       # dev ports are PORT_BASE + offset per part
+# = folder in the secrets repo, CI variables, image names
+PROJECT   := cryptogaurd
+# dev ports are PORT_BASE + offset per part
+PORT_BASE := 8100
 # PARTS: name:kind[:dir]   dir defaults to name
 PARTS := \
   firmware:zephyr \
@@ -92,6 +94,11 @@ PARTS := \
 firmware_BOARD := nrf9151dk/nrf9151/ns
 firmware_NCS   := v3.2.1
 ```
+
+Every comment is a line of its own, above the assignment it describes: make keeps the spaces before a trailing `#` in
+the value (`X := a   # note` sets X to `a   `), and a commented-out `# X := a   # note` gets the same bug once it is
+uncommented. `kind_settings` in `scaffold.sh` writes no `:=` line with a trailing comment, commented or not (1.2;
+`tests/lint.bats` checks every line the scaffold writes into `make/project.mk` and `make/local.mk`).
 
 ## Part evaluation (common.mk)
 
@@ -441,7 +448,7 @@ from the environment, never from a command line. On a Mac gh uses its own login 
 ## CI workflows (`ci-templates/`)
 
 - `ci-templates/.github/workflows/<kind>.yml`: one reusable workflow per kind (`on: workflow_call`), in `CI_TEMPLATES_REPO`
-  (default `mayankgautam-me/ci-templates`, public, shared by every project owner), tagged `v1.1` (`v1.0` is kept: a
+  (default `mayankgautam-me/ci-templates`, public, shared by every project owner), tagged `v1.2` (`v1.1` and `v1.0` are kept: a
   published tag never moves). `scaffold.sh` and
   `audit.sh` resolve it the same way (`ci_project`: `make/project.mk`, else the environment or the user config, else
   the default); the audit warns on a `uses:` line on any other repository. Inputs: `part`, `part_dir`, `run_check`, `run_build`, `run_release`, `confirm`, `source_run_id`,

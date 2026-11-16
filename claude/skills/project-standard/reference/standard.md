@@ -1,4 +1,4 @@
-# The project standard, v1.1
+# The project standard, v1.2
 
 One set of commands for every stage of work, the same in every project: firmware, boards, enclosures,
 Cloudflare services, apps and containers alike. The tools stay what they are (west, idf.py, pio, slc,
@@ -29,18 +29,19 @@ them are the same everywhere.
   make/project.mk     PROJECT, PORT_BASE, PARTS, per-part settings                 yours
   make/common.mk      the stage commands, guards, help, secrets loading            managed
   make/kinds/<k>.mk   one per kind the parts use                                   managed
-  make/bin/*.sh       secrets.sh, cf.sh, lib.sh, release.sh, refs.sh, ghcr.sh ...   managed
+  make/bin/*.sh       secrets.sh, cf.sh, lib.sh, release.sh, ghcr.sh ...            managed
   make/local.mk       targets only this project needs, with `## ` descriptions      yours
   make/VERSION        the standard version the managed files came from (1)         managed
   Brewfile            system tools (brew bundle)
   mise.toml           node / pnpm / python / go / rust versions
   secrets.schema      the name of every secret, per environment, and who uses it   (no values)
   .github/workflows/  checks.yml and release.yml: call the shared CI templates, one job per part
-  .gitattributes      Git LFS for 3D and CAD models only (*.step *.stp *.wrl, *.fcstd and *.FCStd), and Altium's
-                      binary documents with an altium part (not images, documents or build output); KiCad files stay text
+  .gitattributes      Git LFS for 3D and CAD models only (*.step *.stp, *.fcstd and *.FCStd; *.wrl with a KiCad
+                      board), and Altium's binary documents with an altium part (not images, documents or build
+                      output); KiCad files stay text, an Altium project and OutJob -text (byte-exact)
   .gitignore          one for the whole project: base lines + each kind's build outputs, a hardware or altium
                       part's <dir>/production/ (altium: <dir>/outputs/ too), SvelteKit / Vite outputs for app-tauri
-                      and web-pages, binary documents (*.pdf *.docx *.xlsx *.pptx ...), references/
+                      and web-pages, binary documents (*.pdf *.docx *.xlsx *.pptx ...)
   firmware/ hardware/ mechanical/ cloud/ web/ app/   a part's folder: its kind's folder, or <kind folder>/<part>/ (below)
   scripts/
     <part dir>/README.md      purpose, build and run, configuration, interfaces, links to its docs   yours
@@ -49,12 +50,11 @@ them are the same everywhere.
     README.md                 index of every doc                                                    yours
     architecture.md           the parts (Mermaid), data flow, where each part runs                  yours
     operations.md             runbook: deploy, rollback, backup, checks (only with a deployable part) yours
-    references.md             the datasheets and manuals the project works from (make refs-fetch)   yours
+    references.md             links to the datasheets and manuals the project works from         yours
     <part>/                   the kind's docs (see Documents below)                                 yours
     images/  <part>/images/   SVG, or PNG
   tests/smoke/        quick checks against a deployed environment  (only with a cloud-worker or web-pages part)
   tests/remote/       the deployed test suite (staging)            (only with a cloud-worker or web-pages part)
-  references/         what make refs-fetch downloads from docs/references.md (ignored, never committed)
   README.md CLAUDE.md PLAN.md
 ```
 
@@ -83,6 +83,7 @@ moves to (4.10, Altium):
 ```
 hardware/
   <Board>.PrjPcb  <Board>.SchDoc  <Board>.PcbDoc  <Board>.OutJob     the project, top sheet, layout and output job
+  <Board>.PrjPcbVariants                                             the assembly variants, when the board has them
   sheets/NN-Name.SchDoc  sheets/NN-Name.Harness                      the other sheets, numbered in order
   library/<Board>.SchLib  library/<Board>.PcbLib  library/models/*.step   the board's own library and 3D models
   bom/<Board>_BOM.csv                                                the BOM the OutJob writes, committed
@@ -91,7 +92,7 @@ hardware/
 ```
 
 "Managed" files start with the line
-`# project-standard v1.1 (managed: ...)` and are refreshed by the skill's update mode; never edit
+`# project-standard v1.2 (managed: ...)` and are refreshed by the skill's update mode; never edit
 them in a project. Your own targets go in `make/local.mk`, written like this, and show under
 "project" in `make help`:
 
@@ -121,7 +122,7 @@ changes.
 | `docs/README.md` | Index of every doc, project and per part | always |
 | `docs/architecture.md` | The parts as a Mermaid diagram (a node per part; the links are drawn by hand), data flow, where each part runs, external services | always |
 | `docs/operations.md` | Runbook: environments, deploy, rollback, backup and restore, checks, incidents | with a cloud-worker, web-pages or docker part |
-| `docs/references.md` | The reference documents (datasheets, reference manuals, application notes, drawings) as a table `Title \| Vendor \| File \| URL \| SHA256`; `make refs-fetch` downloads them into `references/` (ignored) and checks each SHA256 (4.1) | always (since 1.1) |
+| `docs/references.md` | Links to the reference documents (datasheets, reference manuals, application notes, drawings), one line per document, `- [Title (MPN) — Vendor](URL)`, grouped under `##` headings (datasheets by category, then per vendor or module). Links only: nothing is downloaded or committed (since 1.2; the audit warns about a 1.1 table with `File` or `SHA256` columns) | always (since 1.1) |
 | `<part dir>/README.md` | Purpose, Build and run (the kind's make commands), Configuration (`make/project.mk` settings), Interfaces, Docs (links) | every part |
 | `<part dir>/CHANGELOG.md` | [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/): `## [Unreleased]` with `### Added`, `### Changed`, `### Fixed`; a release becomes `## [<version>] - YYYY-MM-DD`, tagged `<part>-v<version>` | every part |
 
@@ -215,8 +216,6 @@ and CI cannot destroy production at all. Firmware verbs at the root (`make flash
 | `make doctor` | Read-only check of all of the above, plus the Cloudflare token, secrets completeness, KiCad library variables, probes and serial ports, the Docker daemon. Prints what is wrong and the command that fixes it. |
 | `make update` | Bumps pinned versions on purpose (NCS, IDF, Node...), then runs `setup`. |
 | `make teardown` | The opposite of `setup` for this project. Without `CONFIRM` it only lists what it would remove, with sizes and a total. With `CONFIRM=teardown` it removes the project's build and dependency folders (what each part's `distclean` removes, `clean` for a kind without one), the project's usage record, and the shared installs no other standard project records. Homebrew packages are never removed; it lists the Brewfile's so you can decide. |
-| `make refs-fetch` | Downloads each reference document `docs/references.md` lists (its URL, https only) into `references/<File>`, which git ignores, and checks its SHA256. A file already there with the right SHA256 is skipped; a row without SHA256 gets the value printed, to paste into the table (the table is never edited by the command). Listed in `make help` when `docs/references.md` exists. |
-| `make refs-check` | The same checks without downloading: a missing file or a wrong SHA256 fails. |
 | `make prune` | Machine wide, from any standard project. Without `CONFIRM` it only lists; with `CONFIRM=prune` it removes every shared tool version, SDK or rustup target the standard installed and no current project records, the stale usage records, and trims the pnpm store. |
 
 #### Setup on demand
@@ -470,9 +469,14 @@ SiWx917 on Zephyr; `<part>_DEVICE` is its `--device` for erase), next to probe-r
 **silabs.** An slc project (`*.slcp`) on the Simplicity SDK and WiseConnect, for SiWx917 / SiWG917 (M4). slt,
 Silicon Labs' Simplicity Tools CLI, is pinned per part (`<part>_SLT`) and installed into `~/.toolchains/slt-<ver>`;
 it installs slc, a Java runtime, the GNU Arm toolchain, the Simplicity SDK (`<part>_SDK`) and WiseConnect
-(`<part>_WISECONNECT`) into its own folder. A build is `slc generate` (a makefile project) into
-`<dir>/build/<board>`, then the generated makefile; `<part>_BOARD` is the slc board (`brd4338a`). Flash, erase and the
-energy monitor go through Simplicity Commander (`PROBE=commander`, the default; `PROBE=jlink` flashes with J-Link),
+(`<part>_WISECONNECT`) into its own folder (`slt install wiseconnect/<version>`: a bare `wiseconnect` would install the
+latest and a newer SDK). A build is `slc generate --overwrite-all` (a makefile project) into `<dir>/build/<board>`, then
+the generated makefile with the pinned GNU Arm toolchain (`<part>_GCC`, `12.2.rel1`); `<part>_BOARD` is the slc board
+(`brd4338a`, spaces stripped). Simplicity Commander is needed to build too: the `wiseconnect_soc` post-build
+(`POST_BUILD_EXE`) makes the `.rps` image with it, and without one release refuses. `make <part>-test` runs the host
+unit tests, the Makefile in `<dir>/test/` (else `<dir>/tests/`), with the Mac's `cc` and `BUILD_DIR=<dir>/build/test`
+(no Makefile: nothing to run); `clean` removes `<dir>/build`, so a test build is cleaned only when it is under it. Flash,
+erase and the energy monitor go through Simplicity Commander (`PROBE=commander`, the default; `PROBE=jlink` flashes with J-Link),
 the console through the kit's J-Link VCOM port, debug through the J-Link GDB server. `<part>_SIGN := 1` signs the
 `.rps` with the ECDSA P-256 key `silabs-m4` from the secrets repo (`make <part>-keygen`; the `secrets.schema` row is
 `optional:`); the release is the `.rps` to the OTA bucket, as for the other firmware kinds.
@@ -525,7 +529,7 @@ packages them.
 
 | Command | Does |
 |---|---|
-| `<part>-check` | The `.PrjPcb` and every document it lists (each `DocumentPath=` relative, inside the layout, present), the folder layout (section 1), Markdown docs in `docs/<part>/` and not in the part folder, and Git LFS: every Altium binary (`.SchDoc .PcbDoc .SchLib .PcbLib .IntLib .Harness`) is an LFS pointer and covered by an LFS line. Fails on any violation. |
+| `<part>-check` | The `.PrjPcb` and every document it lists (each `DocumentPath=` relative, inside the layout, present), the folder layout (section 1), Markdown docs in `docs/<part>/` and not in the part folder, and Git LFS: every Altium binary (`.SchDoc .PcbDoc .SchLib .PcbLib .IntLib .Harness .PrjPcbVariants`) is an LFS pointer and covered by an LFS line, and the `.PrjPcb` and `.OutJob` are `-text`. Fails on any violation. |
 | `<part>-layout` | Prints the `git mv` commands and the `DocumentPath=` edits that move an existing project into the layout; moves nothing. |
 | `<part>-build` | Verifies the OutJob's outputs in `outputs/` (Gerber or ODB++, drill, pick and place, BOM, PDF), renders the Gerbers with gerbv when it is installed, and writes the fab zip `production/<Board>_v<rev>.zip`. |
 | `<part>-bom` | Hands sourcing and pricing to the `bom` skill. |
@@ -533,7 +537,10 @@ packages them.
 | `<part>-clean` | Removes `outputs/`, which only the OutJob in Altium makes again. `make teardown` never removes it (it removes `production/` and `release/`). |
 
 The `.gitattributes` lines for Altium's binaries are `lockable` (`*.SchDoc filter=lfs diff=lfs merge=lfs -text
-lockable`, and the same for the others): they never merge, so `git lfs lock` before editing one. `.gitignore` gets
+lockable`, and the same for the others, `*.PrjPcbVariants` among them: it is an OLE compound file): they never merge,
+so `git lfs lock` before editing one. The `.PrjPcb` and the `.OutJob` are text, but Altium writes them with CRLF and
+the `.PrjPcb` with a UTF-8 BOM, so `*.PrjPcb -text` and `*.OutJob -text` keep them byte-exact between Windows and a
+Mac (1.2; `make <part>-check`, doctor and the audit report a missing line, and `scaffold.sh --force` appends it). `.gitignore` gets
 Altium's history, logs, previews and locks (`History/`, `Project Logs for */`, `__Previews/`, `*.PcbDocPreview` ...) and
 the part's `outputs/` and `production/`. In CI only the check runs (`altium.yml`, on the LFS pointers, nothing pulled);
 release.yml has no job for the part. After `make <part>-bump` and `make release-push`, the Release is made where the
@@ -919,10 +926,10 @@ of the project's repository (from stdin, never on a command line), adds the publ
 ## 6. CI/CD
 
 The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/name`, default
-`mayankgautam-me/ci-templates`), tagged `v1.1` (`v1.0` stays for projects not updated yet). It is a setting of its
+`mayankgautam-me/ci-templates`), tagged `v1.2` (`v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
 own, independent of the project's `GITHUB_OWNER`: projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.1`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.2`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -968,8 +975,8 @@ that work for the tag.
 
 **The 1.1 kinds.** `silabs.yml` runs check, build, release and the OTA publish like the other firmware kinds, on the
 runner itself (no image): `<part>-setup` installs the pinned slt, slc, the Simplicity SDK and WiseConnect (about 2
-GB), kept in the Actions cache per version and saved right after setup; a `SIGN=1` build needs Simplicity Commander
-on the runner (or keep `SIGN=0` in CI). `mechanical.yml` runs check, build (STEP and STL, kept 7 days) and release,
+GB), kept in the Actions cache per version and saved right after setup; Simplicity Commander on the runner is needed for
+the `.rps` (the `wiseconnect_soc` post-build makes it with Commander, 1.2) and for `SIGN=1`. `mechanical.yml` runs check, build (STEP and STL, kept 7 days) and release,
 with Ubuntu 24.04's FreeCAD. `altium.yml` runs the check only, on the LFS pointers: `checks.yml` has a job for an
 altium part and `release.yml` none, and its `run_build` and `run_release` do nothing (4.10, Altium). `hardware.yml`
 takes `library: shared` (default) or `local`: with `local` it checks out no KiCad library (4.10). A project whose only
@@ -1228,6 +1235,37 @@ Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) an
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
 
+- **1.2** (2026-11-16): reference documents are links, each kind's `.gitattributes` lines, and the silabs
+  fixes from building real WiseConnect firmware. `make/VERSION`, the
+  managed headers and the workflows' `@v1.2` say 1.2; `mayankgautam-me/ci-templates` gets the tag `v1.2` and keeps
+  `v1.1` and `v1.0`.
+  - `docs/references.md` is a list of links, one line per document, `- [Title (MPN) — Vendor](URL)`, under `##`
+    headings (datasheets by category, then per vendor or module). `make refs-fetch`, `make refs-check` and
+    `make/bin/refs.sh` are gone, and so is the `references/` line of `.gitignore`: nothing is downloaded. The audit warns
+    (area `docs`) about a 1.1 table with `File` or `SHA256` columns and reports a leftover `make/bin/refs.sh` as outdated.
+  - `*.wrl` (KiCad's VRML models) is in `.gitattributes` only with a KiCad board (kind `hardware`): the scaffold adds it
+    with the kind's other lines, and the audit asks for it only then (`*.step`, `*.stp` and `*.fcstd` everywhere, as
+    before).
+  - altium: `*.PrjPcbVariants` (an OLE compound file) joins the lockable LFS lines, and `*.PrjPcb -text` and
+    `*.OutJob -text` keep Altium's CRLF text files (the `.PrjPcb` with a UTF-8 BOM) byte-exact; `make <part>-check`,
+    doctor and the audit check both (4.10).
+  - The scaffold's `make/project.mk` has every comment on a line of its own above its setting: a trailing `# note`
+    after a commented-out `<part>_BOARD := x` became trailing spaces in the value once uncommented.
+  - silabs, from building real WiseConnect firmware: setup installs `wiseconnect/<part>_WISECONNECT` (a bare
+    `wiseconnect` installed the latest, 4.1.2 with SDK 2026.6.2, and the pinned SDK was never found); the SDK is found
+    by its `.slcs` `sdk_version:` line; slc's Java at slt's `jre/bin/java`; `slc generate --overwrite-all` by default
+    (`<part>_SLC_OVERWRITE`; with `-cp` a later source edit was silently not rebuilt); the board stripped of spaces;
+    the pinned GNU Arm toolchain's gcc (`<part>_GCC`, `12.2.rel1`), not the first found; `make <part>-test` runs host
+    unit tests from `<dir>/test/` or `<dir>/tests/` with the Mac's `cc` (none: exit 0); doctor and the kind say that
+    Simplicity Commander is required to build (the `wiseconnect_soc` post-build makes the `.rps` with it), and
+    release refuses when there is no `.rps`.
+  Update from 1.1: refresh the managed files, delete `make/bin/refs.sh` and move the `uses:` lines to `@v1.2`; convert a
+  `docs/references.md` table to links (keep Title, Vendor and URL; drop File and SHA256) and remove `references/` from
+  `.gitignore`; `scaffold.sh --force` adds `*.wrl` with a hardware part and Altium's new lines with an altium part.
+  A `.PrjPcbVariants` already committed as a plain blob moves to LFS with `git add --renormalize .`, as in adopt.
+  A silabs part: drop a `<part>_SLT_INSTALL := slc-cli wiseconnect/<ver>` or `<part>_SLC_ARGS := --overwrite-all` that
+  only worked around these (both are the defaults now), and move a `make/local.mk` `<part>-test` target into a Makefile
+  in `<dir>/tests/` (the kind's `<part>-test` runs it), deleting the local one.
 - **1.1** (2026-11-16): three new kinds, and the owner's registry and library. `make/VERSION`, the managed headers and
   the workflows' `@v1.1` say 1.1; `mayankgautam-me/ci-templates` gets the tag `v1.1` and keeps `v1.0`.
   - Kinds: `silabs` (Silicon Labs slc projects on the Simplicity SDK and WiseConnect, SiWx917 / SiWG917 M4; slt, slc,
@@ -1249,7 +1287,7 @@ the skill's update mode brings a project to it.
     docker in to ghcr.io with gh's token, doctor checks the `write:packages` scope, and `make <part>-prune-images`
     deletes old untagged and sha-only versions with `CONFIRM=prune` (4.11).
   - `make refs-fetch` and `make refs-check`: the reference documents listed in `docs/references.md` (written for every
-    project) downloaded into the ignored `references/` and checked by SHA256 (4.1).
+    project) downloaded into the ignored `references/` and checked by SHA256 (4.1; removed in 1.2).
   - `.gitattributes` has `*.FCStd` next to `*.fcstd` (git matches with case on Linux, so a Linux checkout got the
     pointer file of `Case.FCStd`), and Altium's binaries with an altium part; the audit checks the case of every CAD
     file in LFS, reports an Altium binary committed as a plain blob as an error, reports an origin that is not on

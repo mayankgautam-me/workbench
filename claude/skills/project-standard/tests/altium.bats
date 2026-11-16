@@ -14,9 +14,10 @@ setup() {
   P="$R/proj"
 }
 
-LFS_LINE='*.SchDoc *.PcbDoc *.SchLib *.PcbLib *.IntLib *.Harness'
+LFS_LINE='*.SchDoc *.PcbDoc *.SchLib *.PcbLib *.IntLib *.Harness *.PrjPcbVariants'
 
-# alproject 'more project.mk lines': a project with an altium part in hardware/, LFS lines for the Altium binaries
+# alproject 'more project.mk lines': a project with an altium part in hardware/ and the .gitattributes lines the
+# scaffold writes for it (templates/altium/gitattributes: the binaries in LFS, the .PrjPcb and .OutJob -text)
 alproject() {
   mkproject "$P" "PROJECT := demo
 PARTS := hardware:altium
@@ -24,7 +25,7 @@ $1"
   cp "$STD_TEMPLATES/kinds/altium.mk" "$P/make/kinds/"
   cd "$P"
   git init -q -b main .
-  for e in SchDoc PcbDoc SchLib PcbLib IntLib Harness; do printf '*.%s filter=lfs diff=lfs merge=lfs -text lockable\n' "$e"; done >.gitattributes
+  grep -v '^#' "$STD_TEMPLATES/../altium/gitattributes" >.gitattributes
   printf 'hardware/outputs/\nhardware/production/\nhardware/release/\n*.PcbDocPreview\n*.SchDocPreview\n' >.gitignore
   mkdir -p hardware
 }
@@ -175,6 +176,38 @@ outputs() {
   [[ "$output" == *"hardware/Board.PcbDoc is committed as a plain blob, not through Git LFS"* || "$output" == *"Board.PcbDoc is committed as a plain blob, not through Git LFS"* ]]
   [[ "$output" == *"Board.PcbDocPreview is tracked: Altium's previews"* ]]
   [[ "$output" == *"library/Board.PcbLib is not covered by a Git LFS line in .gitattributes"* ]]
+}
+
+@test "altium check 1.2: a .PrjPcbVariants is an LFS binary at the part root; the .PrjPcb and .OutJob need -text" {
+  alproject
+  conforming
+  # a variants file in LFS beside the project: check passes, and the template's lines cover it
+  pointer hardware/Board.PrjPcbVariants
+  git add -A && git commit -q -m variants
+  [ "$(git check-attr filter -- hardware/Board.PrjPcbVariants)" = 'hardware/Board.PrjPcbVariants: filter: lfs' ]
+  [ "$(git check-attr text -- hardware/Board.PrjPcb)" = 'hardware/Board.PrjPcb: text: unset' ]
+  [ "$(git check-attr text -- hardware/Board.OutJob)" = 'hardware/Board.OutJob: text: unset' ]
+  run make hardware-check
+  echo "$output"
+  [ "$status" -eq 0 ]
+  # committed as a plain blob (an OLE compound file), with no LFS line, and without the -text lines: each fails
+  printf '\xD0\xCF\x11\xE0binary\0variants' >hardware/Board.PrjPcbVariants
+  grep -Ev '^\*\.(PrjPcbVariants|PrjPcb|OutJob) ' .gitattributes >ga && mv ga .gitattributes
+  git add -A && git commit -q -m plain
+  run make hardware-check
+  echo "$output"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Board.PrjPcbVariants is committed as a plain blob, not through Git LFS"* ]]
+  [[ "$output" == *"Board.PrjPcbVariants is not covered by a Git LFS line in .gitattributes (*.PrjPcbVariants filter=lfs"* ]]
+  [[ "$output" == *"Board.PrjPcb is not marked -text in .gitattributes"*"*.PrjPcb -text"* ]]
+  [[ "$output" == *"Board.OutJob is not marked -text in .gitattributes"*"*.OutJob -text"* ]]
+  # doctor reports the same as warnings
+  run make hardware-doctor
+  [[ "$output" == *"warn"*"Board.PrjPcb is not marked -text"* ]]
+  # in a subfolder it belongs at the part root
+  git mv hardware/Board.PrjPcbVariants hardware/library/Board.PrjPcbVariants
+  run make hardware-layout
+  [[ "$output" == *'git mv "hardware/library/Board.PrjPcbVariants" "hardware/Board.PrjPcbVariants"'* ]]
 }
 
 @test "altium: a part not started yet (no .PrjPcb): check and build skip, release refuses, doctor warns" {

@@ -8,7 +8,7 @@
 # fills project.mk, Brewfile, mise.toml, .gitignore, .github/workflows/checks.yml and release.yml, secrets.schema,
 # README.md and PLAN.md, and creates a minimal starter for each part whose folder does not exist yet. It writes the
 # documents: docs/README.md, docs/architecture.md, docs/operations.md (with a deployable part), docs/references.md
-# (the table make refs-fetch reads), and per part
+# (links to the reference documents), and per part
 # <dir>/README.md, <dir>/CHANGELOG.md and the kind's docs in docs/<part>/; each only when it does not exist. It
 # never runs a network command and never touches git: `git init`, `make setup` and `make secrets-init` are separate
 # steps.
@@ -32,7 +32,7 @@
 # the project owns (project.mk, local.mk, README.md, PLAN.md, ...) are kept when they exist.
 set -euo pipefail
 
-readonly STD_VERSION=1.1
+readonly STD_VERSION=1.2
 SKILL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 readonly SKILL_DIR
 readonly TPL_MAKE="$SKILL_DIR/templates/make"
@@ -184,36 +184,53 @@ kind_ignore() {
   esac
 }
 
-# Commented per-part settings for make/project.mk.
+# Commented per-part settings for make/project.mk. Every comment is a line of its own above its assignment, never after
+# a value: make keeps the spaces before a trailing `#` in the value, so `X := a   # note`, once uncommented, sets X to
+# "a   " (tests/lint.bats checks every := line the scaffold writes).
 kind_settings() {
   local p=$1 k=$2 d=$3
   case $k in
     zephyr)
-      echo "# ${p}_BOARD := <board>        # fill in before the first build, see $d/README.md"
-      echo "# ${p}_NCS   := v3.2.1         # nRF Connect SDK version, installed into ~/.toolchains"
+      echo "# the board: fill in before the first build, see $d/README.md"
+      echo "# ${p}_BOARD := <board>"
+      echo "# nRF Connect SDK version, installed into ~/.toolchains"
+      echo "# ${p}_NCS := v3.2.1"
       ;;
     espidf)
-      echo "# ${p}_TARGET := esp32s3       # fill in before the first build, see $d/README.md"
-      echo "# ${p}_IDF    := v5.5          # ESP-IDF version, installed into ~/.toolchains"
+      echo "# the chip: fill in before the first build, see $d/README.md"
+      echo "# ${p}_TARGET := esp32s3"
+      echo "# ESP-IDF version, installed into ~/.toolchains"
+      echo "# ${p}_IDF := v5.5"
       ;;
     pio)
-      echo "# ${p}_PIO_ENV := <env>        # a [env:...] of $d/platformio.ini, see $d/README.md"
+      echo "# an [env:...] of $d/platformio.ini, see $d/README.md"
+      echo "# ${p}_PIO_ENV := <env>"
       ;;
     arm-gcc)
-      echo "# ${p}_BOARD := <board>        # fill in before the first build, see $d/README.md"
-      echo "# ${p}_PROBE := openocd        # probe-rs jlink openocd stlink dfu"
+      echo "# the board: fill in before the first build, see $d/README.md"
+      echo "# ${p}_BOARD := <board>"
+      echo "# the probe: probe-rs jlink openocd stlink dfu"
+      echo "# ${p}_PROBE := openocd"
       ;;
     circuitpython)
+      echo "# where the board is mounted"
       echo "# ${p}_DRIVE := /Volumes/CIRCUITPY"
       ;;
     silabs)
-      echo "# ${p}_BOARD       := brd4338a   # the slc board (radio board), see $d/README.md"
-      echo "# ${p}_SDK         := 2025.12.2  # Simplicity SDK version"
-      echo "# ${p}_WISECONNECT := 4.0.1      # WiseConnect version"
-      echo "# ${p}_PROBE       := commander  # commander or jlink"
+      echo "# the slc board (radio board), see $d/README.md"
+      echo "# ${p}_BOARD := brd4338a"
+      echo "# Simplicity SDK version"
+      echo "# ${p}_SDK := 2025.12.2"
+      echo "# WiseConnect version"
+      echo "# ${p}_WISECONNECT := 4.0.1"
+      echo "# the probe: commander or jlink"
+      echo "# ${p}_PROBE := commander"
+      echo "# the GNU Arm toolchain slt installs with the SDK (the <ver>-*manifest.txt of its package)"
+      echo "# ${p}_GCC := 12.2.rel1"
       ;;
     hardware)
-      echo "# ${p}_LIBRARY := local          # the board's own sym-lib-table and fp-lib-table instead of the shared KiCad library"
+      echo "# the board's own sym-lib-table and fp-lib-table instead of the shared KiCad library"
+      echo "# ${p}_LIBRARY := local"
       ;;
     web-pages)
       echo "# what gets deployed: the build output folder"
@@ -997,25 +1014,19 @@ part_docs() {
   done
 }
 
-# references_doc: docs/references.md, the table make refs-fetch reads (refs.sh). Written for every project: firmware
-# has its chip's reference manual and SDK notes, hardware its datasheets, mechanical its vendors' drawings.
+# references_doc: docs/references.md, the links to the reference documents (1.2: links only, nothing downloaded). Written
+# for every project: firmware has its chip's reference manual and SDK notes, hardware its datasheets, mechanical its
+# vendors' drawings. One line per document, `- [Title (MPN) — Vendor](URL)`, under ## headings; no rows at first.
 # shellcheck disable=SC2016 # the backticks are Markdown
 references_doc() {
   {
-    printf '# %s: references
-
-' "$PROJECT"
-    printf '_The datasheets, reference manuals, application notes and drawings this project works from. They are never
-'
-    printf 'committed: `make refs-fetch` downloads each row into `references/<File>` (git-ignored) and checks its SHA256,
-'
-    printf '`make refs-check` checks what is there. A row without SHA256 gets it printed by refs-fetch: paste it in._
-
-'
-    printf '| Title | Vendor | File | URL | SHA256 |
-'
-    printf '|---|---|---|---|---|
-'
+    printf '# %s: references\n\n' "$PROJECT"
+    printf '_Links to the datasheets, reference manuals, application notes and drawings this project works from, one line\n'
+    printf 'per document: `- [Title (MPN) — Vendor](URL)`. The documents themselves are never committed._\n\n'
+    printf '## Datasheets\n\n'
+    printf '_Grouped by category under ### headings (MCU, power, radio, sensors, connectors ...)._\n\n'
+    printf '## Vendors and modules\n\n'
+    printf '_Per vendor or module, under ### headings: reference manuals, application notes, SDK guides, drawings._\n'
   } | own_doc docs/references.md
 }
 
@@ -1041,7 +1052,7 @@ project_docs() {
     printf -- '- [README](../README.md): what the project is and how to start\n'
     printf -- '- [Architecture](architecture.md): the parts, how they connect, where each runs\n'
     ((deployable == 0)) || printf -- '- [Operations](operations.md): deploy, rollback, backup, checks\n'
-    printf -- '- [References](references.md): datasheets, manuals and drawings (make refs-fetch downloads them)\n'
+    printf -- '- [References](references.md): links to the datasheets, manuals and drawings\n'
     printf '\n## Parts\n'
     i=0
     while ((i < n)); do
@@ -2115,10 +2126,6 @@ gitignore_required() {
     grep -Fxq -- "$l" "$DEST/.gitignore" || added="$added$l"$'\n'
   done
   if [[ -n $added ]]; then printf '\n# local CI runs (make ci-local): the work folder and the secrets file\n%s' "$added" >>"$DEST/.gitignore"; fi
-  # the reference documents of docs/references.md (make refs-fetch): downloaded, never committed
-  if ! grep -Fxq -- "references/" "$DEST/.gitignore"; then
-    printf '\n# reference documents (make refs-fetch downloads what docs/references.md lists; never committed)\nreferences/\n' >>"$DEST/.gitignore"
-  fi
   # Per part: a hardware or altium part's fab zips (production/), an altium part's OutJob outputs (outputs/), and every
   # part's release files (make <part>-release-assets, attached to the GitHub Release), only in that part's folder so an
   # unrelated folder elsewhere is not hidden.
@@ -2151,13 +2158,15 @@ gitignore_required() {
 }
 
 # gitattributes_required: the Git LFS lines a part's kind needs, appended to .gitattributes when no line has their
-# pattern yet (never removed or reordered): *.FCStd for a mechanical part (git matches with case on Linux, so *.fcstd
-# alone leaves a Linux checkout with the pointer files), and Altium's binary documents for an altium part
-# (templates/altium/gitattributes). Prints what it added.
+# pattern yet (never removed or reordered), for a new .gitattributes and an existing one alike: *.wrl (KiCad's VRML
+# models) for a hardware part, *.FCStd for a mechanical part (git matches with case on Linux, so *.fcstd alone leaves a
+# Linux checkout with the pointer files), and for an altium part its binary documents in LFS and its text files kept
+# byte-exact (templates/altium/gitattributes). Prints what it added.
 gitattributes_required() {
   local f="$DEST/.gitattributes" added='' l pat
   [[ -f $f ]] || return 0
   {
+    if has_kind hardware; then printf '%s\n' '*.wrl filter=lfs diff=lfs merge=lfs -text'; fi
     if has_kind mechanical; then printf '%s\n' '*.FCStd filter=lfs diff=lfs merge=lfs -text'; fi
     if has_kind altium; then grep -v '^#' "$SKILL_DIR/templates/altium/gitattributes" | grep -v '^[[:space:]]*$'; fi
   } >"$WORK/gitattributes.want"
@@ -2166,7 +2175,7 @@ gitattributes_required() {
     awk -v p="$pat" '$1 == p { found = 1 } END { exit !found }' "$f" || added="$added$l"$'\n'
   done <"$WORK/gitattributes.want"
   [[ -n $added ]] || return 0
-  printf '\n# Git LFS for the CAD files of this project'"'"'s kinds (binary, never merged)\n%s' "$added" >>"$f"
+  printf '\n# the CAD files of this project'"'"'s kinds: binaries in Git LFS (never merged), Altium'"'"'s text files byte-exact\n%s' "$added" >>"$f"
   echo "added"
 }
 
@@ -2183,7 +2192,7 @@ if [[ ! -e "$DEST/.gitignore" ]]; then
   done
   gitignore_required >/dev/null
 elif [[ -n $(gitignore_required) ]]; then
-  note "kept existing .gitignore, and added the standard's missing CI and release lines (.ci/, ci-local, references/, <dir>/release/) at its end"
+  note "kept existing .gitignore, and added the standard's missing CI and release lines (.ci/, ci-local, <dir>/release/) at its end"
 else
   note "kept existing .gitignore"
 fi
@@ -2198,7 +2207,7 @@ has_kind() {
 }
 
 if [[ -n $(gitattributes_required) ]] && ((ga_existed == 1)); then
-  note "added the Git LFS lines of the project's kinds (*.FCStd, Altium's documents) at the end of .gitattributes"
+  note "added the .gitattributes lines of the project's kinds (*.wrl, *.FCStd, Altium's documents) at its end"
 fi
 
 # schema_row NAME ENVS USED-BY GEN DESCRIPTION   one secrets.schema row, in the template's columns.

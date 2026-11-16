@@ -13,9 +13,18 @@ readonly SKILL_DIR
 readonly TPL_MAKE="$SKILL_DIR/templates/make"
 readonly TPL_PROJECT="$SKILL_DIR/templates/project"
 readonly KINDS="zephyr espidf pio arm-gcc circuitpython silabs hardware altium mechanical cloud-worker web-pages app-flutter app-tauri app-xcode app-android docker go python"
+# 3D and CAD models in Git LFS. Every project has a line for each of LFS_EXTS but wrl, which only a KiCad board (kind
+# hardware) needs (1.2: KiCad's VRML models).
 readonly LFS_EXTS="step stp wrl fcstd"
-# Altium Designer's binary documents (a .PrjPcb project file and an ASCII-saved document are text): Git LFS only.
-readonly ALTIUM_BIN_EXTS="SchDoc PcbDoc SchLib PcbLib IntLib Harness PcbDwf"
+# Altium Designer's binary documents (a .PrjPcb project file and an ASCII-saved document are text): Git LFS only. The
+# .PrjPcbVariants is an OLE compound file (1.2).
+readonly ALTIUM_BIN_EXTS="SchDoc PcbDoc SchLib PcbLib IntLib Harness PcbDwf PrjPcbVariants"
+# An altium part's .gitattributes lines (templates/altium/gitattributes): these binaries in LFS, and the project and
+# OutJob, CRLF text Altium writes (the .PrjPcb with a UTF-8 BOM), -text so they stay byte-exact (1.2).
+readonly ALTIUM_LFS_EXTS="SchDoc PcbDoc SchLib PcbLib IntLib Harness PrjPcbVariants"
+readonly ALTIUM_TEXT_EXTS="PrjPcb OutJob"
+# Managed files a version removed: a project that still has one is outdated (make/bin/refs.sh: 1.2, references are links).
+readonly REMOVED_MANAGED="make/bin/refs.sh"
 # routed to LFS before 1.1; small files now stay in plain git
 readonly OLD_LFS_EXTS="png mp4 zip hex"
 # Binary documents are never committed (docs are Markdown); .gitignore ignores them and no LFS line routes them.
@@ -204,6 +213,15 @@ kind_known() {
   return 1
 }
 
+# has_part_kind KIND: a part in PARTS has that kind.
+has_part_kind() {
+  local k
+  for k in ${PART_KINDS[@]+"${PART_KINDS[@]}"}; do
+    [[ $k == "$1" ]] && return 0
+  done
+  return 1
+}
+
 # ---------------------------------------------------------------------------------------------
 # 1. standard or not, and the managed files
 
@@ -250,6 +268,11 @@ if ((STANDARD == 1)); then
   for tpl in "$TPL_MAKE"/bin/*.sh; do
     [[ -f $tpl ]] || continue
     compare_managed "make/bin/$(basename "$tpl")" "$tpl"
+  done
+  for rel in $REMOVED_MANAGED; do
+    [[ -f "$DIR/$rel" ]] || continue
+    add outdated managed "$rel" "a managed file the standard no longer has (1.2: docs/references.md is links only, nothing is downloaded)" \
+      "git rm $rel (update mode)"
   done
   if [[ ! -f "$DIR/make/VERSION" ]]; then
     add error managed make/VERSION "missing" "refresh with the project-standard skill (update mode)"
@@ -663,10 +686,27 @@ if [[ ! -f "$DIR/.gitattributes" ]]; then
 else
   missing=''
   for e in $LFS_EXTS; do
+    [[ $e != wrl ]] || has_part_kind hardware || continue
     grep -Eq "^\\*\\.${e}[[:space:]].*filter=lfs" "$DIR/.gitattributes" || missing="$missing *.$e"
   done
   [[ -z $missing ]] ||
-    add warn lfs .gitattributes "no LFS line for:$missing" "add them from the skill's .gitattributes, then git lfs migrate if such files are tracked"
+    add warn lfs .gitattributes "no LFS line for:$missing" "add them from the skill's .gitattributes (scaffold.sh --force adds a kind's lines), then git lfs migrate if such files are tracked"
+  if has_part_kind altium; then
+    missing=''
+    for e in $ALTIUM_LFS_EXTS; do
+      grep -Eq "^\\*\\.${e}[[:space:]].*filter=lfs" "$DIR/.gitattributes" || missing="$missing *.$e"
+    done
+    [[ -z $missing ]] ||
+      add warn lfs .gitattributes "no LFS line for Altium's:$missing" \
+        "scaffold.sh <dir> --force appends the missing lines of the skill's templates/altium/gitattributes"
+    missing=''
+    for e in $ALTIUM_TEXT_EXTS; do
+      grep -Eq "^\\*\\.${e}[[:space:]]+(.*[[:space:]])?-text([[:space:]]|\$)" "$DIR/.gitattributes" || missing="$missing *.$e"
+    done
+    [[ -z $missing ]] ||
+      add warn lfs .gitattributes "no -text line for:$missing (Altium writes them with CRLF, the .PrjPcb with a UTF-8 BOM; git may rewrite them)" \
+        "scaffold.sh <dir> --force appends the missing lines ('*.PrjPcb -text', '*.OutJob -text')"
+  fi
   routed=''
   for e in $BIN_DOC_EXTS; do
     if grep -Eq "^\\*\\.${e}[[:space:]].*filter=lfs" "$DIR/.gitattributes"; then routed="$routed *.$e"; fi
@@ -786,6 +826,19 @@ readonly DOC_FIX="write it with scaffold.sh --force (it adds only the docs that 
 for doc in docs/README.md docs/architecture.md; do
   [[ -f "$DIR/$doc" ]] || add warn docs "$doc" "missing" "$DOC_FIX"
 done
+# docs/references.md is a list of links since 1.2: a 1.1 table with File or SHA256 columns (what refs-fetch read) converts.
+if [[ -f "$DIR/docs/references.md" ]] && awk '
+    /^[[:space:]]*\|/ {
+      n = split($0, c, "|")
+      for (j = 1; j <= n; j++) {
+        v = tolower(c[j]); gsub(/^[[:space:]]+|[[:space:]]+$/, "", v)
+        if (v == "sha256" || v == "file") found = 1
+      }
+    }
+    END { exit !found }' "$DIR/docs/references.md"; then
+  add warn docs docs/references.md "a table with File / SHA256 columns (1.1): since 1.2 it is a list of links, nothing is downloaded" \
+    "rewrite each row as a line '- [Title (MPN) — Vendor](URL)' under ## headings (keep Title, Vendor and URL; drop File and SHA256), remove references/ from .gitignore and git rm make/bin/refs.sh"
+fi
 deployable=''
 i=0
 while ((i < ${#PART_NAMES[@]})); do

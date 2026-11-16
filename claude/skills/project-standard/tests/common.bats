@@ -1143,85 +1143,19 @@ EOF
   [[ "$output" == *"REG=other.example/x FROM=command line "* ]] || false
 }
 
-refs_table() {
-  mkdir -p docs
-  printf '# References\n\n| Title | Vendor | File | URL | SHA256 |\n|---|---|---|---|---|\n' >docs/references.md
-  printf '| Manual | Acme | acme/manual.pdf | https://example.invalid/manual.pdf | %s |\n' "$1" >>docs/references.md
-  printf '| Note | Acme | `note.pdf` | [link](https://example.invalid/note.pdf) |  |\n' >>docs/references.md
-  printf '\nAfter the table.\n| not | a | row |\n' >>docs/references.md
-}
-
-@test "refs-fetch downloads docs/references.md into references/, checks SHA256, skips what is there; refs-check never downloads" {
-  # curl writes "body of <url>" to -o
-  stub_cmd curl 'out=; url=; while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; -*) shift;; *) url=$1; shift;; esac; done; echo "$url" >>"$STUB_LOG/curl.urls"; printf "body of %s" "$url" >"$out"'
-  good=$(printf 'body of %s' https://example.invalid/manual.pdf | shasum -a 256 | cut -d' ' -f1)
-  note=$(printf 'body of %s' https://example.invalid/note.pdf | shasum -a 256 | cut -d' ' -f1)
-  refs_table "$good"
-  git init -q
-  printf 'references/\n' >.gitignore
-  cp docs/references.md "$BATS_TEST_TMPDIR/before.md"
-  run make refs-check
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"acme/manual.pdf: missing"* ]] || false
-  [ ! -f "$STUB_LOG/curl.urls" ]
-  run make refs-fetch
-  echo "$output"
-  [ "$status" -eq 0 ]
-  [ "$(cat references/acme/manual.pdf)" = "body of https://example.invalid/manual.pdf" ]
-  [ -f references/note.pdf ]
-  [[ "$output" == *"note.pdf: downloaded; no SHA256 in docs/references.md: $note (paste it into the row)"* ]] || false
-  [[ "$output" != *"not in .gitignore"* ]] || false
-  cmp docs/references.md "$BATS_TEST_TMPDIR/before.md"
-  # present and matching: no second download
-  run make refs-fetch
-  [ "$status" -eq 0 ]
-  [ "$(grep -c . "$STUB_LOG/curl.urls")" -eq 2 ]
-  run make refs-check
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"note.pdf: no SHA256 in docs/references.md; this file's is $note"* ]] || false
-  # a changed file fails the check; fetch downloads it again
-  printf 'tampered' >references/acme/manual.pdf
-  run make refs-check
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"acme/manual.pdf: SHA256 is "* ]] || false
-  run make refs-fetch
-  [ "$status" -eq 0 ]
-  [ "$(cat references/acme/manual.pdf)" = "body of https://example.invalid/manual.pdf" ]
-}
-
-@test "refs-fetch refuses a wrong SHA256 download, a path outside references/ and a URL that is not https; help lists refs only with docs/references.md" {
-  stub_cmd curl 'out=; while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; *) shift;; esac; done; printf x >"$out"'
-  run make help
-  [[ "$output" != *"refs-fetch"* ]] || false
-  mkdir -p docs
-  printf '| title | file | url | sha256 |\n|---|---|---|---|\n| Manual | acme/manual.pdf | https://example.invalid/m.pdf | %064d |\n| Bad | ../escape.pdf | https://example.invalid/e.pdf | |\n| Plain | plain.pdf | http://example.invalid/p.pdf | |\n' 0 >docs/references.md
-  run make help
-  [[ "$output" == *"refs-fetch"* && "$output" == *"refs-check"* ]] || false
-  run make refs-fetch
-  echo "$output"
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"acme/manual.pdf: the download's SHA256 is"*"not kept"* ]] || false
-  [ ! -e references/acme/manual.pdf ]
-  [ ! -e references/acme/manual.pdf.part ]
-  [[ "$output" == *"File '../escape.pdf' must be a relative path inside references/"* ]] || false
-  [[ "$output" == *"plain.pdf: URL 'http://example.invalid/p.pdf' is not https://"* ]] || false
-  [ ! -e escape.pdf ]
-  [ ! -e references/plain.pdf ]
-}
-
-@test "refs-fetch and refs-check pass on the scaffold's empty table (header only), and still fail with no table" {
+@test "1.2: no refs-fetch or refs-check (docs/references.md is links only), in help or as targets; nothing downloads" {
   stub_cmd curl 'echo "curl $*" >>"$STUB_LOG/curl.urls"; exit 1'
   mkdir -p docs
-  printf '# References\n\n| Title | Vendor | File | URL | SHA256 |\n|---|---|---|---|---|\n' >docs/references.md
-  run make refs-check
-  echo "$output"
+  printf '# References\n\n## Datasheets\n\n- [Chip (ABC123) — Acme](https://example.invalid/abc123.pdf)\n' >docs/references.md
+  run make help ALL=1
   [ "$status" -eq 0 ]
-  [[ "$output" == *"lists no reference documents yet"* ]] || false
-  run make refs-fetch
-  [ "$status" -eq 0 ]
+  [[ "$output" != *"refs-"* ]] || false
+  for t in refs-fetch refs-check; do
+    run make "$t"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"No rule to make target"*"$t"* ]] || false
+  done
   [ ! -f "$STUB_LOG/curl.urls" ]
-  printf '# References\n\nnone yet\n' >docs/references.md
-  run make refs-check
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"has no table with File and URL columns"* ]] || false
+  [ ! -e references ]
+  [ ! -e make/bin/refs.sh ]
 }

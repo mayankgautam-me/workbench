@@ -2,7 +2,7 @@
 
 Reusable GitHub Actions workflows of the project standard, one per part kind, at
 `.github/workflows/<kind>.yml`, each with only `on: workflow_call`. Projects call them from their own
-`checks.yml` and `release.yml` with `uses: mayankgautam-me/ci-templates/.github/workflows/<kind>.yml@v1.1`.
+`checks.yml` and `release.yml` with `uses: mayankgautam-me/ci-templates/.github/workflows/<kind>.yml@v1.2`.
 README.md shows the calls.
 
 ## Where to change things
@@ -11,8 +11,8 @@ README.md shows the calls.
   `~/.workbench/claude/skills/project-standard/ci-templates/` in the workbench repository. Change the files
   there, never here; a change made only here is lost at the next publish.
 - Publishing a version: copy the source over this clone (`rsync -a --delete --exclude .git <source>/ ./`), commit it
-  on `main` as "v<version>", tag it `v<version>` (the skill's `templates/project/make/VERSION`, now `v1.1`) and push
-  `main` and the tag. A published tag is never moved: projects on an older version (`@v1.0`) keep calling it until
+  on `main` as "v<version>", tag it `v<version>` (the skill's `templates/project/make/VERSION`, now `v1.2`) and push
+  `main` and the tag. A published tag is never moved: projects on an older version (`@v1.1`, `@v1.0`) keep calling it until
   the skill's update mode moves their `uses:` lines to the new tag (`reference/standard.md` section 10).
 
 ## Rules for the workflows

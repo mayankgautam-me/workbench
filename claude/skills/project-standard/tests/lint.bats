@@ -95,3 +95,59 @@ unguarded() {
     return 1
   fi
 }
+
+# trailing_comments FILE...   print file:line: text for every make assignment, commented out or not, with a `#` after
+# its value: make keeps the spaces before it in the value, so `X := a   # note` (once uncommented) sets X to "a   ".
+trailing_comments() {
+  awk '
+    {
+      line = $0
+      sub(/^[[:space:]]*#?[[:space:]]*/, "", line)
+      if (line !~ /^[A-Za-z0-9_.$(){}-]+[[:space:]]*(:|\?|\+)?=/) next
+      sub(/^[^=]*=/, "", line)
+      if (index(line, "#")) printf "%s:%d: %s\n", FILENAME, FNR, $0
+    }
+  ' "$@"
+}
+
+@test "lint: the scaffold writes no make/project.mk or make/local.mk assignment with a trailing comment, commented or not" {
+  local skill d
+  skill="$BATS_TEST_DIRNAME/.."
+  d="$BATS_TEST_TMPDIR/every-kind"
+  export NO_COLOR=1 STD_CONFIG="$BATS_TEST_TMPDIR/config" SECRETS_DIR="$BATS_TEST_TMPDIR/secrets"
+  unset CI_TEMPLATES_REPO CI_TEMPLATES_PROJECT GITHUB_OWNER KICAD_LIBRARY_PROJECT
+  mkdir -p "$STD_CONFIG"
+  printf 'GITHUB_OWNER := example-owner\n' >"$STD_CONFIG/config.mk"
+  run "$skill/scripts/scaffold.sh" "$d" --project every-kind \
+    --part fw:zephyr --part esp:espidf --part sensor:pio --part iface:arm-gcc --part badge:circuitpython \
+    --part radio:silabs --part board:hardware --part alt:altium --part case:mechanical --part api:cloud-worker \
+    --part site:web-pages --part docs-site:web-pages --part app:app-flutter --part desk:app-tauri --part ios:app-xcode \
+    --part droid:app-android --part img:docker --part gw:go --part tools:python \
+    --production-only api --production-only docs-site --domain site=www.example.test --pages docs-site
+  echo "$output"
+  [ "$status" -eq 0 ]
+  # every kind's settings are there, as comments above them
+  grep -Fxq '# fw_BOARD := <board>' "$d/make/project.mk"
+  grep -Fxq '# radio_WISECONNECT := 4.0.1' "$d/make/project.mk"
+  grep -Fxq '# OTA_BUCKET := <bucket>' "$d/make/project.mk"
+  run trailing_comments "$d/make/project.mk" "$d/make/local.mk" "$skill/templates/project/make/project.mk" "$skill/templates/project/make/local.mk"
+  [ "$status" -eq 0 ]
+  if [ -n "$output" ]; then
+    echo "$output"
+    return 1
+  fi
+  # uncommenting any commented setting gives a value with no trailing space
+  sed -nE 's/^# ([A-Za-z0-9_]+ *:= .*)$/\1/p' "$d/make/project.mk" >"$BATS_TEST_TMPDIR/uncommented"
+  [ -s "$BATS_TEST_TMPDIR/uncommented" ]
+  run grep -En '[[:space:]]$' "$BATS_TEST_TMPDIR/uncommented"
+  [ "$status" -eq 1 ]
+}
+
+@test "lint: the trailing-comment check catches a value or a commented-out setting with a comment after it" {
+  f="$BATS_TEST_TMPDIR/p.mk"
+  printf 'A := 1\n# B := 2\n# a note # with a hash\nC := x   # note\n# D_BOARD := y   # fill in\nE ?= $(HOME)\n' >"$f"
+  run trailing_comments "$f"
+  [[ "$output" == *"p.mk:4: C := x   # note"* ]] || false
+  [[ "$output" == *"p.mk:5: # D_BOARD := y   # fill in"* ]] || false
+  [ "$(printf '%s\n' "$output" | grep -c .)" -eq 2 ]
+}
