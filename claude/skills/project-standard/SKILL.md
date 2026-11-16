@@ -141,7 +141,8 @@ Read-only until the user says yes.
      4.10). `make <part>-layout` in the worktree, after the scaffold, prints the `git mv` commands and the
      `DocumentPath=` edits of the `.PrjPcb`; apply them there (the user closes Altium first; the `.PrjPcb` is text,
      the documents are LFS binaries moved as they are), then `make <part>-check` until it passes. Generated
-     `outputs/` and `production/` leave the index with `git rm -r --cached`.
+     `outputs/` and `production/` leave the index with `git rm -r --cached`. The BOM is the OutJob's (in `outputs/`,
+     1.5): a committed `bom/` folder goes, with the user's go-ahead, once the OutJob writes a BOM CSV.
    - **Secrets**: every tracked or local secret file (`.env*`, `.dev.vars`, `.prod.vars`, `secrets/`,
      `keys/`, `*.pem`, `*.p8`, `*.jks`, ...), which env and name each value moves to in
      `<project>/` of the project's secrets repo, and the `secrets.schema` lines that describe them. Never print a
@@ -250,6 +251,10 @@ Read-only until the user says yes.
    repository the audit names (`CI_TEMPLATES_REPO`, default `mayankgautam-me/ci-templates`, independent of
    `GITHUB_OWNER`; a line on the pre-1.7 `<owner>/ci-templates` is reported outdated) and the current version tag
    (`v` + `make/VERSION`); and add jobs for kinds that were added.
+   From v1.4 to v1.5: re-copy the managed files and set every `uses:` line to `@v1.5`. An altium part's BOM is now
+   the one its OutJob writes (`<dir>/outputs/**/*BOM*.csv`, plus `.xlsx`), not `bom/<Board>_BOM.csv`: check that the
+   OutJob has a CSV Bill of Materials output (`BOM` in its name) and `make <part>-build` passes after it ran, then,
+   with the user's go-ahead, `git rm -r <dir>/bom` and commit. Until then check, doctor and the audit only warn.
    From v1.3 to v1.4: re-copy the managed files and set every `uses:` line to `@v1.4`. For an altium part, add
    `ALTIUM_LIBRARY_DEPLOY_KEY: ${{ secrets.ALTIUM_LIBRARY_DEPLOY_KEY }}` to its job's `secrets:` in `checks.yml`, run
    `scaffold.sh <worktree> --force` (it writes `docs/<part>/library.md` and adds `.venv/` to `.gitignore`), then, with the

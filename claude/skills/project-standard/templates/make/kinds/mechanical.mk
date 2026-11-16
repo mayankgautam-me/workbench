@@ -1,4 +1,4 @@
-# project-standard v1.4 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.5 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind mechanical: FreeCAD models (*.FCStd, in Git LFS), driven headless by freecadcmd.
 #

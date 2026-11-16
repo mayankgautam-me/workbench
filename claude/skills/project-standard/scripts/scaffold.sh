@@ -32,7 +32,7 @@
 # the project owns (project.mk, local.mk, README.md, PLAN.md, ...) are kept when they exist.
 set -euo pipefail
 
-readonly STD_VERSION=1.4
+readonly STD_VERSION=1.5
 SKILL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 readonly SKILL_DIR
 readonly TPL_MAKE="$SKILL_DIR/templates/make"
@@ -434,8 +434,8 @@ readme_build() {
       echo "from the project root."
       ;;
     altium)
-      echo "Altium Designer (Windows) makes the outputs: run the board's OutJob, which writes into \`outputs/\`."
-      echo "\`make $p-check\` checks the layout, the documents and Git LFS, \`make $p-build\` checks the outputs and"
+      echo "Altium Designer (Windows) makes the outputs: run the board's OutJob, which writes into \`outputs/\`, the BOM"
+      echo "(\`*BOM*.csv\`) among them. \`make $p-check\` checks the layout, the documents and Git LFS, \`make $p-build\` checks the outputs and"
       echo "packages the fab zip into \`production/\`; \`make $p-layout\` prints the moves into the standard layout."
       ;;
     mechanical)
@@ -538,8 +538,9 @@ readme_config() {
       echo "library tables instead (no shared library, none checked out in CI)."
       ;;
     altium)
-      echo "The layout is fixed (\`<Board>.PrjPcb\`, \`.SchDoc\`, \`.PcbDoc\` and \`.OutJob\` here, \`sheets/\`, \`library/\`,"
-      echo "\`bom/\`); \`make $p-check\` enforces it. The revision is \`VERSION\`."
+      echo "The layout is fixed (\`<Board>.PrjPcb\`, \`.SchDoc\`, \`.PcbDoc\` and \`.OutJob\` here, \`sheets/\`,"
+      echo "\`library/\`); \`make $p-check\` enforces it. The revision is \`VERSION\`. The BOM is the one the OutJob writes"
+      echo "to \`outputs/\` (\`*BOM*.csv\`, and its \`.xlsx\`), not a committed file: \`make $p-bom\` hands it to the \`bom\` skill."
       echo
       echo "Parts come from the shared Altium library, a git submodule at \`$(altium_library)\` (\`ALTIUM_LIBRARY\`;"
       echo "the repository is \`ALTIUM_LIBRARY_PROJECT\`, by default \`<owner>/altium-library\`). \`make $p-setup\` adds it,"

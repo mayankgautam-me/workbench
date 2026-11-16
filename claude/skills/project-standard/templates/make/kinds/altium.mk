@@ -1,4 +1,4 @@
-# project-standard v1.4 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.5 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind altium: an Altium Designer board (one *.PrjPcb per part dir). Altium is Windows only and licensed, so
 # nothing here runs Altium: the outputs come from the project's OutJob, run in Altium, into <dir>/outputs/ (never
@@ -9,7 +9,9 @@
 # The layout of the part folder (make <part>-check enforces it, make <part>-layout prints the moves to it):
 #   <Board>.PrjPcb (.PrjPcbVariants)  <Board>.SchDoc (top sheet)  <Board>.PcbDoc  <Board>.OutJob (writes to outputs\)
 #   sheets/NN-Name.SchDoc  sheets/NN-Name.Harness   library/<Board>.SchLib .PcbLib (.IntLib)  library/models/*.step
-#   bom/<Board>_BOM.csv   VERSION README.md CHANGELOG.md   outputs/ production/ (generated, ignored)
+#   VERSION README.md CHANGELOG.md   outputs/ production/ (generated, ignored)
+# The BOM is the one the OutJob writes (1.5): outputs/**/*BOM*.csv, and its .xlsx when it writes one. build requires the
+# CSV, release attaches both, make <part>-bom hands the CSV to the bom skill. A bom/ folder left from 1.4 is a warning.
 # The documents of the board are Markdown in docs/<dir>/ at the project root.
 # Per-part settings: none needed. The revision is <dir>/VERSION; a release's files go to <dir>/release/<rev>/.
 # Global: GERBV (gerbv, optional: build renders the Gerbers with it when it is installed).
@@ -43,8 +45,9 @@ define ALT_SH
 #   MODE plan    the git mv commands and the DocumentPath= edits that move the part into the layout
 # The layout (standard.md): <Board>.PrjPcb, <Board>.SchDoc (top sheet), <Board>.PcbDoc and <Board>.OutJob at the
 # part root; sheets/NN-Name.SchDoc and sheets/NN-Name.Harness; library/*.SchLib *.PcbLib *.IntLib and library/models/
-# for 3D models; bom/<Board>_BOM.csv; outputs/ and production/ generated. ALT_LIB is the shared Altium library (a
-# submodule, from the project root ALT_ROOT): its files are not the part's, and a DocumentPath= into it is accepted.
+# for 3D models; outputs/ (the OutJob's, the BOM among them) and production/ generated; a bom/ folder is a warning
+# (1.5). ALT_LIB is the shared Altium library (a submodule, from the project root ALT_ROOT): its files are not the
+# part's, and a DocumentPath= into it is accepted.
 set -euo pipefail
 mode=$$1 d=$$2 rel=$$3 part=$$4
 cd "$$d"
@@ -206,24 +209,13 @@ for oj in *.OutJob *.outjob *.OUTJOB; do
   done < <(printf '%s\n' "$$paths")
 done
 
-# 4. bom/ in lower case, holding <Board>_BOM.csv.
-bomdir=
+# 4. The BOM is the one the OutJob writes to outputs/ (1.5). A bom/ folder left from 1.4 is a warning, not a violation.
 for e in *; do
   [ -d "$$e" ] || continue
-  case $$(lc "$$e") in bom) bomdir=$$e ;; esac
+  case $$(lc "$$e") in
+    bom) note "$$e/: the BOM is the one $$board.OutJob writes to outputs/ (*BOM*.csv, since 1.5): remove $$e/ (git rm -r $$(q "$$rel/$$e"), from the project root)" ;;
+  esac
 done
-if [ -n "$$bomdir" ] && [ "$$bomdir" != bom ]; then
-  bad "$$bomdir/: the sourcing BOM folder is bom/ in lower case ($$fix)"
-  add_move "$$bomdir" "bom"
-fi
-if [ -n "$$bomdir" ]; then
-  csvs=()
-  for f in "$$bomdir"/*.csv "$$bomdir"/*.CSV; do [ -f "$$f" ] && csvs+=("$${f#*/}"); done
-  if [ "$${#csvs[@]}" -eq 1 ] && [ "$${csvs[0]}" != "$${board}_BOM.csv" ]; then
-    bad "$$bomdir/$${csvs[0]}: the sourcing BOM is bom/$${board}_BOM.csv ($$fix)"
-    add_move "bom/$${csvs[0]}" "bom/$${board}_BOM.csv"
-  fi
-fi
 
 # 5. Documents are Markdown under docs/hardware/ at the project root, not in the part folder.
 if [ -d docs ]; then
@@ -341,8 +333,8 @@ alt_run = c_ok="$$c_ok" c_warn="$$c_warn" c_err="$$c_err" c_info="$$c_info" c_0=
 # Sets d and windows (1 on a Windows host: Git Bash, MSYS, Cygwin).
 alt_host = windows=; case "$$(uname -s)" in MINGW* | MSYS* | CYGWIN*) windows=1;; esac;
 
-# Sets the newline-separated lists gerbers, drills, pnp, boms and pdfs and odb (the ODB++ folder or archive) from
-# <dir>/outputs, whatever subfolders the OutJob made. A drill file is an Excellon file (its M48 header).
+# Sets the newline-separated lists gerbers, drills, pnp, bomcsv (the BOM CSVs), boms (those and the BOM xlsx) and pdfs,
+# and odb (the ODB++ folder or archive), from <dir>/outputs, whatever subfolders the OutJob made. A drill file is an Excellon file (its M48 header).
 alt_outputs = [ -d "$$out" ] || die "no $(2)/outputs: run $$name.OutJob in Altium (it writes to outputs\\), then make $(1)-build"; \
   lst() { find "$$out" -type f \( "$$@" \) 2>/dev/null | LC_ALL=C sort; }; \
   gerbers=$$(lst -iname '*.gbr' -o -iname '*.ger' -o -iname '*.gtl' -o -iname '*.gbl' -o -iname '*.gto' -o -iname '*.gbo' -o -iname '*.gts' -o -iname '*.gbs' \
@@ -350,17 +342,19 @@ alt_outputs = [ -d "$$out" ] || die "no $(2)/outputs: run $$name.OutJob in Altiu
   odb=$$(find "$$out" -iname 'odb*' 2>/dev/null | LC_ALL=C sort | head -n 1 || true); \
   drills=$$(find "$$out" -type f \( -iname '*.drl' -o -iname '*.txt' -o -iname '*.xln' -o -iname '*.exc' \) -exec grep -l '^M48' {} + 2>/dev/null | LC_ALL=C sort || true); \
   pnp=$$(lst -ipath '*pick*place*' -o -iname '*pnp*' -o -iname '*-pos.*' -o -iname '*cpl*'); \
-  boms=$$(lst -iname '*bom*.csv' -o -iname '*bom*.xlsx' -o -iname '*bom*.xls'); \
+  bomcsv=$$(lst -iname '*bom*.csv'); boms=$$(lst -iname '*bom*.csv' -o -iname '*bom*.xlsx'); \
   pdfs=$$(lst -iname '*.pdf');
 alt_count = $$(printf '%s\n' "$$$(1)" | grep -c . || true)
 
-# The outputs a board needs: Gerber (or ODB++), NC drill, pick and place, BOM, schematic PDF; gerbv renders the Gerbers
-# when it is installed (a Gerber it cannot read fails).
+# The outputs a board needs: Gerber (or ODB++), NC drill, pick and place, the BOM as CSV (1.5), schematic PDF; gerbv
+# renders the Gerbers when it is installed (a Gerber it cannot read fails).
 alt_verify = say "outputs in $(2)/outputs"; \
   if [ -n "$$gerbers" ]; then ok "Gerber: $(call alt_count,gerbers) files"; elif [ -n "$$odb" ]; then ok "ODB++: $$(printf '%s' "$$odb" | sed "s|^$$out/||")"; else bad "no Gerber or ODB++ files"; fi; \
   if [ -n "$$drills" ]; then ok "NC drill: $(call alt_count,drills) Excellon files"; elif [ -n "$$odb" ]; then ok "NC drill: in the ODB++"; else bad "no NC drill (Excellon) files"; fi; \
   if [ -n "$$pnp" ]; then ok "pick and place: $$(printf '%s\n' "$$pnp" | head -n 1 | sed "s|^$$out/||")"; else bad "no pick and place file (Pick Place, pnp, pos or cpl in its name)"; fi; \
-  if [ -n "$$boms" ]; then ok "BOM: $$(printf '%s\n' "$$boms" | head -n 1 | sed "s|^$$out/||")"; else bad "no BOM (BOM in its name, csv or xlsx)"; fi; \
+  if [ -n "$$bomcsv" ]; then ok "BOM: $$(printf '%s\n' "$$bomcsv" | head -n 1 | sed "s|^$$out/||")"; \
+  elif [ -n "$$boms" ]; then bad "no BOM CSV, only $$(printf '%s\n' "$$boms" | head -n 1 | sed "s|^$$out/||"): add a CSV Bill of Materials output to $$name.OutJob"; \
+  else bad "no BOM CSV (a Bill of Materials output of $$name.OutJob, BOM in its name, .csv)"; fi; \
   if [ -n "$$pdfs" ]; then ok "PDF: $(call alt_count,pdfs) files (the schematic among them)"; else bad "no schematic PDF"; fi; \
   if [ -n "$$gerbers" ] && have $(GERBV); then \
     if printf '%s\n' "$$gerbers" | tr '\n' '\0' | xargs -0 $(GERBV) -x png -o "$$out/gerbv-check.png" >/dev/null 2>&1; then ok "gerbv reads the Gerbers ($(2)/outputs/gerbv-check.png)"; else bad "gerbv could not read the Gerbers"; fi; \
@@ -378,8 +372,8 @@ alt_check = $(alt_sh) $(call alt_run,$(1),$(2),check)
 alt_layout = $(alt_sh) $(call alt_find,$(1),$(2)) $(call alt_run,$(1),$(2),plan)
 
 # GitHub Release assets (make <part>-release-assets, after check and build unless NOBUILD=1): the fab zip (Gerber and
-# drill files, or the ODB++, flat; also kept as <dir>/production/<Board>_v<rev>.zip for ordering), the pick and place,
-# BOM and PDF files of outputs/, and bom/<Board>_BOM.csv. Outside CI, uncommitted changes refuse.
+# drill files, or the ODB++, flat; also kept as <dir>/production/<Board>_v<rev>.zip for ordering) and the pick and place,
+# BOM (CSV, and xlsx when the OutJob writes one) and PDF files of outputs/. Outside CI, uncommitted changes refuse.
 alt_release_assets = $(alt_sh) $(call alt_find,$(1),$(2)) \
   if [ -z "$${CI:-}$${GITHUB_ACTIONS:-}" ] && [ -n "$$(git status --porcelain -- "$$d" ':!'"$$d/outputs" ':!'"$$d/production" ':!'"$$d/release" ':!'"$$d/.venv" 2>/dev/null)" ]; then die "uncommitted changes in $(2): commit them, a release is made from its tag"; fi; \
   $(call alt_outputs,$(1),$(2)) $(call alt_verify,$(1),$(2)) \
@@ -392,13 +386,17 @@ alt_release_assets = $(alt_sh) $(call alt_find,$(1),$(2)) \
   else printf '%s\n' "$$fab" | python3 -c 'import os, sys, zipfile; z = zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED); [z.write(p, os.path.basename(p)) for p in sys.stdin.read().split("\n") if p]; z.close()' "$$zipf"; fi; \
   need "$$zipf"; \
   printf '%s\n' "$$pnp" "$$boms" "$$pdfs" | while IFS= read -r f; do if [ -n "$$f" ]; then put "$$f"; fi; done; \
-  opt "$$d/bom/$${name}_BOM.csv"; \
   $(std_rel_end)
 
+# The BOM is the OutJob's (1.5): the first outputs/**/*BOM*.csv.
 alt_bom = $(alt_sh) $(call alt_find,$(1),$(2)) \
-  say "sourcing and pricing are the bom skill's job. Ask Claude, in this project:"; \
-  printf '\n    use the bom skill on %s\n    (Altium project %s, fab JLCPCB)\n\n' "$(2)/bom/$${name}_BOM.csv" "$$name.PrjPcb"; \
-  if [ -f "$$d/bom/$${name}_BOM.csv" ]; then say "sourcing BOM: $(2)/bom/$${name}_BOM.csv"; else say "no $(2)/bom/$${name}_BOM.csv yet: export the BOM from Altium (or the OutJob) there"; fi
+  bom=$$(find "$$out" -type f -iname '*bom*.csv' 2>/dev/null | LC_ALL=C sort | head -n 1 || true); \
+  say "sourcing and pricing are the bom skill's job, on the BOM $$name.OutJob writes: run the OutJob in Altium first, then ask Claude, in this project:"; \
+  if [ -n "$$bom" ]; then bomrel="$(2)/outputs/$$(printf '%s' "$$bom" | sed "s|^$$out/||")"; else bomrel="$(2)/outputs/<the BOM CSV of the OutJob>"; fi; \
+  printf '\n    use the bom skill on %s\n    (Altium project %s, fab JLCPCB)\n\n' "$$bomrel" "$$name.PrjPcb"; \
+  if [ -n "$$bom" ]; then say "BOM: $$bomrel (from $$name.OutJob)"; \
+  else say "no BOM CSV in $(2)/outputs yet: run $$name.OutJob in Altium (its Bill of Materials output, as CSV), then make $(1)-bom"; fi; \
+  for e in "$$d"/[Bb][Oo][Mm]; do if [ -d "$$e" ]; then b=$$(basename "$$e"); warn "$(2)/$$b/: the BOM is the one the OutJob writes since 1.5: remove it (git rm -r $(2)/$$b)"; fi; done
 
 alt_version = $(alt_sh) d="$(CURDIR)/$(2)"; rev=; if [ -f "$$d/VERSION" ]; then rev=$$(head -n 1 "$$d/VERSION" | tr -d '[:space:]'); fi; \
   [ -n "$$rev" ] || die "no revision: write it to $(2)/VERSION"; printf '%s %s\n' "$(1)" "$$rev"
@@ -514,7 +512,7 @@ $(1)-lib-check:
 $(1)-lib-ref:
 	@$$(call alt_lib_ref,$(1),$(2))
 
-$(call std_verb,$(1),build,hardware,Verify the OutJob outputs in $(2)/outputs: Gerber or ODB++ and drill and pick and place and BOM and PDF)
+$(call std_verb,$(1),build,hardware,Verify the OutJob outputs in $(2)/outputs: Gerber or ODB++ and drill and pick and place and BOM CSV and PDF)
 $(1)-build:
 	@$$(call std_skip_unstarted,$(1),$(2),build) $$(call alt_build,$(1),$(2))
 
@@ -522,7 +520,7 @@ $(call std_extra,$(1),layout,hardware,Print the git mv commands and DocumentPath
 $(1)-layout:
 	@$$(call alt_layout,$(1),$(2))
 
-$(call std_extra,$(1),bom,hardware,Hand sourcing and pricing to the bom skill)
+$(call std_extra,$(1),bom,hardware,Hand the OutJob BOM in $(2)/outputs to the bom skill for sourcing and pricing)
 $(1)-bom:
 	@$$(call alt_bom,$(1),$(2))
 

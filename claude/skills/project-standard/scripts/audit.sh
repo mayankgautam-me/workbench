@@ -783,6 +783,25 @@ if has_part_kind altium; then
   fi
 fi
 
+# An altium part's BOM is the one its OutJob writes to outputs/ (1.5); a bom/ folder left from 1.4 is a warning.
+if has_part_kind altium; then
+  i=0
+  while ((i < ${#PART_NAMES[@]})); do
+    if [[ ${PART_KINDS[$i]} == altium ]]; then
+      apd=${PART_DIRS[$i]%/}
+      for bome in "$DIR/$apd"/*; do
+        [[ -d $bome ]] || continue
+        bomd=${bome##*/}
+        [[ $(printf %s "$bomd" | tr '[:upper:]' '[:lower:]') == bom ]] || continue
+        if [[ $apd == . ]]; then rel=$bomd; else rel=$apd/$bomd; fi
+        add warn layout "$rel" "part ${PART_NAMES[$i]} (altium): since 1.5 the BOM is the one the OutJob writes to $apd/outputs/ (*BOM*.csv), not a committed $bomd/" \
+          "git rm -r $(sq "$rel") and commit; make ${PART_NAMES[$i]}-bom points at the OutJob's BOM"
+      done
+    fi
+    i=$((i + 1))
+  done
+fi
+
 # Tracked files that .gitattributes routes to LFS but that are committed as plain blobs (git shows them as
 # modified forever). Compares the files with the lfs filter attribute against `git lfs ls-files`; without
 # git-lfs, against the first bytes of the staged blob. No file content is printed.

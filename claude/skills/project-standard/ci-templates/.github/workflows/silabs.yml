@@ -1,5 +1,5 @@
-# project-standard ci-templates v1.4: silabs (Silicon Labs slc projects on the Simplicity SDK and WiseConnect 3, SiWx917).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/silabs.yml@v1.4.
+# project-standard ci-templates v1.5: silabs (Silicon Labs slc projects on the Simplicity SDK and WiseConnect 3, SiWx917).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/silabs.yml@v1.5.
 #
 # check and build run on the Linux runner itself (slt has a linux-x64 build, no image is needed). <part>-setup installs the
 # pinned slt into STD_TOOLCHAINS and, through it, slc, its Java, the GNU Arm toolchain, the Simplicity SDK and WiseConnect

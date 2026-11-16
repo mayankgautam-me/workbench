@@ -1,5 +1,5 @@
-# project-standard ci-templates v1.4: app-tauri (a Tauri 2 app; Linux, Windows and macOS release files, iOS and Android published by hand).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/app-tauri.yml@v1.4.
+# project-standard ci-templates v1.5: app-tauri (a Tauri 2 app; Linux, Windows and macOS release files, iOS and Android published by hand).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/app-tauri.yml@v1.5.
 
 on:
   workflow_call:

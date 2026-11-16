@@ -53,13 +53,11 @@ conforming() {
   for f in Board.SchDoc Board.PcbDoc sheets/02-Power.SchDoc sheets/02-Power.Harness sheets/03-MCU.SchDoc \
     library/Board.SchLib library/Board.PcbLib; do pointer "hardware/$f"; done
   printf '[OutputGroup1]\r\nName=Fab\r\n[PublishSettings]\r\nOutputFilePath1=outputs\\\r\n' >hardware/Board.OutJob
-  mkdir -p hardware/bom
-  printf 'Comment,Designator,LCSC Part #\r\n10k,R1,C25804\r\n' >hardware/bom/Board_BOM.csv
   echo 2 >hardware/VERSION
   git add -A && git commit -q -m board
 }
 
-# A flat project, as Altium leaves one: sheets, harnesses and libraries at the root, BOM/ in upper case.
+# A flat project, as Altium leaves one: sheets, harnesses and libraries at the root, and a BOM/ folder (before 1.5).
 flat() {
   prjpcb AirNode 'AirNode.SchDoc' '02-Overview.SchDoc' '03-Power.SchDoc' 'AirNode.PcbDoc' 'AirNode.SchLib' \
     'AirNode.PcbLib' '03-Power.Harness'
@@ -104,8 +102,8 @@ outputs() {
   [[ "$output" == *"02-Overview.SchDoc: child sheets and harnesses go in sheets/ (make hardware-layout prints the moves)"* ]]
   [[ "$output" == *"AirNode.SchLib: libraries go in library/"* ]]
   [[ "$output" == *'DocumentPath=03-Power.Harness in AirNode.PrjPcb is not in the layout: sheets\03-Power.Harness'* ]]
-  [[ "$output" == *"BOM/: the sourcing BOM folder is bom/ in lower case"* ]]
-  [[ "$output" == *"BOM/APMD_BOM.csv: the sourcing BOM is bom/AirNode_BOM.csv"* ]]
+  [[ "$output" == *"warn"*"BOM/: the BOM is the one AirNode.OutJob writes to outputs/ (*BOM*.csv, since 1.5): remove BOM/ (git rm -r \"hardware/BOM\""* ]]
+  [[ "$output" != *"miss  BOM"* ]]
   [[ "$output" != *"AirNode.SchDoc: "* ]]
   run make hardware-layout
   [ "$status" -eq 0 ]
@@ -113,8 +111,8 @@ outputs() {
   [[ "$output" == *'git mv "hardware/02-Overview.SchDoc" "hardware/sheets/02-Overview.SchDoc"'* ]]
   [[ "$output" == *'git mv "hardware/03-Power.Harness" "hardware/sheets/03-Power.Harness"'* ]]
   [[ "$output" == *'git mv "hardware/AirNode.PcbLib" "hardware/library/AirNode.PcbLib"'* ]]
-  [[ "$output" == *'git mv "hardware/BOM" "hardware/bom.tmp" && git mv "hardware/bom.tmp" "hardware/bom"'* ]]
-  [[ "$output" == *'git mv "hardware/bom/APMD_BOM.csv" "hardware/bom/AirNode_BOM.csv"'* ]]
+  [[ "$output" != *'hardware/BOM'* ]]
+  [[ "$output" != *'hardware/bom'* ]]
   [[ "$output" == *'DocumentPath=02-Overview.SchDoc  ->  DocumentPath=sheets\02-Overview.SchDoc'* ]]
   [[ "$output" == *'DocumentPath=AirNode.SchLib  ->  DocumentPath=library\AirNode.SchLib'* ]]
   [[ "$output" != *'git mv "hardware/AirNode.SchDoc"'* ]]
@@ -237,8 +235,19 @@ outputs() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"no pick and place file"* ]]
   outputs
+  # 1.5: the BOM must be a CSV; an xlsx alone is not enough
+  mv "hardware/outputs/Assembly/Board BOM.csv" "hardware/outputs/Assembly/Board BOM.xlsx"
+  run make hardware-build
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no BOM CSV, only Assembly/Board BOM.xlsx: add a CSV Bill of Materials output to Board.OutJob"* ]]
+  rm "hardware/outputs/Assembly/Board BOM.xlsx"
+  run make hardware-build
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no BOM CSV (a Bill of Materials output of Board.OutJob"* ]]
+  outputs
   stub_recorder gerbv
   run make hardware-build
+  [[ "$output" == *"BOM: Assembly/Board BOM.csv"* ]]
   [ "$status" -eq 0 ]
   [[ "$output" == *"Gerber: 7 files"* ]]
   [[ "$output" == *"NC drill: 1 Excellon files"* ]]
@@ -255,16 +264,49 @@ outputs() {
   alproject
   conforming
   outputs
+  printf 'PK' >"hardware/outputs/Assembly/Board BOM.xlsx"
   run make hardware-release-assets
   [ "$status" -eq 0 ]
   [ -f hardware/production/Board_v2.zip ]
   z="$(unzip -Z1 hardware/production/Board_v2.zip | LC_ALL=C sort | paste -sd' ' -)"
   [ "$z" = "Board-RoundHoles.TXT Board.GBL Board.GBO Board.GBS Board.GKO Board.GTL Board.GTO Board.GTS" ]
-  for f in Board_v2.zip "Pick Place for Board.csv" "Board BOM.csv" Board-Schematic.pdf Board_BOM.csv SHA256SUMS; do
+  for f in Board_v2.zip "Pick Place for Board.csv" "Board BOM.csv" "Board BOM.xlsx" Board-Schematic.pdf SHA256SUMS; do
     [ -f "hardware/release/2/$f" ] || { echo "missing $f"; false; }
   done
   run make hardware-version
   [ "$output" = "hardware 2" ]
+}
+
+@test "altium 1.5: the BOM is the OutJob's: bom points at outputs/ and says to run the OutJob first; a bom/ folder only warns" {
+  alproject
+  conforming
+  run make hardware-bom
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"run the OutJob in Altium first"* ]]
+  [[ "$output" == *"use the bom skill on hardware/outputs/<the BOM CSV of the OutJob>"* ]]
+  [[ "$output" == *"no BOM CSV in hardware/outputs yet: run Board.OutJob in Altium"* ]]
+  outputs
+  run make hardware-bom
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"use the bom skill on hardware/outputs/Assembly/Board BOM.csv"* ]]
+  [[ "$output" != *"bom/"* ]]
+  # a project from 1.4 with its committed bom/: check passes with a warning, doctor and bom warn too
+  mkdir -p hardware/bom
+  printf 'Comment,Designator\r\n10k,R1\r\n' >hardware/bom/Board_BOM.csv
+  git add -A && git commit -q -m oldbom
+  run make hardware-check
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"warn"*"bom/: the BOM is the one Board.OutJob writes to outputs/ (*BOM*.csv, since 1.5): remove bom/"* ]]
+  run make hardware-doctor
+  [[ "$output" == *"warn"*"bom/: the BOM is the one Board.OutJob writes"* ]]
+  run make hardware-bom
+  [[ "$output" == *"warn"*"hardware/bom/: the BOM is the one the OutJob writes since 1.5: remove it (git rm -r hardware/bom)"* ]]
+  run make hardware-layout
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hardware already follows the layout, nothing to move"* ]]
 }
 
 @test "altium doctor: warns about previews git does not ignore and passes the layout through as warnings" {

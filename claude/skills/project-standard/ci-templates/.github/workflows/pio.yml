@@ -1,5 +1,5 @@
-# project-standard ci-templates v1.4: pio (PlatformIO firmware; PlatformIO comes from mise.toml).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/pio.yml@v1.4.
+# project-standard ci-templates v1.5: pio (PlatformIO firmware; PlatformIO comes from mise.toml).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/pio.yml@v1.5.
 
 on:
   workflow_call:

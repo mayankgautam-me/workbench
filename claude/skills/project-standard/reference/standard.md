@@ -1,4 +1,4 @@
-# The project standard, v1.4
+# The project standard, v1.5
 
 One set of commands for every stage of work, the same in every project: firmware, boards, enclosures,
 Cloudflare services, apps and containers alike. The tools stay what they are (west, idf.py, pio, slc,
@@ -86,13 +86,16 @@ hardware/
   <Board>.PrjPcbVariants                                             the assembly variants, when the board has them
   sheets/NN-Name.SchDoc  sheets/NN-Name.Harness                      the other sheets, numbered in order
   library/<Board>.SchLib  library/<Board>.PcbLib  library/models/*.step   the board's own library and 3D models
-  bom/<Board>_BOM.csv                                                the BOM the OutJob writes, committed
   VERSION  README.md  CHANGELOG.md
   outputs/  production/                                              generated (OutJob, make <part>-build), ignored
 ```
 
+The BOM is the one the OutJob writes, `outputs/**/*BOM*.csv` (and its `.xlsx` when it writes one), never a committed
+copy (1.5): `make <part>-build` requires the CSV, the Release attaches both, and `make <part>-bom` hands the CSV to the
+`bom` skill. A `bom/` folder left from 1.4 is a warning (check, doctor, audit) to remove it.
+
 "Managed" files start with the line
-`# project-standard v1.4 (managed: ...)` and are refreshed by the skill's update mode; never edit
+`# project-standard v1.5 (managed: ...)` and are refreshed by the skill's update mode; never edit
 them in a project. Your own targets go in `make/local.mk`, written like this, and show under
 "project" in `make help`:
 
@@ -557,8 +560,8 @@ packages them.
 | `<part>-check` | The `.PrjPcb` and every document it lists (each `DocumentPath=` relative, inside the layout, present; one into the Altium library, such as its DbLib, is accepted wherever the library is), the folder layout (section 1), Markdown docs in `docs/<part>/` and not in the part folder, and Git LFS: every Altium binary (`.SchDoc .PcbDoc .SchLib .PcbLib .IntLib .Harness .PrjPcbVariants`) is an LFS pointer and covered by an LFS line, and the `.PrjPcb` and `.OutJob` are `-text`. Then `<part>-lib-check` once the library is checked out (a submodule not checked out is a warning). Fails on any violation. |
 | `<part>-lib-check` | The library's `tools/check.py project <dir>/<Board>.PrjPcb --root <library>`, from `<dir>/.venv` (`WARN=1` adds `--warn`). Without the library checked out it fails with the `git submodule update --init` command. |
 | `<part>-layout` | Prints the `git mv` commands and the `DocumentPath=` edits that move an existing project into the layout; moves nothing. |
-| `<part>-build` | Verifies the OutJob's outputs in `outputs/` (Gerber or ODB++, drill, pick and place, BOM, PDF), renders the Gerbers with gerbv when it is installed, and writes the fab zip `production/<Board>_v<rev>.zip`. |
-| `<part>-bom` | Hands sourcing and pricing to the `bom` skill. |
+| `<part>-build` | Verifies the OutJob's outputs in `outputs/` (Gerber or ODB++, drill, pick and place, a BOM CSV `*BOM*.csv`, PDF), renders the Gerbers with gerbv when it is installed, and writes the fab zip `production/<Board>_v<rev>.zip`. |
+| `<part>-bom` | Hands the OutJob's BOM (`outputs/**/*BOM*.csv`) to the `bom` skill for sourcing and pricing; run the OutJob in Altium first (1.5). |
 | `<part>-release` / `<part>-github-release` | The board's GitHub Release from the outputs here (4.12). |
 | `<part>-clean` | Removes `outputs/`, which only the OutJob in Altium makes again. `make teardown` never removes it (it removes `production/` and `release/`). |
 
@@ -734,7 +737,7 @@ saying so, a missing required one fails):
 | circuitpython | `<board>-firmware.uf2` / `.bin`, `<part>-<version>-code.zip` (the content of `<dir>/src`) |
 | silabs | `<name>.hex` (factory programming), `<name>.out` (ELF), `<name>-signed.rps` (with `SIGN=1`) and `<name>.rps` (OTA), and the `.map`, `.s37` and `.bin` when the build made them |
 | hardware | `<Board>_v<rev>.zip` (Gerbers and drill), `-bom.csv`, `-bom-jlcpcb.csv`, `-pos.csv`, `-cpl-jlcpcb.csv`, `.ipc356` (IPC-D-356 netlist, when kicad-cli exports it), `-schematic.pdf`, `-ibom.html`, `.step`, `.wrl`, `-top.png` / `-bottom.png` (after `make <part>-render`), `-erc.rpt`, `-drc.rpt` |
-| altium | `<Board>_v<rev>.zip` (Gerbers and drill, or the ODB++ set), the pick and place, BOM and PDF files of `outputs/`, and `bom/<Board>_BOM.csv`; made with `make <part>-github-release FORCE=1` where the outputs are, not by CI (4.10) |
+| altium | `<Board>_v<rev>.zip` (Gerbers and drill, or the ODB++ set), the pick and place, BOM (CSV, and xlsx when the OutJob writes one) and PDF files of `outputs/`; made with `make <part>-github-release FORCE=1` where the outputs are, not by CI (4.10) |
 | mechanical | every `.step` and `.stl` of `outputs/`, and the `.FCStd` models |
 | cloud-worker | none: the Release carries the CHANGELOG notes only. What a Worker releases is its production deploy, which the tag's job makes before the Release. The `latest` Release has nothing to copy for it |
 | web-pages | none, as cloud-worker: the notes only, after the tag's production deploy |
@@ -979,10 +982,10 @@ of the project's repository (from stdin, never on a command line), adds the publ
 ## 6. CI/CD
 
 The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/name`, default
-`mayankgautam-me/ci-templates`), tagged `v1.4` (`v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
+`mayankgautam-me/ci-templates`), tagged `v1.5` (`v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
 own, independent of the project's `GITHUB_OWNER`: projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.4`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.5`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -1299,6 +1302,18 @@ Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) an
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
 
+- **1.5** (2026-11-17): an altium part's BOM is the one its OutJob writes. `make/VERSION`, the managed headers and the
+  workflows' `@v1.5` say 1.5; `mayankgautam-me/ci-templates` gets the tag `v1.5` and keeps `v1.4`, `v1.3`, `v1.2`, `v1.1`
+  and `v1.0`.
+  - altium: the BOM is `<dir>/outputs/**/*BOM*.csv` (and its `.xlsx`), written by the OutJob, not a committed
+    `bom/<Board>_BOM.csv`. `<part>-build` requires a BOM CSV among the outputs (an xlsx alone fails); the Release
+    attaches the outputs' BOM CSV and xlsx; `<part>-bom` points the `bom` skill at the outputs' CSV and says to run
+    the OutJob first. `bom/` leaves the layout: check and doctor warn about one (no longer a violation, and layout
+    moves nothing for it), and the audit warns with `git rm -r <dir>/bom` (4.10).
+  - KiCad (`hardware`) BOMs are unchanged.
+  Update from 1.4: refresh the managed files and move the `uses:` lines to `@v1.5`. For an altium part, make sure the
+  OutJob has a Bill of Materials output as CSV into `outputs\` (`BOM` in its file name), run it, check with
+  `make <part>-build`, then `git rm -r <dir>/bom` and commit (with the user's go-ahead).
 - **1.4** (2026-11-16): the shared Altium library. `make/VERSION`, the managed headers and the workflows' `@v1.4` say
   1.4; `mayankgautam-me/ci-templates` gets the tag `v1.4` and keeps `v1.3`, `v1.2`, `v1.1` and `v1.0`.
   - altium: the shared library `ALTIUM_LIBRARY_PROJECT` (default `<owner>/altium-library`) is a git submodule at
