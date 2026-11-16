@@ -329,7 +329,7 @@ needs: [instructions, detect, bootstrap]
 - [x] 1.3: silabs: note the slc toolchain exclusivity warning (toolchain_gcc vs wiseconnect_toolchain_gcc_standard) and the slcp fix {#std-1-3-silabs-toolchain}
 - [x] 1.3: scaffold --force on an existing repo does not suggest git init {#std-1-3-scaffold-hint}
 - [x] 1.3: audit warns on trailing comments after := in an existing make/project.mk {#std-1-3-audit-projectmk-comments}
-- [~] 1.3: publish ci-templates v1.3 tag and update CoreLink {#std-1-3-publish}
+- [x] 1.3: publish ci-templates v1.3 tag and update CoreLink {#std-1-3-publish}
 
 ## Workbench {#workbench}
 tech: zsh, Brewfile, defaults, symlinks
