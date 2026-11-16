@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 bats_require_minimum_version 1.5.0
-# The reusable GitHub workflows in ci-templates/.github/workflows/ (v1.0). Parsed with PyYAML and checked on the raw
+# The reusable GitHub workflows in ci-templates/.github/workflows/ (v1.1). Parsed with PyYAML and checked on the raw
 # text, so the comments count too. Nothing here runs a workflow: a real run needs the repo, the secrets and the runners.
 
 WF="$BATS_TEST_DIRNAME/../ci-templates/.github/workflows"
@@ -19,8 +19,8 @@ wf_dir, name = sys.argv[1], sys.argv[2]
 files = sorted(glob.glob(os.path.join(wf_dir, "*.yml")))
 fails = []
 
-KINDS = {"app-android", "app-flutter", "app-tauri", "app-xcode", "arm-gcc", "circuitpython", "cloud-worker",
-         "docker", "espidf", "go", "hardware", "pio", "python", "web-pages", "zephyr"}
+KINDS = {"altium", "app-android", "app-flutter", "app-tauri", "app-xcode", "arm-gcc", "circuitpython", "cloud-worker",
+         "docker", "espidf", "go", "hardware", "mechanical", "pio", "python", "silabs", "web-pages", "zephyr"}
 PINS = {
     "actions/checkout": "3d3c42e5aac5ba805825da76410c181273ba90b1",
     "actions/upload-artifact": "cf430e030ddbb5b0abf93d22962f4752f3646cd9",
@@ -75,10 +75,10 @@ def check_names():
     for f in files:
         first = open(f).readline()
         kind = os.path.basename(f)[:-4]
-        if f"project-standard ci-templates v1.0: {kind}" not in first:
-            fails.append(f"{kind}.yml: header line does not name v1.0 and the kind")
-        if f"workflows/{kind}.yml@v1.0" not in open(f).read():
-            fails.append(f"{kind}.yml: header has no uses: line with @v1.0")
+        if f"project-standard ci-templates v1.1: {kind}" not in first:
+            fails.append(f"{kind}.yml: header line does not name v1.1 and the kind")
+        if f"workflows/{kind}.yml@v1.1" not in open(f).read():
+            fails.append(f"{kind}.yml: header has no uses: line with @v1.1")
 
 
 def check_uses():
@@ -245,7 +245,7 @@ PY
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
 
-@test "there is one workflow per kind, named for the kind, with the v1.0 header and the uses: line" {
+@test "there is one workflow per kind, named for the kind, with the v1.1 header and the uses: line" {
   run check names
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
@@ -367,19 +367,19 @@ PY
 
 @test "the README and the workflows name the public mayankgautam-me/ci-templates, with no Access step for it (1.7)" {
   README="$BATS_TEST_DIRNAME/../ci-templates/README.md"
-  grep -q 'uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.0' "$README"
+  grep -q 'uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.1' "$README"
   [ "$(grep -c '<owner>/ci-templates' "$README")" -eq 0 ]
   [ "$(grep -c 'Accessible from repositories owned by the same user' "$README")" -eq 0 ]
   grep -q 'This repository is public' "$README"
   for f in "$WF"/*.yml; do
-    grep -q "uses: mayankgautam-me/ci-templates/.github/workflows/$(basename "$f")@v1.0" "$f" ||
+    grep -q "uses: mayankgautam-me/ci-templates/.github/workflows/$(basename "$f")@v1.1" "$f" ||
       { echo "$f does not name mayankgautam-me/ci-templates"; false; }
   done
 }
 
-@test "the README documents the v1.0 call shape, the inputs, the secrets and the four variables" {
+@test "the README documents the v1.1 call shape, the inputs, the secrets and the four variables" {
   README="$BATS_TEST_DIRNAME/../ci-templates/README.md"
-  grep -q 'workflows/cloud-worker.yml@v1.0' "$README"
+  grep -q 'workflows/cloud-worker.yml@v1.1' "$README"
   for v in SECRETS_REPO KICAD_LIBRARY_REPO STD_APT_PACKAGES MACOS_CI SECRETS_DEPLOY_KEY SOPS_AGE_KEY KICAD_LIBRARY_DEPLOY_KEY; do
     grep -q "$v" "$README" || { echo "README does not mention $v"; false; }
   done
@@ -418,11 +418,11 @@ sys.exit(1 if fails else 0)
 PY
 }
 
-@test "firmware and hardware build jobs keep their outputs with if-no-files-found: ignore (a part not started yet builds nothing)" {
+@test "firmware, hardware and mechanical build jobs keep their outputs with if-no-files-found: ignore (a part not started yet builds nothing)" {
   python3 - "$WF" <<'PY'
 import os, sys, yaml
 fails = []
-for kind in ("hardware", "zephyr", "espidf", "pio", "arm-gcc", "circuitpython"):
+for kind in ("hardware", "zephyr", "espidf", "pio", "arm-gcc", "circuitpython", "silabs", "mechanical"):
     job = yaml.safe_load(open(os.path.join(sys.argv[1], kind + ".yml")))["jobs"]["build"]
     ups = [s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/upload-artifact@")]
     if not ups:

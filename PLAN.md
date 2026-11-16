@@ -306,6 +306,18 @@ needs: [instructions, detect, bootstrap]
 - [x] CI release jobs extend .std-secrets so SECRETS_DIR is set {#std-ci-secrets-dir}
 - [x] bats: lint for unguarded publishing lines, CI .std-secrets extends, app release refused without CONFIRM; 257 pass; ci-templates need re-publishing to fabrolabs/ci-templates {#std-release-tests}
 - [x] tools.md and SKILL.md: release confirmation, and CONFIRM=erase / CONFIRM=fuse {#std-release-docs}
+- [x] 1.1: silabs firmware kind (Simplicity SDK + WiseConnect, slc, Commander) and upstream Zephyr in the zephyr kind {#std-1-1-silabs}
+- [x] 1.1: <part>-power firmware target (SiLabs AEM, PPK2, Joulescope) {#std-1-1-power}
+- [x] 1.1: altium kind: LFS-locked Altium files, ignore lines, OutJob-based release, CI check {#std-1-1-altium}
+- [x] 1.1: mechanical kind (FreeCAD): check, STEP/STL export, release assets {#std-1-1-mechanical}
+- [x] 1.1: docker/GHCR: registry follows origin's owner, OCI source labels, ghcr login in setup, write:packages check {#std-1-1-ghcr}
+- [x] 1.1: references manifest docs/references.md and make refs-fetch {#std-1-1-refs}
+- [x] 1.1: project-local KiCad library (hardware_LIBRARY := local) and per-project KICAD_LIBRARY_PROJECT {#std-1-1-local-lib}
+- [x] 1.1: audit.sh quotes paths with spaces, better slugs, reports folders with dots and underscores {#std-1-1-audit-fixes}
+- [x] 1.1: adopt from a GitLab origin: create the GitHub repo, mirror branches and LFS, switch origin {#std-1-1-gitlab-move}
+- [x] 1.1: scaffold, standard.md, tools.md, contract.md, SKILL.md, version 1.1, tests {#std-1-1-integrate}
+- [ ] 1.1: publish ci-templates v1.1 tag: waits on your go-ahead {#std-1-1-publish}
+- [ ] Adopt i2sage-technologies/corelink on adopt-standard (gateway; KiCad, silabs firmware, FreeCAD case) {#std-corelink-adopt}
 
 ## Workbench {#workbench}
 tech: zsh, Brewfile, defaults, symlinks

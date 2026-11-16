@@ -1,4 +1,4 @@
-# project-standard v1.0 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.1 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind hardware: a KiCad board (one .kicad_pro per part dir), driven by kicad-cli.
 #
@@ -24,8 +24,12 @@
 #   KICAD_IBOM           InteractiveHtmlBom's generate_interactive_bom.py (found in KiCad's 3rd
 #                        party plugin folder when unset); KICAD_PYTHON runs it
 # Per-part settings (<part>_<VAR>): SEVERITY (--severity-error: warnings do not fail check),
-# TEMPLATE (the skill's
-# templates/hardware). The revision is <dir>/VERSION, else the rev of the board's title block.
+# TEMPLATE (the skill's templates/hardware), LIBRARY (empty: the shared library above; local: the board's own
+# sym-lib-table and fp-lib-table, whose entries point inside the project with ${KIPRJMOD}, are its library: setup and
+# doctor check those tables and need none of the shared library's variables, and CI checks out no KiCad library for
+# the part: scaffold writes `library: local` on its jobs).
+# KICAD_LIBRARY_PROJECT (owner/name of the shared library's repository; make/project.mk wins over the user config,
+# default <owner>/kicad-library) is where make ci-setup adds the KiCad deploy key; doctor prints it. The revision is <dir>/VERSION, else the rev of the board's title block.
 # Outputs go to <dir>/outputs/, the fab zip to <dir>/production/<Board>_v<rev>.zip, a release's files to
 # <dir>/release/<rev>/. make <part>-bump sets VERSION and tags <part>-v<rev>; <part>-release is the GitHub Release.
 
@@ -203,6 +207,38 @@ hw_setup = $(hw_sh) $(hw_lib) prefs="$(KICAD_PREFS)"; P="$(KICAD_LIB_PREFIX)"; \
     mv "$$t.tmp" "$$t"; ok "added $$(grep -c . "$$add") libraries to $$(basename "$$t")"; done; \
   ok "KiCad library setup applied; restart KiCad to load it"
 
+# The project-local library (<part>_LIBRARY := local): the board's sym-lib-table and fp-lib-table, every entry inside the
+# project (${KIPRJMOD}/...) and present. An entry on KiCad's own libraries (${KICAD<n>_...}) is fine; one on the shared
+# library's variables (${<prefix>_...}) or an absolute path is a problem. ok, warn and bad come from hw_sh.
+hw_local_lib = d="$(CURDIR)/$(2)"; \
+  for t in sym-lib-table fp-lib-table; do \
+    if [ ! -f "$$d/$$t" ]; then bad "$(2)/$$t missing: with $(1)_LIBRARY := local the board's own $$t is its library"; continue; fi; \
+    n=0; while IFS= read -r uri; do [ -n "$$uri" ] || continue; n=$$((n + 1)); \
+      case "$$uri" in \
+        '$${KIPRJMOD}'/*) f="$$d/$${uri\#'$${KIPRJMOD}'/}"; [ -e "$$f" ] || bad "$(2)/$$t: $$uri does not exist";; \
+        '$${KICAD'*) ;; \
+        '$${$(KICAD_LIB_PREFIX)_'*) bad "$(2)/$$t: $$uri uses the shared library (with $(1)_LIBRARY := local every entry is under \$${KIPRJMOD})";; \
+        *) warn "$(2)/$$t: $$uri is outside the project (use \$${KIPRJMOD}/...)";; \
+      esac; done < <(sed -n 's/.*(uri "\([^"]*\)").*/\1/p' "$$d/$$t"); \
+    ok "$(2)/$$t: $$n librar$$( [ "$$n" = 1 ] && echo y || echo ies) in the project"; \
+  done;
+
+# doctor's library lines: the board's own tables (LIBRARY=local, checked once the board exists) or the shared library.
+hw_doctor_lib_local = say "library: the board's own tables ($(1)_LIBRARY := local)"; if [ -f "$$1" ]; then $(call hw_local_lib,$(1),$(2)) fi;
+hw_doctor_lib_shared = $(hw_lib) if [ -n "$$lib" ]; then ok "library $$lib (from $$lib_from)"; \
+  else warn "no shared library: KICAD_LIBRARY_DIR is not set in $(STD_CONFIG)/config.mk and KiCad has no $(KICAD_LIB_PREFIX)_LIB_DIR"; fi; \
+  if [ -n "$(KICAD_LIBRARY_PROJECT)" ]; then ok "library repository for CI: $(KICAD_LIBRARY_PROJECT) (from $(STD_KICAD_LIBRARY_PROJECT_FROM))"; fi; \
+  if [ -f "$(KICAD_PREFS)/kicad_common.json" ] && have jq; then \
+    for s in LIB_DIR 3DMODEL_DIR DATASHEET_DIR; do k="$(KICAD_LIB_PREFIX)_$$s"; v=$$(jq -r --arg k "$$k" '.environment.vars[$$k] // empty' "$(KICAD_PREFS)/kicad_common.json"); \
+      if [ -n "$$v" ] && [ -d "$$v" ]; then ok "$$k"; elif [ -n "$$v" ]; then bad "$$k points at $$v, which does not exist"; else bad "$$k not set: make $(1)-setup APPLY=1"; fi; done; \
+  else warn "KiCad $(KICAD_VERSION) preferences not found in $(KICAD_PREFS) (or jq missing)"; fi;
+
+# setup of a part with its own library: check its tables; nothing goes into KiCad's global tables. Not started yet: skipped.
+hw_setup_local = $(hw_sh) $(call std_skip_unstarted,$(1),$(2),library setup) \
+  say "$(1): the board's own library ($(1)_LIBRARY := local): KiCad's global tables and the shared library variables are not needed"; \
+  $(call hw_local_lib,$(1),$(2)) \
+  if [ "$$problems" -eq 0 ]; then ok "$(1): library tables complete"; else die "$(1): $$problems problem(s) in the board's library tables, fixes above"; fi
+
 hw_doctor = $(hw_sh) say "$(1): hardware, KiCad $(KICAD_VERSION)"; \
   if have $(KICAD_CLI); then v=$$($(KICAD_CLI) version 2>/dev/null | head -n 1); \
     case "$$v" in $(KICAD_VERSION)*|$(firstword $(subst ., ,$(KICAD_VERSION))).*) ok "kicad-cli $$v";; *) bad "kicad-cli is $$v, the standard is KiCad $(KICAD_VERSION)";; esac; \
@@ -211,12 +247,7 @@ hw_doctor = $(hw_sh) say "$(1): hardware, KiCad $(KICAD_VERSION)"; \
   if [ -f "$$1" ]; then name=$$(basename "$$1" .kicad_pro); ok "project $(2)/$$name.kicad_pro"; \
     $(hw_locks) if [ -n "$$locks" ]; then warn "KiCad has the project open ($$(echo $$locks | xargs -n 1 basename | tr '\n' ' ')): save before build or release"; fi; \
   else warn "$(1): not started yet (no *.kicad_pro in $(2)): check and build skip it, release refuses; start it with make $(1)-new NAME=..."; fi; \
-  $(hw_lib) if [ -n "$$lib" ]; then ok "library $$lib (from $$lib_from)"; \
-  else warn "no shared library: KICAD_LIBRARY_DIR is not set in $(STD_CONFIG)/config.mk and KiCad has no $(KICAD_LIB_PREFIX)_LIB_DIR"; fi; \
-  if [ -f "$(KICAD_PREFS)/kicad_common.json" ] && have jq; then \
-    for s in LIB_DIR 3DMODEL_DIR DATASHEET_DIR; do k="$(KICAD_LIB_PREFIX)_$$s"; v=$$(jq -r --arg k "$$k" '.environment.vars[$$k] // empty' "$(KICAD_PREFS)/kicad_common.json"); \
-      if [ -n "$$v" ] && [ -d "$$v" ]; then ok "$$k"; elif [ -n "$$v" ]; then bad "$$k points at $$v, which does not exist"; else bad "$$k not set: make $(1)-setup APPLY=1"; fi; done; \
-  else warn "KiCad $(KICAD_VERSION) preferences not found in $(KICAD_PREFS) (or jq missing)"; fi; \
+  $(call hw_doctor_lib_$(if $(filter local,$($(1)_LIBRARY)),local,shared),$(1),$(2)) \
   if [ -n "$(KICAD_IBOM)" ] && [ -f "$(KICAD_IBOM)" ]; then ok "InteractiveHtmlBom"; else warn "InteractiveHtmlBom not found: build skips the iBOM"; fi; \
   if git lfs version >/dev/null 2>&1; then ok "git-lfs"; else warn "git-lfs missing (STEP, WRL and zips go to LFS): brew install git-lfs"; fi; \
   if have gh; then ok "gh (GitHub Release)"; else warn "gh missing, needed by make $(1)-release: brew install gh"; fi; \
@@ -236,6 +267,8 @@ $(1)_SEVERITY ?= --severity-error
 $(1)_START ?= *.kicad_pro
 
 $(1)_TEMPLATE ?= $$(STD_SKILL_DIR)/templates/hardware
+# empty: the shared library (KICAD_LIBRARY_DIR); local: the board's own sym-lib-table and fp-lib-table
+$(1)_LIBRARY ?=
 
 .PHONY: $(1)-doctor $(1)-setup $(1)-check $(1)-build $(1)-release $(1)-clean $(1)-version $(1)-new $(1)-bom $(1)-ibom $(1)-render
 
@@ -243,9 +276,9 @@ $(call std_verb,$(1),doctor,hardware,Check kicad-cli and the library variables a
 $(1)-doctor:
 	@$$(call hw_doctor,$(1),$(2))
 
-$(call std_verb,$(1),setup,hardware,Check KiCad library paths and tables against KICAD_LIBRARY_DIR and APPLY=1 adds what is missing)
+$(call std_verb,$(1),setup,hardware,Check KiCad library paths and tables against KICAD_LIBRARY_DIR and APPLY=1 adds what is missing (LIBRARY=local: the board's own tables))
 $(1)-setup:
-	@$$(call hw_setup,$(1),$(2))
+	@$$(if $$(filter local,$$($(1)_LIBRARY)),$$(call hw_setup_local,$(1),$(2)),$$(call hw_setup,$(1),$(2)))
 
 $(call std_extra,$(1),new,hardware,Start a board from the template NAME= and LAYERS=2 or 4 with JLCPCB rules)
 $(1)-new:

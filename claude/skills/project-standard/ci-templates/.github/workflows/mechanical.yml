@@ -1,0 +1,171 @@
+# project-standard ci-templates v1.1: mechanical (FreeCAD models, headless through freecadcmd).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/mechanical.yml@v1.1.
+#
+# FreeCAD comes from Ubuntu 24.04's own archive (the freecad package, FreeCAD 0.21, with freecadcmd), so the version is
+# the distribution's and not pinned here: a model saved by a newer FreeCAD (1.x) may not open or recompute the same in
+# 0.21. Such a project runs the check on a runner with its FreeCAD (STD_RUNNER) or adds the FreeCAD PPA to the runner.
+# check: open and recompute every model, and Git LFS. build: STEP and STL of every visible body and part, kept 7 days.
+# release (run_release, tags): the build's outputs and the models, NOBUILD=1.
+
+on:
+  workflow_call:
+    inputs:
+      part: { type: string, required: true }
+      part_dir: { type: string, required: true }
+      run_check: { type: boolean, default: true }
+      run_build: { type: boolean, default: true }
+      run_release: { type: boolean, default: false }
+      confirm: { type: string, default: '' }
+      source_run_id: { type: string, default: '' }
+    secrets:
+      SECRETS_DEPLOY_KEY:
+        required: false
+      SOPS_AGE_KEY:
+        required: false
+      KICAD_LIBRARY_DEPLOY_KEY:
+        required: false
+
+jobs:
+  check:
+    if: ${{ inputs.run_check }}
+    runs-on: ${{ vars.STD_RUNNER || 'ubuntu-24.04' }}
+    env:
+      PART: ${{ inputs.part }}
+      PART_DIR: ${{ inputs.part_dir }}
+      STD_APT_PACKAGES: ${{ vars.STD_APT_PACKAGES }}
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Install system packages (apt)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends make git git-lfs freecad ${STD_APT_PACKAGES:-}
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: false
+      - name: Get the Git LFS cache key before anything builds
+        id: lfs-key
+        shell: bash
+        env:
+          KEY: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
+      - name: Keep the Git LFS objects of this part
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .git/lfs
+          key: ${{ steps.lfs-key.outputs.key }}
+          restore-keys: |
+            lfs-${{ inputs.part }}-
+      - name: Get the Git LFS files of this part only
+        shell: bash
+        env:
+          PART_DIR: ${{ inputs.part_dir }}
+        run: |
+          set -euo pipefail
+          git lfs install --local
+          git lfs pull --include "$PART_DIR/**"
+      - name: Check
+        run: make "$PART-check"
+
+  build:
+    if: ${{ inputs.run_build && !failure() && !cancelled() }}
+    needs: check
+    runs-on: ${{ vars.STD_RUNNER || 'ubuntu-24.04' }}
+    env:
+      PART: ${{ inputs.part }}
+      PART_DIR: ${{ inputs.part_dir }}
+      STD_APT_PACKAGES: ${{ vars.STD_APT_PACKAGES }}
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Install system packages (apt)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends make git git-lfs freecad ${STD_APT_PACKAGES:-}
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: false
+      - name: Get the Git LFS cache key before anything builds
+        id: lfs-key
+        shell: bash
+        env:
+          KEY: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
+      - name: Keep the Git LFS objects of this part
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .git/lfs
+          key: ${{ steps.lfs-key.outputs.key }}
+          restore-keys: |
+            lfs-${{ inputs.part }}-
+      - name: Get the Git LFS files of this part only
+        shell: bash
+        env:
+          PART_DIR: ${{ inputs.part_dir }}
+        run: |
+          set -euo pipefail
+          git lfs install --local
+          git lfs pull --include "$PART_DIR/**"
+      - name: Build
+        run: make "$PART-build"
+      - name: Keep outputs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.part }}-outputs
+          path: ${{ inputs.part_dir }}/outputs/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  release:
+    if: ${{ inputs.run_release && !failure() && !cancelled() }}
+    needs: [check, build]
+    runs-on: ${{ vars.STD_RUNNER || 'ubuntu-24.04' }}
+    permissions:
+      actions: read
+      contents: write
+    env:
+      PART: ${{ inputs.part }}
+      PART_DIR: ${{ inputs.part_dir }}
+      STD_APT_PACKAGES: ${{ vars.STD_APT_PACKAGES }}
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - name: Install system packages (apt)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends make git git-lfs zip ${STD_APT_PACKAGES:-}
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: false
+      - name: Get the Git LFS cache key before anything builds
+        id: lfs-key
+        shell: bash
+        env:
+          KEY: lfs-${{ inputs.part }}-${{ hashFiles('.gitattributes') }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
+      - name: Keep the Git LFS objects of this part
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .git/lfs
+          key: ${{ steps.lfs-key.outputs.key }}
+          restore-keys: |
+            lfs-${{ inputs.part }}-
+      - name: Get the Git LFS files of this part only
+        shell: bash
+        env:
+          PART_DIR: ${{ inputs.part_dir }}
+        run: |
+          set -euo pipefail
+          git lfs install --local
+          git lfs pull --include "$PART_DIR/**"
+      - name: Get the outputs from the build job
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.part }}-outputs
+          path: ${{ inputs.part_dir }}/outputs/
+          run-id: ${{ inputs.source_run_id || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Make the GitHub Release files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: make "$PART-github-release" NOBUILD=1

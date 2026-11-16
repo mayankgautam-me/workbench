@@ -1,6 +1,6 @@
 ---
 name: project-standard
-description: One set of `make` commands per stage of work (setup, dev, test, Cloudflare, secrets, deploy, CI, firmware, hardware, apps, release), the same in every project. Use when starting a new project or asked to "set up a project", to "make this project standard", to adopt, update or audit an existing project against the standard, when asked which make command does something, and for secrets, Cloudflare tokens and resources, CI, firmware flashing or KiCad workflow questions in a project whose make/common.mk says "project-standard".
+description: One set of `make` commands per stage of work (setup, dev, test, Cloudflare, secrets, deploy, CI, firmware, hardware, mechanical, apps, release), the same in every project. Use when starting a new project or asked to "set up a project", to "make this project standard", to adopt, update or audit an existing project against the standard, when asked which make command does something, and for secrets, Cloudflare tokens and resources, CI, firmware flashing, KiCad, Altium or FreeCAD workflow questions in a project whose make/common.mk says "project-standard".
 ---
 
 # Project standard
@@ -25,12 +25,14 @@ offer adopt; never change it silently.
      `gh api user --jq .login`. The owner decides the secrets repo: `<owner>/secrets`, checked out at `~/.secrets-<owner>` for
      every owner (`reference/standard.md` 5.1);
    - the parts, each as a name and a kind. Offer the kinds grouped:
-     firmware `zephyr`, `espidf`, `pio`, `arm-gcc`, `circuitpython`; hardware `hardware`;
-     cloud `cloud-worker`, `web-pages`; apps `app-flutter`, `app-tauri`, `app-xcode`,
-     `app-android`; services `docker`, `go`, `python`. Each part's folder is its kind's folder
-     (`firmware/`, `hardware/`, `cloud/`, `web/`, `app/`), or, when the project has several parts of that kind,
+     firmware `zephyr`, `espidf`, `pio`, `arm-gcc`, `circuitpython`, `silabs`; hardware `hardware` (KiCad),
+     `altium`; mechanical `mechanical` (FreeCAD); cloud `cloud-worker`, `web-pages`; apps `app-flutter`, `app-tauri`,
+     `app-xcode`, `app-android`; services `docker`, `go`, `python`. Each part's folder is its kind's folder
+     (`firmware/`, `hardware/`, `mechanical/`, `cloud/`, `web/`, `app/`), or, when the project has several parts of that kind,
      `<kind folder>/<part>/` for each, several firmware parts named for their chips (`firmware/nrf9151/`, `firmware/stm32f042/`): `reference/standard.md` section 1. For firmware ask the board (and the MCU family when it
-     is not obvious from the board). For every `cloud-worker` and `web-pages` part ask whether it has a staging
+     is not obvious from the board; a SiWx917 is `silabs` on the Simplicity SDK, or `zephyr` with `<part>_ZEPHYR` on
+     upstream Zephyr). For a KiCad board ask whether it uses the shared KiCad library or its own (`<part>_LIBRARY :=
+     local`). For every `cloud-worker` and `web-pages` part ask whether it has a staging
      environment (a push to main deploys it) or is production-only (only its tag deploys): never assume either.
      For every `web-pages` part ask its custom domain (production; staging is `<label>-staging.<zone>`): the site is a
      static-assets Worker on that domain, its only address (no `*.workers.dev`, no preview URLs). Use Cloudflare Pages
@@ -89,7 +91,8 @@ offer adopt; never change it silently.
    tasks; mark the scaffold task done and keep it current as work goes.
 9. The scaffold wrote the documents, each with its headings and a one-line hint per section (`reference/standard.md`,
    "Documents"): `docs/README.md` (the index), `docs/architecture.md` (a Mermaid node per part: draw the links
-   with the user), `docs/operations.md` with a cloud-worker, web-pages or docker part, and per part
+   with the user), `docs/operations.md` with a cloud-worker, web-pages or docker part, `docs/references.md` (the
+   datasheets and manuals, one row each, that `make refs-fetch` downloads into the ignored `references/`), and per part
    `<dir>/README.md`, `<dir>/CHANGELOG.md` and the kind's docs in `docs/<part>/`. List them in the report; fill in
    what the user already said (purpose, protocol, board).
 10. Report in a few lines: folder, parts, the docs created, the commands to start with (`make dev`, `make check`).
@@ -118,6 +121,24 @@ Read-only until the user says yes.
      moved by the user with the two commands of 5.4 (the secrets commands print them); never move it yourself. Name both in the plan. With no GitHub `origin`, ask the owner (as in new, step 1)
      and plan the repository the same way as new step 4 (confirm, `gh repo create`, `git remote add origin`) before
      any secret moves; a secrets repo the owner does not have yet is created empty and started by `secrets-init`.
+   - **Origin not on GitHub** (the audit's `repo` error, for example a GitLab `origin`): the project moves to GitHub
+     before any secrets, because its owner, secrets repo and CI follow the GitHub `origin`. Show the user the
+     current remote and the steps, and run them only after the user confirms (it is an outward action):
+     ```sh
+     gh repo create <owner>/<name> --private --description "<one line from the README's first sentence>"
+     git lfs fetch --all origin            # every LFS object of every ref, from the old host
+     git remote rename origin gitlab       # the old remote stays, under its host's name
+     git remote add origin https://github.com/<owner>/<name>.git
+     git push origin --all && git push origin --tags
+     git lfs push --all origin             # the LFS objects the push did not carry
+     ```
+     Then check on GitHub that the branches, tags and LFS files are there. Removing the old remote, or archiving the old
+     project, is the user's decision.
+   - **Altium boards** (kind `altium`): the board folder takes the standard layout (`reference/standard.md` section 1,
+     4.10). `make <part>-layout` in the worktree, after the scaffold, prints the `git mv` commands and the
+     `DocumentPath=` edits of the `.PrjPcb`; apply them there (the user closes Altium first; the `.PrjPcb` is text,
+     the documents are LFS binaries moved as they are), then `make <part>-check` until it passes. Generated
+     `outputs/` and `production/` leave the index with `git rm -r --cached`.
    - **Secrets**: every tracked or local secret file (`.env*`, `.dev.vars`, `.prod.vars`, `secrets/`,
      `keys/`, `*.pem`, `*.p8`, `*.jks`, ...), which env and name each value moves to in
      `<project>/` of the project's secrets repo, and the `secrets.schema` lines that describe them. Never print a
@@ -220,6 +241,14 @@ Read-only until the user says yes.
    repository the audit names (`CI_TEMPLATES_REPO`, default `mayankgautam-me/ci-templates`, independent of
    `GITHUB_OWNER`; a line on the pre-1.7 `<owner>/ci-templates` is reported outdated) and the current version tag
    (`v` + `make/VERSION`); and add jobs for kinds that were added.
+   From v1.0 to v1.1: re-copy the managed files (the bin folder gains `refs.sh` and `ghcr.sh`) and set every `uses:`
+   line to `@v1.1`. `scaffold.sh <worktree> --force` with the project's parts adds what 1.1 needs and changes nothing
+   else: `references/` in `.gitignore`, `docs/references.md`, `*.FCStd` (with a mechanical part) and Altium's LFS lines
+   (with an altium part) in `.gitattributes`, and the missing docs of the new kinds. Add `library: local` by hand to the
+   jobs of a hardware part that sets `<part>_LIBRARY := local` (an existing workflow is kept). A FreeCAD model already
+   committed under `*.FCStd` was routed to LFS only on a Mac: `git add --renormalize .` after the new line, as in adopt.
+   A docker part's images now go to `ghcr.io/<owner>` of the project's owner unless `make/project.mk` sets
+   `DOCKER_REGISTRY`: say so when the old value came from the user config of another owner.
    From v6 to v7: add the documents (`scaffold.sh <worktree> --force` with the project's parts writes only the
    missing ones; move existing docs into the layout first, as in adopt), add the binary documents block to
    `.gitignore`, drop `*.pdf` and `*.xlsx` from `.gitattributes`, `git rm --cached` committed binary documents,

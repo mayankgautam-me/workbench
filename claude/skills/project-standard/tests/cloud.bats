@@ -746,3 +746,144 @@ logline() { local n; n=$(grep -n -m1 -E "$1" "$STUB_LOG" | cut -d: -f1); echo "$
   [ "$status" -eq 0 ]
   grep -q '^npx --no-install astro build$' "$STUB_LOG"
 }
+
+# --- docker kind (the real common.mk, through helpers.bash) --------------------------------------
+
+load helpers
+
+D_A=sha256:$(printf 'a%.0s' {1..64})
+D_B=sha256:$(printf 'b%.0s' {1..64})
+D_C=sha256:$(printf 'c%.0s' {1..64})
+D_D=sha256:$(printf 'd%.0s' {1..64})
+D_E=sha256:$(printf 'e%.0s' {1..64})
+
+# dockerproject: a docker part svc in svc/, origin on GitHub, a docker stub that records argv (and stdin of login)
+dockerproject() {
+  std_setup_env
+  P="$BATS_TEST_TMPDIR/dproj"
+  mkproject "$P" 'PROJECT := demo
+PARTS := svc:docker:svc'
+  cp "$KINDS_SRC/docker.mk" "$P/make/kinds/"
+  cd "$P"
+  mkdir -p svc
+  printf 'FROM scratch\n' >svc/Dockerfile
+  git init -q -b main .
+  git remote add origin git@github.com:Acme-Org/Demo-Repo.git
+  git add -A && git commit -q -m init
+  # buildx is "set up" (the builder file exists), so build and release do not run setup first
+  mkdir -p "$HOME/.docker/buildx/instances"
+  : >"$HOME/.docker/buildx/instances/project-standard"
+  stub_cmd docker 'printf "%s\n" "$@" >>"$STUB_LOG/docker.argv"; printf -- "--\n" >>"$STUB_LOG/docker.argv"
+case "$*" in
+  "buildx build --help") [ -n "${STUB_ANN:-}" ] && echo "      --annotation stringArray"; exit 0 ;;
+  login*) cat >"$STUB_LOG/docker.login.stdin"; exit 0 ;;
+  *"imagetools inspect --raw"*) printf "{\"mediaType\":\"application/vnd.oci.image.index.v1+json\",\"manifests\":[{\"digest\": \"%s\"}]}" "$STUB_CHILD"; exit 0 ;;
+esac
+exit 0'
+}
+
+dargv() { cat "$STUB_LOG/docker.argv" 2>/dev/null; }
+
+@test "docker: build and release carry the OCI labels (source from the origin, revision, version on the tag, created); release annotates the index when buildx can" {
+  dockerproject
+  run make svc-build
+  echo "$output"
+  [ "$status" -eq 0 ]
+  sha=$(git rev-parse HEAD)
+  [[ "$(dargv)" == *$'--label\norg.opencontainers.image.source=https://github.com/acme-org/Demo-Repo\n'* ]] || false
+  [[ "$(dargv)" == *$'--label\norg.opencontainers.image.revision='"$sha"$'\n'* ]] || false
+  [[ "$(dargv)" == *$'--label\norg.opencontainers.image.created='* ]] || false
+  [[ "$(dargv)" != *"image.version"* ]] || false
+  [[ "$(dargv)" != *"--annotation"* ]] || false
+  : >"$STUB_LOG/docker.argv"
+  git tag svc-v1.4.0
+  STUB_ANN=1 run make svc-release
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$(dargv)" == *$'--label\norg.opencontainers.image.version=1.4.0\n'* ]] || false
+  [[ "$(dargv)" == *$'--annotation\nindex:org.opencontainers.image.source=https://github.com/acme-org/Demo-Repo\n'* ]] || false
+  [[ "$(dargv)" == *$'-t\nghcr.io/acme-org/demo/svc:1.4.0\n'* ]] || false
+  [[ "$(dargv)" == *$'--push\n'* ]] || false
+  # in CI the source is the workflow's repository (DOCKER_IMAGE_SOURCE)
+  : >"$STUB_LOG/docker.argv"
+  DOCKER_IMAGE_SOURCE=https://github.com/acme-org/other run make svc-build
+  [[ "$(dargv)" == *"org.opencontainers.image.source=https://github.com/acme-org/other"* ]] || false
+}
+
+@test "docker: setup logs docker in to ghcr.io with the gh token on stdin only, once; never in CI or for another registry" {
+  dockerproject
+  stub_cmd gh 'case "$*" in "auth status") exit 0 ;; "auth token") echo gho_TOPSECRET ;; "api user --jq .login") echo octo ;; *) exit 0 ;; esac'
+  run make svc-setup
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"docker logged in to ghcr.io as octo"* ]] || false
+  [ "$(cat "$STUB_LOG/docker.login.stdin")" = gho_TOPSECRET ]
+  [[ "$(dargv)" == *$'login\nghcr.io\n-u\nocto\n--password-stdin\n'* ]] || false
+  [[ "$(dargv)" != *TOPSECRET* ]] || false
+  [[ "$output" != *TOPSECRET* ]] || false
+  # already logged in: nothing to do
+  printf '{"auths":{"ghcr.io":{}}}\n' >"$HOME/.docker/config.json"
+  rm "$STUB_LOG/docker.login.stdin"
+  run make svc-setup
+  [[ "$output" == *"docker is logged in to ghcr.io"* ]] || false
+  [ ! -f "$STUB_LOG/docker.login.stdin" ]
+  rm "$HOME/.docker/config.json"
+  CI=true run make svc-setup
+  [ ! -f "$STUB_LOG/docker.login.stdin" ]
+  printf 'DOCKER_REGISTRY := registry.example/team\n' >>make/project.mk
+  run make svc-setup
+  [ ! -f "$STUB_LOG/docker.login.stdin" ]
+}
+
+@test "docker: doctor names the registry and warns when the gh token lacks write:packages" {
+  dockerproject
+  stub_cmd gh 'case "$*" in "auth status") echo "  - Token scopes: '"'"'gist'"'"', '"'"'repo'"'"'"; exit 0 ;; *) exit 0 ;; esac'
+  run make svc-doctor
+  echo "$output"
+  [[ "$output" == *"svc: registry ghcr.io/acme-org (from owner)"* ]] || false
+  [[ "$output" == *"lacks the write:packages scope"*"gh auth refresh -s write:packages"* ]] || false
+  stub_cmd gh 'case "$*" in "auth status") echo "  - Token scopes: '"'"'repo'"'"', '"'"'write:packages'"'"'"; exit 0 ;; *) exit 0 ;; esac'
+  run make svc-doctor
+  [[ "$output" == *"has write:packages"* ]] || false
+  [[ "$output" != *"lacks"* ]] || false
+}
+
+@test "docker: prune-images lists old untagged and sha-only versions, keeps tags, young ones and the platform manifests of kept ones; deletes only with CONFIRM=prune" {
+  dockerproject
+  export STUB_CHILD=$D_C
+  cat >"$STUB_LOG/versions" <<EOF
+1 $D_A 2020-01-01T00:00:00Z 1.0.0,production
+2 $D_B 2020-01-02T00:00:00Z 
+3 $D_C 2020-01-01T00:00:00Z 
+4 $D_D 2020-01-03T00:00:00Z 0123456789ab
+5 $D_E 2999-01-01T00:00:00Z 
+EOF
+  stub_cmd gh 'printf "%s\n" "$*" >>"$STUB_LOG/gh.calls"
+case "$*" in
+  "api users/acme-org --jq .type") echo Organization ;;
+  "api --paginate orgs/acme-org/packages/container/demo%2Fsvc/versions?per_page=100 "*) cat "$STUB_LOG/versions" ;;
+  "api -X DELETE "*) exit 0 ;;
+esac'
+  run make svc-prune-images
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$D_B"*"untagged"*"id 2"* ]] || false
+  [[ "$output" == *"$D_D"*"0123456789ab"*"id 4"* ]] || false
+  [[ "$output" != *"id 1"* && "$output" != *"id 3"* && "$output" != *"id 5"* ]] || false
+  [[ "$output" == *"make <part>-prune-images CONFIRM=prune"* ]] || false
+  [[ "$(cat "$STUB_LOG/gh.calls")" != *DELETE* ]] || false
+  [[ "$(dargv)" == *"imagetools"*"ghcr.io/acme-org/demo/svc@$D_A"* ]] || false
+  run make svc-prune-images CONFIRM=yes
+  [ "$status" -ne 0 ]
+  [[ "$(cat "$STUB_LOG/gh.calls")" != *DELETE* ]] || false
+  run make svc-prune-images CONFIRM=prune KEEP_DAYS=7
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c DELETE "$STUB_LOG/gh.calls")" -eq 2 ]
+  grep -q 'api -X DELETE orgs/acme-org/packages/container/demo%2Fsvc/versions/2' "$STUB_LOG/gh.calls"
+  grep -q 'api -X DELETE orgs/acme-org/packages/container/demo%2Fsvc/versions/4' "$STUB_LOG/gh.calls"
+  # the script alone refuses to delete without CONFIRM=prune in its environment
+  run bash make/bin/ghcr.sh prune --image ghcr.io/acme-org/demo/svc --remove
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"needs CONFIRM=prune"* ]] || false
+}

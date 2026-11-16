@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.0 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.1 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Versions, release notes and GitHub Releases of one part. make runs it from the project root.
 #
@@ -135,6 +135,7 @@ replace_file() {
 # The file each kind keeps its version in, relative to the part dir:
 #   firmware kinds   VERSION (Zephyr VERSION_MAJOR/... format, or a plain first line), else version.txt
 #   hardware         VERSION, else the rev of the .kicad_pcb title block (bump then writes VERSION)
+#   altium, mechanical   VERSION (a revision, as hardware; the first bump creates it)
 #   go, docker, cloud-worker, web-pages   VERSION (plain; the first bump creates it)
 #   app-flutter      pubspec.yaml  version: x.y.z+build (bump also counts the build number up)
 #   app-tauri        src-tauri/tauri.conf.json "version" (or the package.json it points to); bump also sets the
@@ -298,12 +299,19 @@ xcode_version() {
   printf '%s\n' "$v"
 }
 
+# is_board_kind: the kind versions a physical revision (hardware, altium, mechanical): a first bump starts at a plain
+# number (1, 2, ...), and each major revision keeps its own files in the latest Release.
+is_board_kind() {
+  case $OPT_KIND in hardware | altium | mechanical) return 0 ;; esac
+  return 1
+}
+
 # current_version: the part's version, empty when it has none yet.
 current_version() {
   local d f v=''
   d=$(pdir)
   case $OPT_KIND in
-    zephyr | espidf | pio | arm-gcc | circuitpython | go | docker | cloud-worker | web-pages)
+    zephyr | espidf | pio | arm-gcc | circuitpython | silabs | go | docker | cloud-worker | web-pages | altium | mechanical)
       f=$(plain_file)
       [[ -z $f ]] || v=$(read_plain "$f")
       ;;
@@ -429,7 +437,7 @@ set_version() {
   local v=$1 d f code
   d=$(pdir)
   case $OPT_KIND in
-    zephyr | espidf | pio | arm-gcc | circuitpython | go | docker | cloud-worker | web-pages | hardware)
+    zephyr | espidf | pio | arm-gcc | circuitpython | silabs | go | docker | cloud-worker | web-pages | hardware | altium | mechanical)
       f=$(plain_file)
       if [[ -z $f ]]; then
         f="$d/VERSION"
@@ -593,7 +601,7 @@ cmd_bump() {
       *) die "LEVEL=$OPT_LEVEL: use patch, minor or major" ;;
     esac
     if [[ -z $cur ]]; then
-      if [[ $OPT_KIND == hardware ]]; then cur=0; else cur=0.0.0; fi
+      if is_board_kind; then cur=0; else cur=0.0.0; fi
     else
       valid_version "$cur" || die "$OPT_PART: the current version '$cur' is not x.y.z: give the new one with VERSION="
     fi
@@ -876,8 +884,8 @@ cmd_create() {
 # version to the next, so a link to .../releases/download/latest/<file> always gets the newest:
 #   the version is taken out of the name (app-1.0.0-linux-amd64.deb -> app-linux-amd64.deb) and the group is put in
 #   front when the name does not start with it (rev4-firmware.bin -> firmware-rev4-firmware.bin).
-# A group is the part, or for a hardware part the part and its major version (hardware-v3, hardware-v4): each board
-# revision keeps its own files. The part's SHA256SUMS files are left out; <group>-SHA256SUMS checks the group's files
+# A group is the part, or for a hardware, altium or mechanical part the part and its major version (hardware-v3,
+# hardware-v4): each board revision keeps its own files. The part's SHA256SUMS files are left out; <group>-SHA256SUMS checks the group's files
 # under their new names. The Release body is a table of the groups, and one line per group that this script reads back:
 #   <!-- latest GROUP VERSION DATE TAG URL FILE... -->
 
@@ -896,7 +904,7 @@ ver_lt() {
 }
 
 latest_group() {
-  if [[ $OPT_KIND == hardware ]]; then
+  if is_board_kind; then
     printf '%s-v%s\n' "$OPT_PART" "${OPT_VERSION%%.*}"
   else
     printf '%s\n' "$OPT_PART"

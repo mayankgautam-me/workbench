@@ -1,16 +1,19 @@
-# project-standard v1.0 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.1 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind zephyr: a Zephyr / nRF Connect SDK firmware part (west, sysbuild, MCUboot).
 #
 # make/project.mk declares it as   <name>:zephyr[:<dir>]   and sets at least <name>_BOARD.
 # NCS and the Zephyr SDK are pinned per part and installed once into $(STD_TOOLCHAINS)/ncs-<ver> and
 # $(STD_TOOLCHAINS)/zephyr-sdk-<ver>, shared across projects; two versions live side by side.
+# Upstream Zephyr instead of NCS: set <name>_ZEPHYR := v4.3.0 (and no <name>_NCS). The workspace is then
+# west init -m https://github.com/zephyrproject-rtos/zephyr --mr <ver> in $(STD_TOOLCHAINS)/zephyr-<ver>;
+# everything else (venv, Zephyr SDK, build, flash, release) is the same. NCS stays the default.
 # In the nRF Connect SDK toolchain image (CI) only the NCS source tree is fetched; see zephyr_image_env.
 # The MCUboot signing key never touches the project: it is decrypted from the secrets repo into a
 # temporary file for the one west build that signs (secrets.sh with-file), then removed.
 
 # --- shared firmware helpers --------------------------------------------------------------------
-# The same block is in every firmware kind (zephyr, espidf, pio, arm-gcc, circuitpython); the first
+# The same block is in every firmware kind (zephyr, espidf, pio, arm-gcc, circuitpython, silabs); the first
 # kind included defines it. Helpers are recursive variables expanded when a recipe runs, called as
 # $(call name,part,dir,...). They are shell text: one line, `$$` for the shell, no `#`.
 ifndef STD_FW_HELPERS
@@ -144,9 +147,12 @@ endif
 # --- zephyr helpers -----------------------------------------------------------------------------
 
 zephyr_ncs_repo = https://github.com/nrfconnect/sdk-nrf
+zephyr_upstream_repo = https://github.com/zephyrproject-rtos/zephyr
+# 1 when the part builds on upstream Zephyr (<part>_ZEPHYR set), empty for NCS
+zephyr_up = $(if $(strip $($(1)_ZEPHYR)),1)
 
 # $(call zephyr_env,part): the pinned NCS + Zephyr SDK environment in the current shell.
-zephyr_env = [ -f "$($(1)_NCS_DIR)/zephyr/zephyr-env.sh" ] || die "nRF Connect SDK $($(1)_NCS) is not in $($(1)_NCS_DIR): run make $(1)-setup"; \
+zephyr_env = [ -f "$($(1)_NCS_DIR)/zephyr/zephyr-env.sh" ] || die "$($(1)_SRC) is not in $($(1)_NCS_DIR): run make $(1)-setup"; \
   $(call zephyr_image_env,$(1)) \
   export ZEPHYR_TOOLCHAIN_VARIANT=zephyr; \
   if [ -d "$($(1)_SDK_DIR)" ]; then export ZEPHYR_SDK_INSTALL_DIR="$($(1)_SDK_DIR)"; \
@@ -217,21 +223,27 @@ zephyr_setup = $(STD_FW_SH) ncs="$($(1)_NCS_DIR)"; sdk="$($(1)_SDK_DIR)"; image=
   $(STD_TC) sdk-begin "$$ncs" || true; \
   for t in cmake ninja dtc gperf git; do have $$t || die "$$t not found: brew install $$t (the Brewfile has it)"; done; \
   if [ -n "$$image" ]; then west=west; else { $(call zephyr_setup_venv,$(1)) }; fi; \
-  if [ ! -d "$$ncs/.west" ]; then say "west init nRF Connect SDK $($(1)_NCS) in $$ncs (shallow)"; mkdir -p "$$ncs"; \
-    [ -f "$$ncs/nrf/west.yml" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch "$($(1)_NCS)" $(zephyr_ncs_repo) "$$ncs/nrf"; \
-    "$$west" init -l "$$ncs/nrf"; fi; \
+  if [ ! -d "$$ncs/.west" ]; then { $(call $(if $(call zephyr_up,$(1)),zephyr_init_upstream,zephyr_init_ncs),$(1)) }; fi; \
   if [ ! -f "$$ncs/.std-updated" ]; then say "west update (shallow) in $$ncs"; (cd "$$ncs" && "$$west" update --narrow -o=--depth=1) && touch "$$ncs/.std-updated"; fi; \
-  if [ -x "$$ncs/.venv/bin/pip" ] && [ ! -f "$$ncs/.venv/.std-requirements" ]; then say "python requirements of zephyr, nrf and mcuboot"; \
-    "$$ncs/.venv/bin/pip" install -q -r "$$ncs/zephyr/scripts/requirements.txt" -r "$$ncs/nrf/scripts/requirements.txt" -r "$$ncs/bootloader/mcuboot/scripts/requirements.txt" && touch "$$ncs/.venv/.std-requirements"; fi; \
+  if [ -x "$$ncs/.venv/bin/pip" ] && [ ! -f "$$ncs/.venv/.std-requirements" ]; then say "python requirements of $(if $(call zephyr_up,$(1)),zephyr,zephyr and nrf and mcuboot)"; \
+    "$$ncs/.venv/bin/pip" install -q -r "$$ncs/zephyr/scripts/requirements.txt" $(if $(call zephyr_up,$(1)),,-r "$$ncs/nrf/scripts/requirements.txt" -r "$$ncs/bootloader/mcuboot/scripts/requirements.txt") && touch "$$ncs/.venv/.std-requirements"; fi; \
   want=$$(cat "$$ncs/zephyr/SDK_VERSION" 2>/dev/null || true); \
   if [ -n "$$image" ]; then \
     got=$$(cat "$$ZEPHYR_SDK_INSTALL_DIR/sdk_version" 2>/dev/null || true); ok "Zephyr SDK $${got:-?} of the image ($$ZEPHYR_SDK_INSTALL_DIR)"; \
-    if [ -n "$$want" ] && [ -n "$$got" ] && [ "$$want" != "$$got" ]; then warn "NCS $($(1)_NCS) asks for Zephyr SDK $$want, the image has $$got"; fi; \
+    if [ -n "$$want" ] && [ -n "$$got" ] && [ "$$want" != "$$got" ]; then warn "$($(1)_SRC) asks for Zephyr SDK $$want, the image has $$got"; fi; \
   else { $(call zephyr_setup_sdk,$(1)) }; \
-    if [ -n "$$want" ] && [ "$$want" != "$($(1)_ZEPHYR_SDK)" ]; then warn "NCS $($(1)_NCS) asks for Zephyr SDK $$want, $(1)_ZEPHYR_SDK is $($(1)_ZEPHYR_SDK)"; fi; \
+    if [ -n "$$want" ] && [ "$$want" != "$($(1)_ZEPHYR_SDK)" ]; then warn "$($(1)_SRC) asks for Zephyr SDK $$want, $(1)_ZEPHYR_SDK is $($(1)_ZEPHYR_SDK)"; fi; \
     $(STD_TC) sdk-use "$$ncs" "$$sdk" || true; \
   fi; \
-  ok "$(1): nRF Connect SDK $($(1)_NCS) in $$ncs"
+  ok "$(1): $(if $(call zephyr_up,$(1)),Zephyr $($(1)_ZEPHYR),nRF Connect SDK $($(1)_NCS)) in $$ncs"
+
+# The manifest of the workspace, before its first west update. NCS: sdk-nrf at the pinned tag, cloned with depth 1.
+zephyr_init_ncs = say "west init nRF Connect SDK $($(1)_NCS) in $$ncs (shallow)"; mkdir -p "$$ncs"; \
+  [ -f "$$ncs/nrf/west.yml" ] || git -c advice.detachedHead=false clone -q --depth 1 --branch "$($(1)_NCS)" $(zephyr_ncs_repo) "$$ncs/nrf"; \
+  "$$west" init -l "$$ncs/nrf";
+# Upstream Zephyr: west clones the zephyr manifest repo at the pinned tag into $$ncs/zephyr.
+zephyr_init_upstream = say "west init Zephyr $($(1)_ZEPHYR) in $$ncs"; mkdir -p "$$ncs"; \
+  "$$west" init -m $(zephyr_upstream_repo) --mr "$($(1)_ZEPHYR)" "$$ncs";
 
 # Ready for std_ready, the same conditions zephyr_setup leaves: the NCS workspace of the pinned version is updated
 # (.std-updated), and the toolchain is reachable: the nRF Connect SDK image's (TOOLCHAIN_ENV, CI), or the venv's west
@@ -242,10 +254,10 @@ zephyr_ready = ncs="$($(1)_NCS_DIR)"; [ -f "$$ncs/.std-updated" ] || exit 1; \
   [ ! -x "$$ncs/.venv/bin/pip" ] || [ -f "$$ncs/.venv/.std-requirements" ] || exit 1; \
   [ -d "$($(1)_SDK_DIR)" ] || [ -d "$${ZEPHYR_SDK_INSTALL_DIR:-/nonexistent}" ]
 
-zephyr_doctor = $(STD_FW_SH) say "$(1): zephyr, NCS $($(1)_NCS), Zephyr SDK $($(1)_ZEPHYR_SDK), probe $($(1)_P)"; \
+zephyr_doctor = $(STD_FW_SH) say "$(1): zephyr, $($(1)_SRC), Zephyr SDK $($(1)_ZEPHYR_SDK), probe $($(1)_P)"; \
   if [ -f "$($(1)_TOOLCHAIN_ENV)" ]; then $(call zephyr_image_env,$(1)) ok "toolchain of the nRF Connect SDK image ($($(1)_TOOLCHAIN_ENV))"; fi; \
   for t in cmake ninja dtc gperf; do if have $$t; then ok "$$t"; else bad "$$t: brew install $$t"; fi; done; \
-  if [ -f "$($(1)_NCS_DIR)/zephyr/zephyr-env.sh" ]; then ok "NCS $($(1)_NCS_DIR)"; else bad "NCS $($(1)_NCS) missing: make $(1)-setup"; fi; \
+  if [ -f "$($(1)_NCS_DIR)/zephyr/zephyr-env.sh" ]; then ok "$(firstword $($(1)_SRC)) $($(1)_NCS_DIR)"; else bad "$($(1)_SRC) missing: make $(1)-setup"; fi; \
   if [ -x "$($(1)_NCS_DIR)/.venv/bin/west" ] || have west; then ok "west"; else bad "west missing: make $(1)-setup"; fi; \
   if [ -d "$($(1)_SDK_DIR)" ] || [ -d "$${ZEPHYR_SDK_INSTALL_DIR:-/nonexistent}" ]; then ok "Zephyr SDK $($(1)_ZEPHYR_SDK)"; else bad "Zephyr SDK $($(1)_ZEPHYR_SDK) missing: make $(1)-setup"; fi; \
   $(call std_doctor_started,$(1),$(2)) \
@@ -258,7 +270,8 @@ zephyr_doctor = $(STD_FW_SH) say "$(1): zephyr, NCS $($(1)_NCS), Zephyr SDK $($(
     openocd) if have openocd; then ok "openocd"; else bad "openocd: brew install openocd"; fi; \
       if [ -z "$($(1)_OPENOCD_ARGS)" ]; then warn "$(1)_OPENOCD_ARGS is empty (west runner defaults apply)"; fi;; \
     nrfutil) if have nrfutil; then ok "nrfutil"; else bad "nrfutil: install it from Nordic (nrfutil) and add the device command"; fi;; \
-    *) bad "PROBE=$($(1)_P): use probe-rs, jlink, openocd or nrfutil";; \
+    commander) if have commander; then ok "Simplicity Commander"; else bad "commander (Simplicity Commander) not on PATH: install it from Silicon Labs"; fi;; \
+    *) bad "PROBE=$($(1)_P): use probe-rs, jlink, openocd, nrfutil or commander";; \
   esac; \
   if [ "$($(1)_MCUBOOT)" = 1 ]; then $(call std_fw_key_check,$(1),$($(1)_KEY)) fi; \
   if have tio; then ok "tio (monitor)"; else warn "tio missing, needed by make $(1)-monitor: brew install tio"; fi; \
@@ -266,9 +279,9 @@ zephyr_doctor = $(STD_FW_SH) say "$(1): zephyr, NCS $($(1)_NCS), Zephyr SDK $($(
   $(call std_fw_doctor_end,$(1))
 
 zephyr_update = $(STD_FW_SH) \
-  if [ -n "$(TO)" ]; then $(call std_fw_pin,$(1)_NCS,$(TO)) $(if $(SDK),$(call std_fw_pin,$(1)_ZEPHYR_SDK,$(SDK))) $(MAKE) --no-print-directory $(1)-setup; \
-  else say "$(1): NCS $($(1)_NCS), Zephyr SDK $($(1)_ZEPHYR_SDK). Latest nRF Connect SDK releases:"; \
-    git ls-remote --tags --refs $(zephyr_ncs_repo) 'v*' | sed 's|.*refs/tags/||' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$$' | sort -V | tail -n 5; \
+  if [ -n "$(TO)" ]; then $(call std_fw_pin,$(1)_$(if $(call zephyr_up,$(1)),ZEPHYR,NCS),$(TO)) $(if $(SDK),$(call std_fw_pin,$(1)_ZEPHYR_SDK,$(SDK))) $(MAKE) --no-print-directory $(1)-setup; \
+  else say "$(1): $($(1)_SRC), Zephyr SDK $($(1)_ZEPHYR_SDK). Latest $(if $(call zephyr_up,$(1)),Zephyr,nRF Connect SDK) releases:"; \
+    git ls-remote --tags --refs $(if $(call zephyr_up,$(1)),$(zephyr_upstream_repo),$(zephyr_ncs_repo)) 'v*' | sed 's|.*refs/tags/||' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$$' | sort -V | tail -n 5; \
     say "pin one with make $(1)-update TO=vX.Y.Z [SDK=0.17.x] (the SDK the release asks for is in zephyr/SDK_VERSION), then commit make/project.mk"; fi
 
 zephyr_flash = $(STD_FW_SH) $(call zephyr_need_build,$(1)) \
@@ -278,7 +291,8 @@ zephyr_flash = $(STD_FW_SH) $(call zephyr_need_build,$(1)) \
       probe-rs download --chip "$($(1)_CHIP)" $(call zephyr_probe_sel,$(1)) --verify --binary-format hex "$$hex"; \
       probe-rs reset --chip "$($(1)_CHIP)" $(call zephyr_probe_sel,$(1));; \
     jlink|openocd|nrfutil) $(call zephyr_env,$(1)) west flash --skip-rebuild -d "$$b" -r "$($(1)_P)" $($(1)_FLASH_ARGS);; \
-    *) die "PROBE=$($(1)_P): zephyr flashes with probe-rs, jlink, openocd or nrfutil";; \
+    commander) $(call zephyr_env,$(1)) west flash --skip-rebuild -d "$$b" -r silabs_commander $($(1)_FLASH_ARGS);; \
+    *) die "PROBE=$($(1)_P): zephyr flashes with probe-rs, jlink, openocd, nrfutil or commander";; \
   esac; \
   ok "flashed $$hex"
 
@@ -288,7 +302,8 @@ zephyr_erase = $(STD_FW_SH) \
     jlink|nrfutil) have nrfutil || die "nrfutil not found: install it from Nordic"; nrfutil device erase --all;; \
     openocd) [ -n "$($(1)_OPENOCD_ARGS)" ] || die "set $(1)_OPENOCD_ARGS to the interface and target -f files"; \
       openocd $($(1)_OPENOCD_ARGS) -c 'init; reset halt; flash erase_sector 0 0 last; shutdown';; \
-    *) die "PROBE=$($(1)_P): zephyr erases with probe-rs, jlink, openocd or nrfutil";; \
+    commander) have commander || die "commander (Simplicity Commander) not found: install it from Silicon Labs"; commander device masserase $(if $($(1)_DEVICE),--device "$($(1)_DEVICE)");; \
+    *) die "PROBE=$($(1)_P): zephyr erases with probe-rs, jlink, openocd, nrfutil or commander";; \
   esac; \
   ok "$(1): chip erased"
 
@@ -334,11 +349,99 @@ zephyr_release_assets = $(STD_FW_SH) $(call zephyr_need_build,$(1)) $(call std_r
   need "$$app/zephyr.elf"; opt "$$app/zephyr.map"; \
   $(std_rel_end)
 
+# --- energy profiling ----------------------------------------------------------------------------
+# The same block is in zephyr and silabs; the first kind included defines it.
+ifndef STD_FW_POWER
+STD_FW_POWER := 1
+# $(call std_fw_power_summary,part,dir), after $$csv (time_s,current_mA,voltage_V) is written: the sample count, the
+# duration, the average, minimum and maximum current (and the average power when the voltage is known), printed and
+# kept in <dir>/build/power.txt.
+std_fw_power_summary = [ -s "$$csv" ] || die "no samples in $$csv"; \
+  awk -F, 'NR > 1 && $$2 != "" { n++; c = $$2 + 0; s += c; if (n == 1 || c < mn) mn = c; if (n == 1 || c > mx) mx = c; \
+      if ($$3 != "") { v += $$3; nv++ }; t = $$1 } \
+    END { if (!n) { print "no samples"; exit 1 }; printf "samples   %d over %.1f s\navg       %.4f mA\nmin       %.4f mA\nmax       %.4f mA\n", n, t, s / n, mn, mx; \
+      if (nv) printf "voltage   %.3f V (avg)\npower     %.3f mW (avg)\n", v / nv, (s / n) * (v / nv) }' "$$csv" | tee "$${csv%.csv}.txt"; \
+  ok "$(1): samples in $(2)/build/power.csv, summary in $(2)/build/power.txt"
+endif
+
+# The PPK2 capture (python ppk2-api by IRNAS): source meter at STD_PW_MV (or the ampere meter), the mean of each read
+# written as one row, for STD_PW_SECONDS. Run as "$$py" -c "$$STD_PW_PPK2_PY" with the STD_PW_* variables set.
+define STD_PW_PPK2_PY
+import csv, os, sys, time
+from ppk2_api.ppk2_api import PPK2_API
+port = os.environ.get("STD_PW_PORT", "")
+if not port:
+    devs = [d[0] if isinstance(d, (list, tuple)) else d for d in PPK2_API.list_devices()]
+    if len(devs) != 1:
+        sys.stderr.write("error %d PPK2 connected %s: pass PORT=\n" % (len(devs), devs))
+        sys.exit(1)
+    port = devs[0]
+mv = int(os.environ["STD_PW_MV"])
+ampere = os.environ.get("STD_PW_MODE") == "ampere"
+ppk = PPK2_API(port, timeout=1, write_timeout=1, exclusive=True)
+ppk.get_modifiers()
+ppk.set_source_voltage(mv)
+if ampere:
+    ppk.use_ampere_meter()
+else:
+    ppk.use_source_meter()
+    ppk.toggle_DUT_power("ON")
+ppk.start_measuring()
+t0 = time.time()
+end = t0 + float(os.environ["STD_PW_SECONDS"])
+with open(os.environ["STD_PW_CSV"], "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(["time_s", "current_mA", "voltage_V"])
+    while time.time() < end:
+        data = ppk.get_data()
+        if data:
+            r = ppk.get_samples(data)
+            samples = r[0] if isinstance(r, tuple) else r
+            if samples:
+                w.writerow(["%.3f" % (time.time() - t0), "%.6f" % (sum(samples) / len(samples) / 1000.0), "" if ampere else "%.3f" % (mv / 1000.0)])
+        time.sleep(0.01)
+ppk.stop_measuring()
+endef
+export STD_PW_PPK2_PY
+
+# The Joulescope capture (python joulescope, the pyjoulescope v1 API): STD_PW_SECONDS of contiguous data at STD_PW_RATE.
+define STD_PW_JS_PY
+import csv, os
+import joulescope
+dur = float(os.environ["STD_PW_SECONDS"])
+rate = int(os.environ["STD_PW_RATE"])
+with joulescope.scan_require_one(config="auto") as js:
+    js.parameter_set("sampling_frequency", rate)
+    data = js.read(contiguous_duration=dur)
+with open(os.environ["STD_PW_CSV"], "w", newline="") as f:
+    w = csv.writer(f)
+    w.writerow(["time_s", "current_mA", "voltage_V"])
+    for i, row in enumerate(data):
+        w.writerow(["%.6f" % (i / rate), "%.6f" % (row[0] * 1000.0), "%.4f" % row[1]])
+endef
+export STD_PW_JS_PY
+
+# $(call zephyr_power,part,dir): POWER=ppk2 (Nordic Power Profiler Kit II through ppk2-api) or joulescope, both through
+# <part>_POWER_PYTHON; the samples go to <dir>/build/power.csv, then the summary.
+zephyr_power = $(STD_FW_SH) out="$(CURDIR)/$(2)/build"; mkdir -p "$$out"; csv="$$out/power.csv"; \
+  py="$($(1)_POWER_PYTHON)"; have "$$py" || die "$$py not found: set $(1)_POWER_PYTHON to the python that has the $($(1)_PW) package"; \
+  export STD_PW_CSV="$$csv" STD_PW_SECONDS="$($(1)_PW_S)" STD_PW_RATE="$($(1)_POWER_RATE)" STD_PW_MV="$($(1)_POWER_MV)" STD_PW_MODE="$($(1)_POWER_MODE)" STD_PW_PORT="$(PORT)"; \
+  case "$($(1)_PW)" in \
+    ppk2) "$$py" -c 'import ppk2_api' >/dev/null 2>&1 || die "ppk2-api is not installed for $$py: $$py -m pip install ppk2-api (or set $(1)_POWER_PYTHON to a python that has it)"; \
+      say "PPK2 $($(1)_POWER_MODE) meter at $($(1)_POWER_MV) mV for $($(1)_PW_S) s"; "$$py" -c "$$STD_PW_PPK2_PY";; \
+    joulescope) "$$py" -c 'import joulescope' >/dev/null 2>&1 || die "joulescope is not installed for $$py: $$py -m pip install joulescope (or set $(1)_POWER_PYTHON to a python that has it)"; \
+      say "Joulescope at $($(1)_POWER_RATE) Hz for $($(1)_PW_S) s"; "$$py" -c "$$STD_PW_JS_PY";; \
+    *) die "POWER=$($(1)_PW): zephyr measures with ppk2 or joulescope";; \
+  esac; \
+  $(call std_fw_power_summary,$(1),$(2))
+
+
 # --- the kind -----------------------------------------------------------------------------------
 #
 # Per-part settings (make/project.mk, <part>_<VAR>), with their defaults:
 #   BOARD          board target, for example nrf9151dk/nrf9151/ns (BOARD= on the command line wins)
 #   NCS            v3.2.1   nRF Connect SDK, in $(STD_TOOLCHAINS)/ncs-<ver>, shared across projects
+#   ZEPHYR         (unset)  upstream Zephyr tag instead of NCS, for example v4.3.0, in $(STD_TOOLCHAINS)/zephyr-<ver>
 #   ZEPHYR_SDK     0.17.4   Zephyr SDK, in $(STD_TOOLCHAINS)/zephyr-sdk-<ver>
 #   SDK_TOOLCHAINS arm-zephyr-eabi   toolchains the SDK setup installs
 #   TOOLCHAIN_ENV  /opt/toolchain-env.sh   environment script of the nRF Connect SDK toolchain image; where it
@@ -346,7 +449,8 @@ zephyr_release_assets = $(STD_FW_SH) $(call zephyr_need_build,$(1)) $(call std_r
 #   SYSBUILD 1, MCUBOOT 1   sysbuild with MCUboot; the image is signed with the key KEY (mcuboot)
 #                           from the secrets repo; SIGNING_KEY=path uses a local key file instead
 #   APP            the app image name in a sysbuild build (default: the part dir's name)
-#   PROBE          probe-rs  probe-rs, jlink, openocd or nrfutil (PROBE= on the command line wins)
+#   PROBE          probe-rs  probe-rs, jlink, openocd, nrfutil or commander (Simplicity Commander through
+#                  west's silabs_commander runner, for SiWx917; DEVICE is its --device for erase)
 #   CHIP           probe-rs chip name, for example nRF9151_xxAA;  PROBE_ID  probe-rs --probe value
 #   OPENOCD_ARGS   -f files for openocd erase;  FLASH_ARGS  extra west flash arguments
 #   WEST_ARGS, CMAKE_ARGS   extra west build arguments, before and after `--`
@@ -355,6 +459,9 @@ zephyr_release_assets = $(STD_FW_SH) $(call zephyr_need_build,$(1)) $(call std_r
 #   PROVISION      shell command for make <part>-provision SERIAL=... (default: flash only)
 #   OTA_BUCKET     $(OTA_BUCKET) from make/project.mk;  OTA_PREFIX  <project>/<part>/<env>;  WRANGLER  npx --yes wrangler@4
 #   RELEASE_HOOK   shell command run after a release upload (VERSION SHA256 OTA_KEY OTA_FILE set)
+#   POWER          ppk2     energy profiler for make <part>-power: ppk2 (ppk2-api) or joulescope (POWER= wins)
+#   POWER_PYTHON   python3  the python with ppk2-api or joulescope;  POWER_S 10  seconds (DURATION= wins)
+#   POWER_MV 3300, POWER_MODE source (or ampere), POWER_RATE 1000 Hz (joulescope)
 # Builds go to <dir>/build/<board with / as _>; `make <part>-check` builds with warnings as errors
 # into <dir>/build/check-<board> (MCUboot's own development key, no secrets) and runs twister on
 # <dir>/tests with native_sim on Linux.
@@ -363,6 +470,8 @@ define kind_zephyr
 # the part is started once its folder has its CMakeLists.txt (std_started in common.mk): until then setup, check and build
 # skip it and flash and release refuse
 $(1)_START ?= CMakeLists.txt
+$(if $(and $(strip $($(1)_ZEPHYR)),$(filter file command line environment override,$(origin $(1)_NCS))),$(error $(1): set $(1)_ZEPHYR (upstream Zephyr) or $(1)_NCS (nRF Connect SDK) in make/project.mk, not both))
+$(1)_ZEPHYR ?=
 $(1)_NCS ?= v3.2.1
 $(1)_ZEPHYR_SDK ?= 0.17.4
 $(1)_SDK_TOOLCHAINS ?= arm-zephyr-eabi
@@ -390,20 +499,31 @@ STD_HELP_HIDE += $$(if $$(strip $$($(1)_OTA_BUCKET)),,$(1)-release)
 $(1)_OTA_PREFIX ?= $$(PROJECT)/$(1)/$$(ENV)
 $(1)_WRANGLER ?= npx --yes wrangler@4
 $(1)_RELEASE_HOOK ?=
-$(1)_NCS_DIR ?= $$(STD_TOOLCHAINS)/ncs-$$($(1)_NCS)
+# the west workspace: NCS, or upstream Zephyr when $(1)_ZEPHYR is set (the name is kept for CI and existing projects)
+$(1)_NCS_DIR ?= $$(STD_TOOLCHAINS)/$$(if $$(strip $$($(1)_ZEPHYR)),zephyr-$$($(1)_ZEPHYR),ncs-$$($(1)_NCS))
+$(1)_SRC = $$(if $$(strip $$($(1)_ZEPHYR)),Zephyr $$($(1)_ZEPHYR),NCS $$($(1)_NCS))
+$(1)_DEVICE ?=
+$(1)_POWER ?= ppk2
+$(1)_POWER_PYTHON ?= python3
+$(1)_POWER_S ?= 10
+$(1)_POWER_MV ?= 3300
+$(1)_POWER_MODE ?= source
+$(1)_POWER_RATE ?= 1000
+$(1)_PW = $$(or $$(POWER),$$($(1)_POWER))
+$(1)_PW_S = $$(or $$(DURATION),$$($(1)_POWER_S))
 $(1)_SDK_DIR ?= $$(STD_TOOLCHAINS)/zephyr-sdk-$$($(1)_ZEPHYR_SDK)
 $(1)_B = $$(or $$(BOARD),$$($(1)_BOARD))
 $(1)_P = $$(or $$(PROBE),$$($(1)_PROBE))
 $(1)_BUILD = $$(CURDIR)/$(2)/build/$$(subst /,_,$$($(1)_B))
 $(1)_CHECK_BUILD = $$(CURDIR)/$(2)/build/check-$$(subst /,_,$$($(1)_B))
 
-.PHONY: $(1)-release-run $(1)-doctor $(1)-setup $(1)-update $(1)-check $(1)-build $(1)-clean $(1)-distclean $(1)-flash $(1)-erase $(1)-monitor $(1)-debug $(1)-release $(1)-version $(1)-size $(1)-config $(1)-keygen $(1)-provision $(1)-recover
+.PHONY: $(1)-release-run $(1)-doctor $(1)-setup $(1)-update $(1)-check $(1)-build $(1)-clean $(1)-distclean $(1)-flash $(1)-erase $(1)-monitor $(1)-debug $(1)-release $(1)-version $(1)-size $(1)-config $(1)-keygen $(1)-provision $(1)-recover $(1)-power
 
 $(call std_verb,$(1),doctor,firmware,Check NCS and Zephyr SDK and probe and signing key and ports read only)
 $(1)-doctor:
 	@$$(call zephyr_doctor,$(1),$(2))
 
-$(call std_verb,$(1),setup,firmware,Install NCS $$($(1)_NCS) and Zephyr SDK $$($(1)_ZEPHYR_SDK) into $$(STD_TOOLCHAINS) shared)
+$(call std_verb,$(1),setup,firmware,Install $$($(1)_SRC) and Zephyr SDK $$($(1)_ZEPHYR_SDK) into $$(STD_TOOLCHAINS) shared)
 $(1)-setup:
 	@$$(call std_skip_unstarted,$(1),$(2),setup) $$(call zephyr_setup,$(1),$(2))
 
@@ -411,7 +531,7 @@ $(1)-setup:
 # in common.mk). release, release-assets and provision build or flash through the targets below.
 $(call std_ready,$(1),$(2),zephyr_ready,check build flash debug size config)
 
-$(call std_verb,$(1),update,firmware,List NCS releases or pin TO=vX.Y.Z [SDK=] in make/project.mk and set up)
+$(call std_verb,$(1),update,firmware,List NCS or Zephyr releases or pin TO=vX.Y.Z [SDK=] in make/project.mk and set up)
 $(1)-update:
 	@$$(call zephyr_update,$(1),$(2))
 
@@ -426,7 +546,7 @@ $(call std_verb,$(1),build,firmware,Signed sysbuild build for $$($(1)_B) into $(
 $(1)-build:
 	@$$(call std_skip_unstarted,$(1),$(2),build) $$(call zephyr_west_build,$(1),$(2),$$($(1)_BUILD),1,)
 
-$(call std_verb,$(1),flash,firmware,Build then flash with PROBE= probe-rs jlink openocd or nrfutil and NOBUILD=1 to skip the build)
+$(call std_verb,$(1),flash,firmware,Build then flash with PROBE= probe-rs jlink openocd nrfutil or commander and NOBUILD=1 to skip the build)
 $(1)-flash: $$(if $$(NOBUILD),,$(1)-build)
 	@$$(call std_refuse_unstarted,$(1),$(2),flash) $$(call zephyr_flash,$(1),$(2))
 
@@ -457,6 +577,10 @@ $(1)-config:
 $(call std_extra,$(1),keygen,firmware,Create the MCUboot signing key $$($(1)_KEY) in the secrets repo and never overwrite)
 $(1)-keygen:
 	@$$(call std_fw_keygen,$(1),$$($(1)_KEY),mcuboot-ecdsa-p256)
+
+$(call std_extra,$(1),power,firmware,Current profile with POWER= ppk2 or joulescope for DURATION= seconds into $(2)/build/power.csv with avg min max)
+$(1)-power:
+	@$$(call zephyr_power,$(1),$(2))
 
 $(call std_extra,$(1),provision,firmware,Per device setup SERIAL= through $(1)_PROVISION else flash only)
 $(1)-provision:

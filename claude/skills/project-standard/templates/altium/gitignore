@@ -1,0 +1,10 @@
+# Altium Designer: history, logs, previews, locks and generated outputs (the part's own outputs/ and production/
+# lines, <dir>/outputs/ and <dir>/production/, are added per part by the scaffold)
+History/
+Project Logs for */
+Project Outputs for */
+__Previews/
+*.PrjPcbStructure
+*.SchDocPreview
+*.PcbDocPreview
+.~lock.*

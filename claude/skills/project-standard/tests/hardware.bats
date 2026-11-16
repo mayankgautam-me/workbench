@@ -378,3 +378,87 @@ KICAD_PREFS_ROOT := $R/kicad-root"
   [[ "$output" != *"not started yet"* ]]
   [[ "$(argv kicad-cli)" == *$'sch\nerc\n'* ]]
 }
+
+# a project-local library: the board's own tables point into the project with ${KIPRJMOD}
+mklocallib() {
+  mkdir -p hardware/Library/Symbols hardware/Library/Footprints/Acme_IC.pretty
+  : >hardware/Library/Symbols/Acme_IC.kicad_sym
+  printf '(sym_lib_table\n\t(version 7)\n\t(lib (name "Acme_IC") (type "KiCad") (uri "${KIPRJMOD}/Library/Symbols/Acme_IC.kicad_sym") (options "") (descr ""))\n\t(lib (name "Device") (type "KiCad") (uri "${KICAD10_SYMBOL_DIR}/Device.kicad_sym") (options "") (descr ""))\n)\n' >hardware/sym-lib-table
+  printf '(fp_lib_table\n\t(version 7)\n\t(lib (name "Acme_IC") (type "KiCad") (uri "${KIPRJMOD}/Library/Footprints/Acme_IC.pretty") (options "") (descr ""))\n)\n' >hardware/fp-lib-table
+}
+
+@test "hardware LIBRARY=local: setup and doctor check the board's own tables and need no shared library or KiCad variables" {
+  hwproject "KICAD_LIBRARY_DIR :=
+KICAD_PREFS_ROOT := $R/none
+hardware_LIBRARY := local"
+  mkboard
+  mklocallib
+  run make hardware-setup
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the board's own library (hardware_LIBRARY := local)"* ]] || false
+  [[ "$output" == *"hardware/sym-lib-table: 2 libraries in the project"* ]] || false
+  [[ "$output" == *"hardware/fp-lib-table: 1 library in the project"* ]] || false
+  [[ "$output" != *"KICAD_LIBRARY_DIR is not set"* ]] || false
+  [ ! -e "$PREFS" ]
+  echo "10.0.1" >"$STUB_LOG/kicad-cli.out"
+  run make hardware-doctor
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"library: the board's own tables"* ]] || false
+  [[ "$output" != *"FABROLABS_LIB_DIR"* ]] || false
+  [[ "$output" != *"no shared library"* ]] || false
+}
+
+@test "hardware LIBRARY=local: a missing file, a shared-library entry or a missing table is reported and fails setup" {
+  hwproject "hardware_LIBRARY := local"
+  mkboard
+  mklocallib
+  rm hardware/Library/Symbols/Acme_IC.kicad_sym
+  printf '(fp_lib_table\n\t(lib (name "X") (type "KiCad") (uri "${FABROLABS_LIB_DIR}/Footprints/X.pretty") (options "") (descr ""))\n)\n' >hardware/fp-lib-table
+  run make hardware-setup
+  echo "$output"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'hardware/sym-lib-table: ${KIPRJMOD}/Library/Symbols/Acme_IC.kicad_sym does not exist'* ]] || false
+  [[ "$output" == *'hardware/fp-lib-table: ${FABROLABS_LIB_DIR}/Footprints/X.pretty uses the shared library'* ]] || false
+  rm hardware/fp-lib-table
+  run make hardware-setup
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"hardware/fp-lib-table missing"* ]] || false
+  # not started yet: nothing to check
+  rm hardware/Board.kicad_pro
+  run make hardware-setup
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"not started yet"* ]] || false
+}
+
+@test "KICAD_LIBRARY_PROJECT: make/project.mk wins over the user config, else <owner>/kicad-library; doctor names it" {
+  mkdir -p "$STD_CONFIG"
+  printf 'GITHUB_OWNER := acme\nKICAD_LIBRARY_PROJECT := acme/kicad-library\n' >"$STD_CONFIG/config.mk"
+  hwproject "KICAD_LIBRARY_PROJECT := beta/boards-lib"
+  mkprefs
+  mkboard
+  run make hardware-doctor
+  echo "$output"
+  [[ "$output" == *"library repository for CI: beta/boards-lib (from make/project.mk)"* ]] || false
+  hwproject ""
+  run make hardware-doctor
+  [[ "$output" == *"library repository for CI: acme/kicad-library (from config)"* ]] || false
+  rm "$STD_CONFIG/config.mk"
+  git remote add origin git@github.com:Gamma/board.git
+  run make hardware-doctor
+  [[ "$output" == *"library repository for CI: gamma/kicad-library (from owner)"* ]] || false
+}
+
+@test "ci-setup-help: the KiCad deploy key goes to KICAD_LIBRARY_PROJECT, and not at all when every hardware part is local" {
+  hwproject "KICAD_LIBRARY_PROJECT := beta/boards-lib"
+  git remote add origin git@github.com:acme/demo.git
+  run make ci-setup-help
+  echo "$output"
+  [[ "$output" == *"gh repo deploy-key add ~/.ssh/demo-ci-kicad.pub --repo beta/boards-lib"* ]] || false
+  [[ "$output" == *"gh variable set KICAD_LIBRARY_REPO --repo acme/demo --body beta/boards-lib"* ]] || false
+  hwproject "hardware_LIBRARY := local"
+  run make ci-setup-help
+  [[ "$output" != *"kicad"* ]] || false
+  [[ "$output" != *"KICAD_LIBRARY"* ]] || false
+}

@@ -1,5 +1,6 @@
-# project-standard ci-templates v1.0: docker (an image built with buildx and pushed to ghcr.io with GITHUB_TOKEN).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/docker.yml@v1.0.
+# project-standard ci-templates v1.1: docker (an image built with buildx and pushed to ghcr.io with GITHUB_TOKEN, labelled
+# org.opencontainers.image.source so the package is linked to the repository and inherits its access).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/docker.yml@v1.1.
 
 on:
   workflow_call:
@@ -107,6 +108,7 @@ jobs:
       PART: ${{ inputs.part }}
       PART_DIR: ${{ inputs.part_dir }}
       STD_APT_PACKAGES: ${{ vars.STD_APT_PACKAGES }}
+      DOCKER_IMAGE_SOURCE: ${{ github.server_url }}/${{ github.repository }}
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -190,7 +192,8 @@ jobs:
       PART: ${{ inputs.part }}
       PART_DIR: ${{ inputs.part_dir }}
       STD_APT_PACKAGES: ${{ vars.STD_APT_PACKAGES }}
-      DOCKER_REGISTRY: ghcr.io/${{ github.repository_owner }}
+      # the OCI source label links the ghcr.io package to this repository (DOCKER_REGISTRY: ghcr.io/<owner, lowercase>, from make)
+      DOCKER_IMAGE_SOURCE: ${{ github.server_url }}/${{ github.repository }}
     steps:
       - name: Export the workspace paths (in a container, github.workspace is the host path)
         shell: bash
@@ -269,7 +272,8 @@ jobs:
       PART: ${{ inputs.part }}
       PART_DIR: ${{ inputs.part_dir }}
       STD_APT_PACKAGES: ${{ vars.STD_APT_PACKAGES }}
-      DOCKER_REGISTRY: ghcr.io/${{ github.repository_owner }}
+      # the OCI source label links the ghcr.io package to this repository (DOCKER_REGISTRY: ghcr.io/<owner, lowercase>, from make)
+      DOCKER_IMAGE_SOURCE: ${{ github.server_url }}/${{ github.repository }}
     steps:
       - name: Export the workspace paths (in a container, github.workspace is the host path)
         shell: bash

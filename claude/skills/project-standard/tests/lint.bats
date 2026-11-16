@@ -43,7 +43,7 @@ unguarded() {
 }
 
 @test "lint: the publishing kinds are among the files checked" {
-  for k in app-android app-flutter app-tauri app-xcode python cloud-worker; do
+  for k in app-android app-flutter app-tauri app-xcode python cloud-worker silabs zephyr; do
     [ -f "$MAKE_DIR/kinds/$k.mk" ]
   done
   run grep -c 'std_confirm,production) &&' "$MAKE_DIR"/kinds/app-android.mk
@@ -71,4 +71,27 @@ unguarded() {
   run unguarded "$f"
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+}
+
+@test "lint: every managed file and CI template names the version in templates/project/make/VERSION, and no other" {
+  local skill v f bad=''
+  skill="$BATS_TEST_DIRNAME/.."
+  v=$(tr -d '[:space:]' <"$skill/templates/project/make/VERSION")
+  [[ $v =~ ^[0-9]+\.[0-9]+$ ]]
+  for f in "$MAKE_DIR/common.mk" "$MAKE_DIR"/kinds/*.mk "$MAKE_DIR"/bin/*.sh "$skill/templates/project/Makefile"; do
+    head -n 2 "$f" | grep -Fq "# project-standard v$v (managed:" || bad="$bad $(basename "$f")"
+  done
+  for f in "$skill"/ci-templates/.github/workflows/*.yml; do
+    sed -n 1p "$f" | grep -Fq "# project-standard ci-templates v$v: " || bad="$bad $(basename "$f")"
+    grep -Fq "/.github/workflows/$(basename "$f")@v$v" "$f" || bad="$bad $(basename "$f")@"
+  done
+  grep -Fq "readonly STD_VERSION=$v" "$skill/scripts/scaffold.sh" || bad="$bad scaffold.sh"
+  # nothing managed still says another version
+  others=$(grep -rhoE 'project-standard (ci-templates )?v[0-9]+\.[0-9]+' "$MAKE_DIR" "$skill/templates/project" "$skill/ci-templates/.github" |
+    sed -E 's/.* v//' | sort -u | grep -vx "$v" || true)
+  [ -z "$others" ] || bad="$bad other-versions:$others"
+  if [ -n "$bad" ]; then
+    echo "not on v$v:$bad"
+    return 1
+  fi
 }

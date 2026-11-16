@@ -1,0 +1,51 @@
+# project-standard ci-templates v1.1: altium (Altium Designer boards; nothing here runs Altium).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/altium.yml@v1.1.
+#
+# Altium Designer is Windows only and licensed, so no runner can make the outputs: the board's OutJob makes them in Altium,
+# into <dir>/outputs/, which is never committed. CI therefore runs the check only: the PrjPcb and every document it lists,
+# the folder layout, and that every Altium binary is a Git LFS pointer (checked on the pointers themselves, so nothing is
+# pulled from LFS). run_build and run_release do nothing here: the GitHub Release of a board is made where its outputs are,
+# after make <part>-bump and pushing the tag, with
+#   make <part>-github-release FORCE=1
+# on the Windows machine that ran the OutJob (Git Bash), or on a Mac the outputs were copied to.
+
+on:
+  workflow_call:
+    inputs:
+      part: { type: string, required: true }
+      part_dir: { type: string, required: true }
+      run_check: { type: boolean, default: true }
+      run_build: { type: boolean, default: true }
+      run_release: { type: boolean, default: false }
+      confirm: { type: string, default: '' }
+    secrets:
+      SECRETS_DEPLOY_KEY:
+        required: false
+      SOPS_AGE_KEY:
+        required: false
+      KICAD_LIBRARY_DEPLOY_KEY:
+        required: false
+
+jobs:
+  check:
+    if: ${{ inputs.run_check }}
+    runs-on: ${{ vars.STD_RUNNER || 'ubuntu-24.04' }}
+    env:
+      PART: ${{ inputs.part }}
+      PART_DIR: ${{ inputs.part_dir }}
+      STD_APT_PACKAGES: ${{ vars.STD_APT_PACKAGES }}
+    steps:
+      - name: Install system packages (apt)
+        run: |
+          set -euo pipefail
+          need=""; for t in make git; do command -v "$t" >/dev/null 2>&1 || need="$need $t"; done
+          if [ -n "$need" ] || [ -n "${STD_APT_PACKAGES:-}" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq --no-install-recommends $need ${STD_APT_PACKAGES:-}
+          fi
+      - name: Check out (the LFS pointers, not the files)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: false
+      - name: Check
+        run: make "$PART-check"

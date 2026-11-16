@@ -1,4 +1,4 @@
-# project-standard v1.0: internal contract
+# project-standard v1.1: internal contract
 
 How the pieces of the skill fit together. `standard.md` is the user-facing spec; this file is for
 whoever writes or changes `common.mk`, a kind, a script, the CI templates, `scaffold.sh` or `audit.sh`.
@@ -28,20 +28,28 @@ make/bin/cf.sh           managed: Cloudflare engine
 make/bin/lib.sh          managed: shared shell helpers (colours, die, confirm, log)
 make/bin/release.sh      managed: versions, release notes and GitHub Releases
 make/bin/toolchain.sh    managed: usage record, installed ledger, make teardown and make prune (since v17)
+make/bin/refs.sh         managed: make refs-fetch / refs-check from docs/references.md into references/ (1.1)
+make/bin/ghcr.sh         managed: the docker kind's ghcr.io login, write:packages check and prune-images (1.1)
+make/bin/secret-patterns.sh, sign-windows.sh   managed: the secret file patterns; the Tauri Windows signing helper
 make/local.mk            the project's own targets, documented with `## ` comments
-make/VERSION             the standard version the managed files came from: `7`
+make/VERSION             the standard version the managed files came from: `1.1`
 ```
 
 Besides these, `scaffold.sh` writes the project-owned files once (kept with `--force`): `README.md`, `CLAUDE.md`,
 `PLAN.md`, `.gitattributes`, `Brewfile`, `mise.toml`, `secrets.schema`, `.github/workflows/checks.yml` and `release.yml`, and `.gitignore`
-(`templates/project/.gitignore` + `kind_ignore` per kind + `<dir>/production/` per hardware part + `<dir>/release/`
-per part). Each part README has a Release section (bump, push the tag, what the tag pipeline publishes). It places
+(`templates/project/.gitignore` + `kind_ignore` per kind + `references/` + `<dir>/production/` per hardware or altium
+part + `<dir>/outputs/` per altium part + `<dir>/release/` per part). An existing `.gitignore` gets the missing required
+lines appended (`gitignore_required`: `.ci/`, the ci-local ones, `references/`, the per-part lines, and Altium's own
+lines with an altium part); an existing `.gitattributes` gets the missing LFS lines of the kinds appended
+(`gitattributes_required`: `*.FCStd` with a mechanical part, `templates/altium/gitattributes` with an altium part),
+matched by pattern, never removed or reordered. Each part README has a Release section (bump, push the tag, what the tag pipeline publishes). It places
 `tests/smoke/README.md` and `tests/remote/README.md` only when a part's kind has `smoke` / `test-remote`
 (cloud-worker, web-pages). Nothing in common.mk, the kinds or `audit.sh` needs a root `tests/`.
 
 Documents are project-owned too, and each is written only when it does not exist (also in a part folder that
 exists, where no starter code is written): `docs/README.md`, `docs/architecture.md`, `docs/operations.md` (only
-when a part is cloud-worker, web-pages or docker), and per part `<dir>/README.md`, `<dir>/CHANGELOG.md` and
+when a part is cloud-worker, web-pages or docker), `docs/references.md` (always: the empty `Title | Vendor | File | URL |
+SHA256` table refs.sh reads), and per part `<dir>/README.md`, `<dir>/CHANGELOG.md` and
 `docs/<part>/<doc>.md` for the kind's docs (`kind_docs` in `scaffold.sh`; `audit.sh` has the same table and checks
 it). The CHANGELOG format is fixed, because the release targets read it: Keep a Changelog 1.1.0, `## [Unreleased]`
 then `### Added`, `### Changed`, `### Fixed`, version sections `## [<version>] - YYYY-MM-DD`, tags `<part>-v<version>`.
@@ -51,16 +59,16 @@ and in no `.gitattributes` LFS line.
 Every managed file's first line is exactly:
 
 ```
-# project-standard v1.0 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.1 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 ```
 
 (`#!/usr/bin/env bash` first, then that line, for scripts.) `audit.sh` and the hook look for
-`project-standard v1.0` on line 1 or 2 of `make/common.mk`.
+`project-standard v<version>` on line 1 or 2 of `make/common.mk`.
 
 Root `Makefile`:
 
 ```make
-# project-standard v1.0 (managed: ...)
+# project-standard v1.1 (managed: ...)
 include make/project.mk
 include make/common.mk
 ```
@@ -133,6 +141,15 @@ flash erase monitor debug
 folders in `STD_DIRS_<kind>` (a table in common.mk of what each kind's `distclean` or `clean` removes: a new kind or a changed
 recipe needs its row changed too). Both ask `toolchain.sh` (below) and remove only with `CONFIRM=teardown` / `CONFIRM=prune`.
 
+The kinds, by group (folder): firmware `zephyr espidf pio arm-gcc circuitpython silabs`; hardware `hardware altium`;
+mechanical `mechanical`; cloud `cloud-worker docker go python`; web `web-pages`; app `app-flutter app-tauri app-xcode
+app-android`. A new kind touches: `templates/make/kinds/<kind>.mk`, `ci-templates/.github/workflows/<kind>.yml`, `KINDS`
+and the kind tables of `scaffold.sh` (`kind_group`, `kind_tech`, `kind_brew`, `kind_ignore`, `kind_settings`,
+`kind_tasks`, `kind_docs`, `kind_runs_on`, the README sections, the CI cases) and of `audit.sh` (`KINDS`, `kind_docs`,
+`part_group_at`), `STD_DIRS_<kind>` in common.mk, the version-source cases of `release.sh`, and `KINDS` in
+`tests/ci.bats`. altium's `STD_DIRS` is empty on purpose and teardown skips its `clean`: its `outputs/` come only
+from Altium on Windows.
+
 Root targets for the firmware verbs (`flash`, `monitor`, ...) only run when exactly one part has the
 verb; with several they list the part targets and exit 2. Likewise a part's targets that talk to a board run
 for one build configuration: in pio, flash, erase, monitor, debug and provision start with `pio_one_env`
@@ -173,15 +190,18 @@ error otherwise, for every verb, because recipes and `teardown` remove things un
 | `SECRETS_DEFAULT_DIR` | `$(HOME)/.secrets-<config.mk's GITHUB_OWNER>` | where a new secrets repo first copies the Macs' and the recovery recipients from; then any other `~/.secrets-*` |
 | `STD_CONFIG` | `$(HOME)/.config/project-standard` | per-user config dir |
 | `STD_BIN` | `make/bin` | managed scripts |
+| `STD_ORIGIN_REPO` | the repository name of the github.com `origin` (without `.git`) | read by the same `git remote get-url origin` as `STD_ORIGIN_OWNER`, exported with it; the docker kind's OCI source label outside CI |
+| `DOCKER_REGISTRY` | `ghcr.io/<GITHUB_OWNER, lowercase>` | `make/project.mk` or the environment, else config.mk's only when the project's owner is config.mk's `GITHUB_OWNER`, else the owner's ghcr.io; `STD_DOCKER_REGISTRY_FROM` = `make/project.mk`, `environment`, `command line`, `config` or `owner` (exported, so a sub-make keeps the parent's word) |
+| `KICAD_LIBRARY_PROJECT` | `<GITHUB_OWNER>/kicad-library` | owner/name of the shared KiCad library: `make/project.mk`, else config.mk or the environment, else the default; `STD_KICAD_LIBRARY_PROJECT_FROM` says which. `ci-setup` adds the KiCad deploy key there and sets `KICAD_LIBRARY_REPO` from it, only when a hardware part uses the shared library (`std_hw_shared_lib`: not `<part>_LIBRARY := local`) |
 | `NO_COLOR` | unset | plain output |
 
 `SECRETS_DIR` and `SECRETS_REMOTE` from the environment or `make/project.mk` (written `?=` there, so CI's environment
 wins) and from the command line win over the derived values; common.mk captures them with their `$(origin)` and clears
 them before config.mk, so config.mk's own `SECRETS_DIR`, `SECRETS_REMOTE` and `GITHUB_OWNER` (assigned with `:=`) are
 known apart. `-include $(STD_CONFIG)/config.mk` may set `SECRETS_REMOTE`, `GITHUB_OWNER` (the default owner),
-`DOCKER_REGISTRY`, `CI_TEMPLATES_REPO` (owner/name, default `mayankgautam-me/ci-templates`, independent of
-`GITHUB_OWNER`; a value in `make/project.mk` wins over config.mk, and `CI_TEMPLATES_PROJECT` is ignored since 1.7), `KICAD_LIBRARY_DIR`, and
-`KICAD_LIBRARY_PROJECT` (read by `scaffold.sh` only: the CI variable `KICAD_LIBRARY_REPO` for a hardware part). `OTA_BUCKET` is a
+`DOCKER_REGISTRY` (its own owner's only, above), `CI_TEMPLATES_REPO` (owner/name, default `mayankgautam-me/ci-templates`, independent of
+`GITHUB_OWNER`; a value in `make/project.mk` wins over config.mk, and `CI_TEMPLATES_PROJECT` is ignored since 1.7), `KICAD_LIBRARY_DIR`,
+`KICAD_LIBRARY_PROJECT` (above) and `FREECADCMD` (the mechanical kind). `OTA_BUCKET` is a
 project setting in `make/project.mk`: common.mk keeps the project's value when config.mk sets one, and warns.
 
 `make help` filters the root entries at render time (`std_help_show`): `STD_HELP_ALWAYS`, then the
@@ -401,8 +421,11 @@ release.sh create  --part P --version V --dir D [--part-dir D2] [--build-note-fi
 ```
 
 Version sources (the `version` / `bump` table): firmware kinds `<dir>/VERSION` (Zephyr `VERSION_MAJOR` ...
-`EXTRAVERSION`, or a plain first line) else `<dir>/version.txt`; hardware `<dir>/VERSION` else the title block
-`rev` (bump writes `VERSION`); go, docker, cloud-worker, web-pages `<dir>/VERSION`; app-flutter `pubspec.yaml`
+`EXTRAVERSION`, or a plain first line) else `<dir>/version.txt` (silabs included); hardware `<dir>/VERSION` else the
+title block `rev` (bump writes `VERSION`); altium, mechanical, go, docker, cloud-worker, web-pages `<dir>/VERSION`. The
+board kinds (hardware, altium, mechanical; `is_board_kind`) start a first bump at a plain number and group the
+Release `latest` by major revision. Each kind file passes its own name as `--kind` (`std_release`, `std_rel_begin`);
+a kind release.sh does not list has no version source; app-flutter `pubspec.yaml`
 (`+build` counted up); app-tauri `src-tauri/tauri.conf.json` (or the JSON file its `version` names; bump also sets
 the `[package]` `version` of `src-tauri/Cargo.toml`, the top-level `version` of `package.json` and the app's entry in
 a tracked `src-tauri/Cargo.lock`); app-android
@@ -418,10 +441,12 @@ from the environment, never from a command line. On a Mac gh uses its own login 
 ## CI workflows (`ci-templates/`)
 
 - `ci-templates/.github/workflows/<kind>.yml`: one reusable workflow per kind (`on: workflow_call`), in `CI_TEMPLATES_REPO`
-  (default `mayankgautam-me/ci-templates`, public, shared by every project owner), tagged `v1.0`. `scaffold.sh` and
+  (default `mayankgautam-me/ci-templates`, public, shared by every project owner), tagged `v1.1` (`v1.0` is kept: a
+  published tag never moves). `scaffold.sh` and
   `audit.sh` resolve it the same way (`ci_project`: `make/project.mk`, else the environment or the user config, else
   the default); the audit warns on a `uses:` line on any other repository. Inputs: `part`, `part_dir`, `run_check`, `run_build`, `run_release`, `confirm`, `source_run_id`,
-  `deploy_staging`, `production_only`, `target`. Secrets are declared in each file and passed explicitly by the caller (no
+  `deploy_staging`, `production_only`, `target`, and `library` (hardware: `shared`, the default, or `local`, which checks
+  out no KiCad library; `ci_job` writes `library: local` when `make/project.mk` sets `<part>_LIBRARY := local`). Secrets are declared in each file and passed explicitly by the caller (no
   `secrets: inherit`): `SECRETS_DEPLOY_KEY`, `SOPS_AGE_KEY`, and `KICAD_LIBRARY_DEPLOY_KEY` for hardware.
 - Every job calls `make` only: `make "$PART-check"`, `-build`, `-github-release`, and the production verbs with
   `CONFIRM=production` set on the make line by the workflow (the guard accepts it because CI sets it).
@@ -429,7 +454,9 @@ from the environment, never from a command line. On a Mac gh uses its own login 
   when they are missing; an existing file is kept. `checks.yml`: a `changes` job whose outputs are true when a part's folder,
   `make/`, `Makefile`, `mise.toml` or `.github/workflows/` changed, then one job per part calling the kind's workflow, and
   a `workflow_dispatch` trigger. `release.yml`: one `<part>-release` job per part, with
-  `needs: tag` and `if: needs.tag.outputs.part == '<part>'` (the `tag` job takes the part from the tag, exactly), and
+  `needs: tag` and `if: needs.tag.outputs.part == '<part>'` (the `tag` job takes the part from the tag, exactly; none for
+  an altium part, `ci_has_release`, whose Release is made where Altium's outputs are, and no `latest` job when no part
+  has one; `audit.sh` has the same rule, `kind_has_release`), and
   `run_release: true` (a cloud-worker or web-pages part's job also passes `confirm: production`: its tag deploys
   production, then makes the notes-only Release), then the production
   jobs, with `if: github.event_name == 'workflow_dispatch' && inputs.part == '<part>' && inputs.confirm == 'production'`.

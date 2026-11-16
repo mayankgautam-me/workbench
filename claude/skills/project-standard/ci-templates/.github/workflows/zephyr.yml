@@ -1,5 +1,5 @@
-# project-standard ci-templates v1.0: zephyr (Zephyr / nRF Connect SDK firmware, west, sysbuild, MCUboot).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.0.
+# project-standard ci-templates v1.1: zephyr (Zephyr / nRF Connect SDK firmware, west, sysbuild, MCUboot).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.1.
 #
 # check: MCUboot's development key, no secrets. build: signs with the MCUboot key from the secrets repo.
 # release (run_release, tags): the build's signed image, NOBUILD=1, no rebuild and no key.
@@ -8,6 +8,8 @@
 # The image is Nordic's toolchain image, pinned by digest. The zephyr kind recognises it by /opt/toolchain-env.sh and
 # uses its python, west and Zephyr SDK (no venv, no SDK download); <part>-setup only fetches the NCS source tree, which
 # check and build keep in the Actions cache per NCS version (saved right after setup, so a failing check still keeps it).
+# A part on upstream Zephyr (<part>_ZEPHYR) runs in the same image: its python and Zephyr SDK serve upstream Zephyr too,
+# and setup fetches the zephyr manifest at the pinned tag instead of sdk-nrf (cached per Zephyr version the same way).
 
 on:
   workflow_call:
@@ -120,8 +122,9 @@ jobs:
         run: |
           set -euo pipefail
           # <part>_NCS and <part>_NCS_DIR from make/project.mk (the kind's defaults when unset); the workspace is cached by version.
+          # Upstream Zephyr (<part>_ZEPHYR set): the version is zephyr-<tag> and the workspace toolchains/zephyr-<tag>.
           # shellcheck disable=SC2016 # make expands these, not the shell
-          out="$(make -s --no-print-directory --eval 'std-ncs-print: ; @echo "$($(PART)_NCS) $($(PART)_NCS_DIR)"' std-ncs-print | tail -n 1)"
+          out="$(make -s --no-print-directory --eval 'std-ncs-print: ; @echo "$(if $(strip $($(PART)_ZEPHYR)),zephyr-$($(PART)_ZEPHYR),$($(PART)_NCS)) $($(PART)_NCS_DIR)"' std-ncs-print | tail -n 1)"
           echo "version=${out% *}" >> "$GITHUB_OUTPUT"
           echo "dir=${out#* }" >> "$GITHUB_OUTPUT"
       - name: Restore the nRF Connect SDK workspace
@@ -230,8 +233,9 @@ jobs:
         run: |
           set -euo pipefail
           # <part>_NCS and <part>_NCS_DIR from make/project.mk (the kind's defaults when unset); the workspace is cached by version.
+          # Upstream Zephyr (<part>_ZEPHYR set): the version is zephyr-<tag> and the workspace toolchains/zephyr-<tag>.
           # shellcheck disable=SC2016 # make expands these, not the shell
-          out="$(make -s --no-print-directory --eval 'std-ncs-print: ; @echo "$($(PART)_NCS) $($(PART)_NCS_DIR)"' std-ncs-print | tail -n 1)"
+          out="$(make -s --no-print-directory --eval 'std-ncs-print: ; @echo "$(if $(strip $($(PART)_ZEPHYR)),zephyr-$($(PART)_ZEPHYR),$($(PART)_NCS)) $($(PART)_NCS_DIR)"' std-ncs-print | tail -n 1)"
           echo "version=${out% *}" >> "$GITHUB_OUTPUT"
           echo "dir=${out#* }" >> "$GITHUB_OUTPUT"
       - name: Restore the nRF Connect SDK workspace

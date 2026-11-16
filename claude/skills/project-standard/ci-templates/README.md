@@ -1,10 +1,10 @@
 # ci-templates
 
-The source of the reusable GitHub Actions workflows in `mayankgautam-me/ci-templates`, tagged `v1.0`. Each
-file here is one part kind, at `.github/workflows/<kind>.yml`, and it has only `on: workflow_call`. A project's
-`.github/workflows/checks.yml` (pushes and pull requests) and `release.yml` (tags) call them with `uses:`. Every
-script line calls `make`, so CI runs what a developer runs locally. The v8 GitLab templates are gone from this
-folder; they stay in git history and under the `v8` tag.
+The source of the reusable GitHub Actions workflows in `mayankgautam-me/ci-templates`, tagged `v1.1` (`v1.0` stays,
+for the projects not updated yet). Each file here is one part kind, at `.github/workflows/<kind>.yml`, and it has
+only `on: workflow_call`. A project's `.github/workflows/checks.yml` (pushes and pull requests) and `release.yml`
+(tags) call them with `uses:`. Every script line calls `make`, so CI runs what a developer runs locally. The v8
+GitLab templates are gone from this folder; they stay in git history and under the `v8` tag.
 
 ## Calling a kind
 
@@ -17,7 +17,7 @@ on:
   pull_request:
 jobs:
   cloud-api:
-    uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.0
+    uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.1
     with:
       part: cloud-api
       part_dir: cloud/api
@@ -39,7 +39,7 @@ jobs:
   firmware:
     needs: tag
     if: needs.tag.outputs.part == 'firmware'
-    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.0
+    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.1
     with:
       part: firmware
       part_dir: firmware
@@ -66,7 +66,7 @@ permissions:
   contents: write
 jobs:
   firmware:
-    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.0
+    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.1
     with:
       part: firmware
       part_dir: firmware
@@ -97,6 +97,7 @@ not in these files: the project's `checks.yml` decides which parts run, with `pa
 | `deploy_staging` | boolean, `false` | cloud-worker, web-pages, docker: deploy to staging. |
 | `production_only` | boolean, `false` | cloud-worker, web-pages: the part has no staging, so `deploy-staging` is skipped. Production deploys the same way either way. |
 | `target` | string, `''` | app-flutter: the store target (`appbundle` by default, or `ios`). |
+| `library` | string, `shared` | hardware: `shared` checks out the KiCad library (`KICAD_LIBRARY_REPO`) for the 3D models; `local` checks out none, for a board whose own `sym-lib-table` and `fp-lib-table` are its library (`<part>_LIBRARY := local`; the scaffold writes `library: local` on its jobs). |
 
 ## Secrets
 
@@ -106,7 +107,7 @@ Declared in each file's `secrets:` block and passed explicitly by the caller (no
 |---|---|---|
 | `SECRETS_DEPLOY_KEY` | every kind that decrypts | SSH private key of a read-only deploy key on the secrets repo. |
 | `SOPS_AGE_KEY` | the jobs that decrypt or sign | The CI age key, for the production and staging jobs only. Dependency installs run with it unset (`env -u SOPS_AGE_KEY make ...`). |
-| `KICAD_LIBRARY_DEPLOY_KEY` | hardware | SSH private key of a read-only deploy key on the KiCad library (for the 3D models). |
+| `KICAD_LIBRARY_DEPLOY_KEY` | hardware | SSH private key of a read-only deploy key on the KiCad library (for the 3D models). Not read with `library: local`. |
 
 ## Variables
 
@@ -174,10 +175,13 @@ as unconfirmed and check the usage report after the first arm64 run.
 |---|---|---|
 | `cloud-worker` | check, build, deploy-staging, deploy-production, release | staging on a push to main (`deploy_staging`, not `production_only`); production (`make <part>-deploy ENV=production`) on the tag or a manual run with `confirm`, one at a time per part, token read-only; release after a successful deploy, the CHANGELOG notes only |
 | `web-pages` | check, build, deploy-staging, deploy-production, release | as cloud-worker |
-| `docker` | check, build, deploy-staging, release | pushes to `ghcr.io/<owner>` with `GITHUB_TOKEN` (`DOCKER_REGISTRY`); `packages: write` |
+| `docker` | check, build, deploy-staging, release | pushes to `ghcr.io/<owner>` with `GITHUB_TOKEN` (`DOCKER_REGISTRY`, the owner in lowercase), labelled `org.opencontainers.image.source` with the repository so the package inherits its access; `packages: write` |
 | `go`, `python` | check, build, release | python artifact `<part>-dist` |
-| `zephyr`, `espidf`, `pio`, `arm-gcc`, `circuitpython` | check, build, release (NOBUILD=1 from the build artifact), publish (production) | `publish` needs `confirm` and the production key |
-| `hardware` | check, build, release | KiCad image, library and InteractiveHtmlBom; release publishes the fab files, BOMs, STEP and WRL |
+| `zephyr`, `espidf`, `pio`, `arm-gcc`, `circuitpython` | check, build, release (NOBUILD=1 from the build artifact), publish (production) | `publish` needs `confirm` and the production key; zephyr also builds a part on upstream Zephyr (`<part>_ZEPHYR`) in the same image |
+| `silabs` | check, build, release (NOBUILD=1), publish (production) | on the runner itself, no image: `<part>-setup` installs the pinned slt, slc, the Simplicity SDK and WiseConnect (about 2 GB), kept in the Actions cache per version; a `SIGN=1` build needs Simplicity Commander on the runner |
+| `hardware` | check, build, release | KiCad image, library (none with `library: local`) and InteractiveHtmlBom; release publishes the fab files, BOMs, STEP and WRL |
+| `altium` | check | Altium runs on Windows only, so CI checks the layout, the documents and the Git LFS pointers (no LFS pull); `run_build` and `run_release` do nothing. The Release is made where the OutJob's outputs are: `make <part>-github-release FORCE=1` |
+| `mechanical` | check, build, release | FreeCAD from Ubuntu 24.04 (0.21, not pinned): open and recompute every model, export STEP and STL; release attaches the exports and the models |
 | `app-tauri` | check, build, release-linux-amd64, release-linux-arm64, release-windows-x64, release-windows-arm64, release-macos (MACOS_CI), publish-ios (MACOS_CI, production), publish-android (production) | arm64 Windows builds NSIS only (make decides); `.aab`/mapping kept as artifacts for 7 days |
 | `app-flutter` | check, build, release-linux-amd64, release-linux-arm64, publish (production) | `publish` takes `target` |
 | `app-xcode` | check, build, release-macos, publish (production) | all macOS, all gated by `MACOS_CI` |
@@ -221,4 +225,5 @@ project's workflows decide which jobs receive the secret. Keep the production ke
   release assets and not yet extracted.
 - The secrets repo and the KiCad library are checked out under `.ci/`; `download-artifact` with `run-id` across runs,
   the LFS pull of one part and the pinned gh install have not run on GitHub.
-- `actionlint` (without shellcheck) passes on these workflows and on the callers of a 15-kind scaffold.
+- `actionlint` (without shellcheck) passes on these workflows and on the callers of a scaffold with every kind.
+- silabs, altium and mechanical (1.1) have not run on GitHub yet.

@@ -1,8 +1,8 @@
-# The project standard, v1.0
+# The project standard, v1.1
 
-One set of commands for every stage of work, the same in every project: firmware, boards,
-Cloudflare services, apps and containers alike. The tools stay what they are (west, idf.py, pio,
-kicad-cli, wrangler, flutter, gradle, xcodebuild, docker, go, uv); only the commands in front of
+One set of commands for every stage of work, the same in every project: firmware, boards, enclosures,
+Cloudflare services, apps and containers alike. The tools stay what they are (west, idf.py, pio, slc,
+kicad-cli, freecadcmd, wrangler, flutter, gradle, xcodebuild, docker, go, uv); only the commands in front of
 them are the same everywhere.
 
 - `make <verb>` runs a stage for the whole project, `make <part>-<verb>` for one part.
@@ -29,29 +29,32 @@ them are the same everywhere.
   make/project.mk     PROJECT, PORT_BASE, PARTS, per-part settings                 yours
   make/common.mk      the stage commands, guards, help, secrets loading            managed
   make/kinds/<k>.mk   one per kind the parts use                                   managed
-  make/bin/*.sh       secrets.sh, cf.sh, lib.sh                                    managed
+  make/bin/*.sh       secrets.sh, cf.sh, lib.sh, release.sh, refs.sh, ghcr.sh ...   managed
   make/local.mk       targets only this project needs, with `## ` descriptions      yours
   make/VERSION        the standard version the managed files came from (1)         managed
   Brewfile            system tools (brew bundle)
   mise.toml           node / pnpm / python / go / rust versions
   secrets.schema      the name of every secret, per environment, and who uses it   (no values)
   .github/workflows/  checks.yml and release.yml: call the shared CI templates, one job per part
-  .gitattributes      Git LFS for 3D and CAD models only (not images, documents or build output); KiCad files stay text
-  .gitignore          one for the whole project: base lines + each kind's build outputs, a hardware
-                      part's <dir>/production/, SvelteKit / Vite outputs for app-tauri and web-pages,
-                      binary documents (*.pdf *.docx *.xlsx *.pptx ...)
-  firmware/ hardware/ cloud/ web/ app/   a part's folder: its kind's folder, or <kind folder>/<part>/ (below)
-  mechanical/ scripts/
+  .gitattributes      Git LFS for 3D and CAD models only (*.step *.stp *.wrl, *.fcstd and *.FCStd), and Altium's
+                      binary documents with an altium part (not images, documents or build output); KiCad files stay text
+  .gitignore          one for the whole project: base lines + each kind's build outputs, a hardware or altium
+                      part's <dir>/production/ (altium: <dir>/outputs/ too), SvelteKit / Vite outputs for app-tauri
+                      and web-pages, binary documents (*.pdf *.docx *.xlsx *.pptx ...), references/
+  firmware/ hardware/ mechanical/ cloud/ web/ app/   a part's folder: its kind's folder, or <kind folder>/<part>/ (below)
+  scripts/
     <part dir>/README.md      purpose, build and run, configuration, interfaces, links to its docs   yours
     <part dir>/CHANGELOG.md   Keep a Changelog; releases are tagged <part>-v<version>               yours
   docs/
     README.md                 index of every doc                                                    yours
     architecture.md           the parts (Mermaid), data flow, where each part runs                  yours
     operations.md             runbook: deploy, rollback, backup, checks (only with a deployable part) yours
+    references.md             the datasheets and manuals the project works from (make refs-fetch)   yours
     <part>/                   the kind's docs (see Documents below)                                 yours
     images/  <part>/images/   SVG, or PNG
   tests/smoke/        quick checks against a deployed environment  (only with a cloud-worker or web-pages part)
   tests/remote/       the deployed test suite (staging)            (only with a cloud-worker or web-pages part)
+  references/         what make refs-fetch downloads from docs/references.md (ignored, never committed)
   README.md CLAUDE.md PLAN.md
 ```
 
@@ -59,8 +62,9 @@ Folders are lowercase. Each part lives in the folder of its kind:
 
 | Kinds | Folder |
 |---|---|
-| zephyr, espidf, pio, arm-gcc, circuitpython | `firmware/` |
-| hardware | `hardware/` |
+| zephyr, espidf, pio, arm-gcc, circuitpython, silabs | `firmware/` |
+| hardware, altium | `hardware/` (a KiCad board and an Altium board in one project: `hardware/<part>/` each) |
+| mechanical | `mechanical/` (FreeCAD models: enclosures, brackets, jigs) |
 | cloud-worker, docker, go, python | `cloud/` (a go or python part that runs on a device, such as an agent on a Linux board, goes in `firmware/`) |
 | web-pages | `web/` |
 | app-flutter, app-tauri, app-xcode, app-android | `app/` |
@@ -73,8 +77,21 @@ as `nrf9151-v<version>` and `stm32f042-v<version>`, with their docs in `docs/nrf
 second part of a kind arrives, the first moves into its own subfolder in the same change (`git mv`, then the paths
 that name it).
 
+An altium part's folder has a fixed layout, which `make <part>-check` enforces and `make <part>-layout` prints the
+moves to (4.10, Altium):
+
+```
+hardware/
+  <Board>.PrjPcb  <Board>.SchDoc  <Board>.PcbDoc  <Board>.OutJob     the project, top sheet, layout and output job
+  sheets/NN-Name.SchDoc  sheets/NN-Name.Harness                      the other sheets, numbered in order
+  library/<Board>.SchLib  library/<Board>.PcbLib  library/models/*.step   the board's own library and 3D models
+  bom/<Board>_BOM.csv                                                the BOM the OutJob writes, committed
+  VERSION  README.md  CHANGELOG.md
+  outputs/  production/                                              generated (OutJob, make <part>-build), ignored
+```
+
 "Managed" files start with the line
-`# project-standard v1.0 (managed: ...)` and are refreshed by the skill's update mode; never edit
+`# project-standard v1.1 (managed: ...)` and are refreshed by the skill's update mode; never edit
 them in a project. Your own targets go in `make/local.mk`, written like this, and show under
 "project" in `make help`:
 
@@ -104,6 +121,7 @@ changes.
 | `docs/README.md` | Index of every doc, project and per part | always |
 | `docs/architecture.md` | The parts as a Mermaid diagram (a node per part; the links are drawn by hand), data flow, where each part runs, external services | always |
 | `docs/operations.md` | Runbook: environments, deploy, rollback, backup and restore, checks, incidents | with a cloud-worker, web-pages or docker part |
+| `docs/references.md` | The reference documents (datasheets, reference manuals, application notes, drawings) as a table `Title \| Vendor \| File \| URL \| SHA256`; `make refs-fetch` downloads them into `references/` (ignored) and checks each SHA256 (4.1) | always (since 1.1) |
 | `<part dir>/README.md` | Purpose, Build and run (the kind's make commands), Configuration (`make/project.mk` settings), Interfaces, Docs (links) | every part |
 | `<part dir>/CHANGELOG.md` | [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/): `## [Unreleased]` with `### Added`, `### Changed`, `### Fixed`; a release becomes `## [<version>] - YYYY-MM-DD`, tagged `<part>-v<version>` | every part |
 
@@ -112,7 +130,9 @@ Per kind, in `docs/<part>/`:
 | Kind | Docs |
 |---|---|
 | zephyr, espidf, pio, arm-gcc, circuitpython | `protocol.md` (transports, commands, messages, versioning, errors); `flashing.md` (images, bootloader, updating, recovery, factory programming, board revisions) |
-| hardware | `bringup.md` (before power, first power, programming, functional tests, results, known issues); `manufacturing.md` (fabrication, stackup, design rules, assembly, suppliers, revisions) |
+| silabs | `protocol.md` and `flashing.md` as above; `power.md` (power modes, measurements, budget, battery life, how to measure with `make <part>-power`) |
+| hardware, altium | `bringup.md` (before power, first power, programming, functional tests, results, known issues); `manufacturing.md` (fabrication, stackup, design rules, assembly, suppliers, revisions) |
+| mechanical | `assembly.md` (parts, fasteners and bought parts, assembly order, printing and machining, revisions) |
 | cloud-worker | `api.md` (base URLs, authentication, endpoints, errors, limits); `data.md` (D1 tables, KV keys, R2 layout, queues, migrations, backup) |
 | web-pages | none beyond the README |
 | app-flutter, app-tauri, app-xcode, app-android | `distribution.md` (identifiers, signing, channels, permissions, updates) |
@@ -144,7 +164,10 @@ firmware_BOARD := nrf9151dk/nrf9151/ns
 | `pio` | PlatformIO firmware | pio |
 | `arm-gcc` | bare-metal Cortex-M (libopencm3, CubeMX export) | arm-none-eabi-gcc, openocd, st-link, dfu-util |
 | `circuitpython` | CircuitPython boards | circup, the CIRCUITPY drive |
+| `silabs` | Silicon Labs firmware: slc projects (`*.slcp`) on the Simplicity SDK and WiseConnect, SiWx917 / SiWG917 M4 | slt, slc, the GNU Arm toolchain slt installs, Simplicity Commander, J-Link |
 | `hardware` | KiCad 10 boards | kicad-cli, the `bom` and `jlcpcb` skills |
+| `altium` | Altium Designer boards (Altium runs on Windows; nothing here runs it) | the board's OutJob, Git LFS, gerbv (optional) |
+| `mechanical` | FreeCAD models (`*.FCStd`, in Git LFS) | freecadcmd (headless FreeCAD) |
 | `cloud-worker` | Cloudflare Worker with D1, KV, R2, Queues, DO | wrangler (pinned in the part's package.json) |
 | `web-pages` | static site, Astro site (`astro.config.*`), Vite app or Next static export on a static-assets Worker on its custom domain, its only address (the default since v34: `scaffold.sh --domain <part>=<host>`); on Cloudflare Pages only when asked for (`--pages <part>`, a `wrangler.jsonc` with `pages_build_output_dir`: Pages always keeps `*.pages.dev`) | wrangler pages, wrangler deploy |
 | `app-flutter` / `app-tauri` / `app-xcode` / `app-android` | apps | flutter / tauri + cargo / xcodebuild / gradle |
@@ -153,12 +176,12 @@ firmware_BOARD := nrf9151dk/nrf9151/ns
 | `python` | Python packages and services | uv, ruff, pytest |
 
 Per-part settings are `<part>_<VAR> := value` in `project.mk` (each kind file documents its own:
-`_BOARD`, `_NCS`, `_TARGET`, `_IDF`, `_PORT_OFFSET`, `_URL_<env>`, `_SCHEME`, `_IMAGE`, ...). A
-value on the command line wins.
+`_BOARD`, `_NCS`, `_ZEPHYR`, `_TARGET`, `_IDF`, `_SDK`, `_WISECONNECT`, `_LIBRARY`, `_PORT_OFFSET`, `_URL_<env>`,
+`_SCHEME`, `_IMAGE`, ...). A value on the command line wins.
 
 Firmware SDKs are pinned per part and installed once per machine into `~/.toolchains/<tool>-<version>`
-(`ncs-v3.2.1`, `zephyr-sdk-0.17.4`, `idf-v5.5`), so two projects on different versions live side by
-side. Dev ports are `PORT_BASE` + the part's offset, so two projects can run `make dev` at once.
+(`ncs-v3.2.1`, `zephyr-v4.3.0`, `zephyr-sdk-0.17.4`, `idf-v5.5`, `slt-1.1.1`), so two projects on different versions
+live side by side. slt keeps the Simplicity SDK and WiseConnect it installs in its own folder (`~/.silabs/slt`). Dev ports are `PORT_BASE` + the part's offset, so two projects can run `make dev` at once.
 
 ## 3. Environments and guards
 
@@ -192,6 +215,8 @@ and CI cannot destroy production at all. Firmware verbs at the root (`make flash
 | `make doctor` | Read-only check of all of the above, plus the Cloudflare token, secrets completeness, KiCad library variables, probes and serial ports, the Docker daemon. Prints what is wrong and the command that fixes it. |
 | `make update` | Bumps pinned versions on purpose (NCS, IDF, Node...), then runs `setup`. |
 | `make teardown` | The opposite of `setup` for this project. Without `CONFIRM` it only lists what it would remove, with sizes and a total. With `CONFIRM=teardown` it removes the project's build and dependency folders (what each part's `distclean` removes, `clean` for a kind without one), the project's usage record, and the shared installs no other standard project records. Homebrew packages are never removed; it lists the Brewfile's so you can decide. |
+| `make refs-fetch` | Downloads each reference document `docs/references.md` lists (its URL, https only) into `references/<File>`, which git ignores, and checks its SHA256. A file already there with the right SHA256 is skipped; a row without SHA256 gets the value printed, to paste into the table (the table is never edited by the command). Listed in `make help` when `docs/references.md` exists. |
+| `make refs-check` | The same checks without downloading: a missing file or a wrong SHA256 fails. |
 | `make prune` | Machine wide, from any standard project. Without `CONFIRM` it only lists; with `CONFIRM=prune` it removes every shared tool version, SDK or rustup target the standard installed and no current project records, the stale usage records, and trims the pnpm store. |
 
 #### Setup on demand
@@ -206,13 +231,15 @@ costs milliseconds (files and their times; no network, no package manager), so a
 |---|---|---|
 | cloud-worker, web-pages, app-tauri | `node_modules` was installed after the last change to `package.json` and its lockfile (setup's `node_modules/.std-setup`, or npm's or pnpm's own stamp); no `package.json`: always | the ones that run the part's packages: dev, check, test, format, build, deploy, smoke, preview, promote, versions, rollback, logs, status, the cloud-worker extras and the root `cf-*` commands that run wrangler |
 | app-flutter | `.dart_tool` fetched after the last change to `pubspec.yaml` / `pubspec.lock`; the pods installed where a Podfile and `pod` exist | dev, check, test, build, release, release-assets (not with `NOBUILD=1`) |
-| zephyr | the NCS workspace of the pinned version is updated (`.std-updated`) and its toolchain is there: the image's (`<part>_TOOLCHAIN_ENV`), or the venv's west with the requirements and the pinned Zephyr SDK | check, build, flash, debug, size, config |
+| zephyr | the NCS (or upstream Zephyr) workspace of the pinned version is updated (`.std-updated`) and its toolchain is there: the image's (`<part>_TOOLCHAIN_ENV`), or the venv's west with the requirements and the pinned Zephyr SDK | check, build, flash, debug, size, config |
+| silabs | setup's stamp: slt, slc and the pinned Simplicity SDK and WiseConnect are installed and trusted | check, build, flash, debug, size |
 | espidf | the pinned ESP-IDF and its tools for `TARGETS` are installed (in CI: an image's `IDF_PATH`) | check, build, flash, erase, monitor, debug, size, config, the fuse commands |
 | pio | `.pio/.std-setup` is newer than `platformio.ini` | check, test, build, flash, erase, monitor, debug, size, config |
 | circuitpython | the build image exists | build |
 | docker | the `project-standard` buildx builder exists | build, release |
 | arm-gcc, go, python, app-android, app-xcode | always: their setup only checks a tool, or the tool fetches what it needs itself (go, uv run, gradle, xcodebuild) | none |
 | hardware | never chained: its setup writes KiCad's global settings and only with `APPLY=1` | none |
+| altium, mechanical | always: nothing to install per project (Altium is on Windows; freecadcmd comes from the Brewfile) | none |
 
 Never chained: `setup` itself, `doctor`, `clean`, `distclean`, `version`, `bump`, and nothing that needs you (secrets,
 `cf-login`, Touch ID, `CONFIRM`, a probe): only the part's own `setup` runs. The root commands (`make check`, `make build`
@@ -231,6 +258,9 @@ A part declared in `make/project.mk` whose folder does not have the file its kin
 | pio | `platformio.ini` |
 | arm-gcc | `CMakeLists.txt` or `Makefile` |
 | circuitpython | `src` |
+| silabs | a `*.slcp` |
+| altium | a `*.PrjPcb` |
+| mechanical | a `*.FCStd` (in the folder or one level down) |
 
 Until then its `setup`, `check`, `test` and `build` (hardware: `check` and `build`; its `setup` only configures KiCad and still runs) print `> <part>: not started yet (no <file> in <dir>): check
 skipped` (the verb they are) and exit 0, and run no tool and no setup on demand, so CI (and the root `make check`)
@@ -427,14 +457,32 @@ means a new Worker, so they keep their names.
 | `<part>-size` / `<part>-config` | RAM / ROM report / menuconfig. |
 | `<part>-keygen` | The signing key, created in the secrets repo. |
 | `<part>-provision SERIAL=` | Per-device setup: identity, certificates, modem firmware, first flash. |
+| `<part>-power DURATION=` | Current profile (zephyr, silabs): the samples into `build/power.csv`, and the sample count, duration, average, minimum and maximum current (and average power when the voltage is known) printed and kept in `build/power.txt`. zephyr: `POWER=ppk2` (Nordic Power Profiler Kit II, through the `ppk2-api` python package) or `joulescope`, through `<part>_POWER_PYTHON`. silabs: Simplicity Commander's energy monitor (AEM) on the kit. |
+| `<part>-power-live` / `<part>-power-avg` | silabs: the AEM current and voltage streamed at `AEM_RATE_HZ` / the average over `AEM_WINDOW_MS`. |
 | `<part>-release` | Signed OTA image to the OTA store (`OTA_BUCKET` in `make/project.mk`) as `<ver>/` and `latest/`; `PROMOTE=1` marks it stable. In CI: the production job of `release.yml` (`confirm` = `production`). The GitHub Release is separate (4.12). With no OTA bucket (`OTA_BUCKET` and `<part>_OTA_BUCKET` empty: a project without Cloudflare) it prints `> <part>: no OTA bucket (no Cloudflare in this project): firmware publish skipped` and exits 0, `make help` leaves it out (`ALL=1` lists it), and `scaffold.sh` writes no `<part>-production` job for the firmware parts when the project has no Cloudflare part and its `project.mk` sets no OTA bucket. |
+
+**Upstream Zephyr.** A zephyr part builds on the nRF Connect SDK by default (`<part>_NCS`). `<part>_ZEPHYR := v4.3.0`
+(and no `<part>_NCS`) builds it on upstream Zephyr instead: setup runs `west init -m
+https://github.com/zephyrproject-rtos/zephyr --mr <ver>` into `~/.toolchains/zephyr-<ver>`; the venv, the Zephyr SDK,
+build, flash and release are the same. `PROBE=commander` flashes through west's Silicon Labs Commander runner (for a
+SiWx917 on Zephyr; `<part>_DEVICE` is its `--device` for erase), next to probe-rs, jlink, openocd and nrfutil.
+
+**silabs.** An slc project (`*.slcp`) on the Simplicity SDK and WiseConnect, for SiWx917 / SiWG917 (M4). slt,
+Silicon Labs' Simplicity Tools CLI, is pinned per part (`<part>_SLT`) and installed into `~/.toolchains/slt-<ver>`;
+it installs slc, a Java runtime, the GNU Arm toolchain, the Simplicity SDK (`<part>_SDK`) and WiseConnect
+(`<part>_WISECONNECT`) into its own folder. A build is `slc generate` (a makefile project) into
+`<dir>/build/<board>`, then the generated makefile; `<part>_BOARD` is the slc board (`brd4338a`). Flash, erase and the
+energy monitor go through Simplicity Commander (`PROBE=commander`, the default; `PROBE=jlink` flashes with J-Link),
+the console through the kit's J-Link VCOM port, debug through the J-Link GDB server. `<part>_SIGN := 1` signs the
+`.rps` with the ECDSA P-256 key `silabs-m4` from the secrets repo (`make <part>-keygen`; the `secrets.schema` row is
+`optional:`); the release is the `.rps` to the OTA bucket, as for the other firmware kinds.
 
 A firmware part builds one image per env (PlatformIO `default_envs`, say one per board revision), but a
 board takes one: with pio, flash, erase, monitor, debug and provision refuse unless exactly one env is
 selected (`PIO_ENV=<env>`, `<part>_PIO_ENV` in `make/project.mk`, or a `platformio.ini` that names only one).
 
 A firmware part with nothing in its folder yet (no `CMakeLists.txt` for zephyr and espidf, `platformio.ini` for pio,
-`CMakeLists.txt` or `Makefile` for arm-gcc, `src` for circuitpython) is not started: setup, check, test and build
+`CMakeLists.txt` or `Makefile` for arm-gcc, `src` for circuitpython, a `*.slcp` for silabs) is not started: setup, check, test and build
 print `> <part>: not started yet (no <file> in <dir>): <verb> skipped` and exit 0, doctor warns, flash and release
 refuse (4.1, Parts not started yet).
 
@@ -444,11 +492,11 @@ placeholder), removed when the command exits. Every firmware build is signed wit
 you test is the image you ship. eFuse burns and similar one-way operations need
 `CONFIRM=fuse`.
 
-### 4.10 Hardware (KiCad 10)
+### 4.10 Hardware (KiCad 10, Altium) and mechanical (FreeCAD)
 
 | Command | Does |
 |---|---|
-| `<part>-setup` | Checks, or with `APPLY=1` writes, KiCad's library tables and path variables for the shared library (`KICAD_LIBRARY_DIR` from the user config, else the library KiCad's own `<prefix>_LIB_DIR` points at). |
+| `<part>-setup` | Checks, or with `APPLY=1` writes, KiCad's library tables and path variables for the shared library (`KICAD_LIBRARY_DIR` from the user config, else the library KiCad's own `<prefix>_LIB_DIR` points at). With `<part>_LIBRARY := local`, checks the board's own tables instead and writes nothing. |
 | `<part>-new NAME=` | A board from the template: title block, JLCPCB rules and stackup, library wired in. |
 | `<part>-check` | ERC, then DRC with schematic parity; non-zero exit on errors. |
 | `<part>-build` | Gerbers, drill, positions, BOM, schematic PDF, STEP, WRL and iBOM into `outputs/`. |
@@ -458,7 +506,55 @@ you test is the image you ship. eFuse burns and similar one-way operations need
 A hardware part with no `*.kicad_pro` yet is not started: check and build print `> <part>: not started yet (no
 *.kicad_pro in <dir>): check skipped` and exit 0, doctor warns, release refuses (4.1, Parts not started yet).
 
+**A board's own library.** By default a hardware part uses the shared KiCad library: `KICAD_LIBRARY_DIR` on the Mac,
+and in CI the repository `KICAD_LIBRARY_REPO` checked out with its deploy key (`make ci-setup` adds the key to
+`KICAD_LIBRARY_PROJECT`, section 9). `<part>_LIBRARY := local` in `make/project.mk` makes the board's own
+`sym-lib-table` and `fp-lib-table` its library: every entry points inside the project (`${KIPRJMOD}/...`; KiCad's
+own `${KICAD<n>_...}` libraries are fine), and setup and doctor check those tables instead of the shared library's
+variables. Its CI jobs pass `library: local` to `hardware.yml`, which then checks out no KiCad library (the scaffold
+writes it when `make/project.mk` sets the value; add it by hand to a workflow that exists), and `ci-setup` adds no
+KiCad deploy key when every hardware part is local.
+
 Never edit a board or schematic while KiCad has it open.
+
+#### Altium
+
+Altium Designer is Windows only and licensed, so nothing in the standard runs it: the board's OutJob, run in Altium,
+writes the outputs into `<dir>/outputs/` (never committed). The kind checks the project, verifies the outputs and
+packages them.
+
+| Command | Does |
+|---|---|
+| `<part>-check` | The `.PrjPcb` and every document it lists (each `DocumentPath=` relative, inside the layout, present), the folder layout (section 1), Markdown docs in `docs/<part>/` and not in the part folder, and Git LFS: every Altium binary (`.SchDoc .PcbDoc .SchLib .PcbLib .IntLib .Harness`) is an LFS pointer and covered by an LFS line. Fails on any violation. |
+| `<part>-layout` | Prints the `git mv` commands and the `DocumentPath=` edits that move an existing project into the layout; moves nothing. |
+| `<part>-build` | Verifies the OutJob's outputs in `outputs/` (Gerber or ODB++, drill, pick and place, BOM, PDF), renders the Gerbers with gerbv when it is installed, and writes the fab zip `production/<Board>_v<rev>.zip`. |
+| `<part>-bom` | Hands sourcing and pricing to the `bom` skill. |
+| `<part>-release` / `<part>-github-release` | The board's GitHub Release from the outputs here (4.12). |
+| `<part>-clean` | Removes `outputs/`, which only the OutJob in Altium makes again. `make teardown` never removes it (it removes `production/` and `release/`). |
+
+The `.gitattributes` lines for Altium's binaries are `lockable` (`*.SchDoc filter=lfs diff=lfs merge=lfs -text
+lockable`, and the same for the others): they never merge, so `git lfs lock` before editing one. `.gitignore` gets
+Altium's history, logs, previews and locks (`History/`, `Project Logs for */`, `__Previews/`, `*.PcbDocPreview` ...) and
+the part's `outputs/` and `production/`. In CI only the check runs (`altium.yml`, on the LFS pointers, nothing pulled);
+release.yml has no job for the part. After `make <part>-bump` and `make release-push`, the Release is made where the
+outputs are: `make <part>-github-release FORCE=1` on the Windows machine that ran the OutJob (Git Bash), or on a Mac
+the outputs were copied to.
+
+#### Mechanical (FreeCAD)
+
+| Command | Does |
+|---|---|
+| `<part>-check` | Opens every `*.FCStd` of the part (subfolders too) with freecadcmd and recomputes it; checks that each model is in Git LFS. |
+| `<part>-build` | Exports every visible body or part (a PartDesign Body, an App::Part or a top-level Part shape) to STEP and STL in `outputs/<file>-<label>.step` / `.stl`. |
+| `<part>-release` / `<part>-github-release` | The STEP and STL exports and the `.FCStd` sources attached to the GitHub Release (4.12). |
+
+`FREECADCMD` (user config or environment) names freecadcmd when it is neither on `PATH` nor in FreeCAD.app (the
+Homebrew cask `freecad`). Git matches `.gitattributes` patterns with case on Linux, so the template has both
+`*.fcstd` and FreeCAD's own `*.FCStd`. CI uses Ubuntu 24.04's FreeCAD (0.21, not pinned): a model saved by FreeCAD
+1.x may not recompute the same there; such a project runs the check on its own runner (`STD_RUNNER`).
+
+The revision of an altium or mechanical part is `<dir>/VERSION`, as a hardware part's: a first bump starts at a plain
+number, and each major revision keeps its own files in the Release `latest`.
 
 ### 4.11 Apps, containers, versions, housekeeping
 
@@ -466,7 +562,9 @@ Never edit a board or schematic while KiCad has it open.
 |---|---|
 | `<part>-dev` / `-build` / `-logs` | Same for Flutter, Tauri, Xcode and Android. |
 | `<part>-release TARGET=ios\|android\|macos\|linux` | Signs with keys from the secrets repo and uploads (TestFlight, Play, the OTA bucket), notarizes, or builds deb / AppImage. Needs `CONFIRM=production`. |
-| `<part>-build` / `<part>-release` (docker) | buildx for amd64 and arm64; release pushes `ghcr.io/<owner>/<image>:<sha>` (and `:<version>` on the tag `<part>-v<version>`). |
+| `<part>-build` / `<part>-release` (docker) | buildx for amd64 and arm64; release pushes `ghcr.io/<owner>/<image>:<sha>` (and `:<version>` on the tag `<part>-v<version>`). Every build and push carries the OCI labels `org.opencontainers.image.source` (the repository: `GITHUB_REPOSITORY` in CI, else the GitHub `origin`), `.revision`, `.version` (on the tag) and `.created`, and the same annotations on the pushed index when buildx has `--annotation`: the label links the ghcr.io package to its repository, so it inherits the repository's access. The registry is `DOCKER_REGISTRY`, the project owner's `ghcr.io/<owner>` in lowercase (section 9). |
+| `<part>-setup` / `<part>-doctor` (docker) | setup also logs docker in to ghcr.io with gh's token (`gh auth token`, on stdin; not in CI, which logs in with `GITHUB_TOKEN`); doctor warns when gh's token lacks `write:packages` (`gh auth refresh -s write:packages`) or docker has no ghcr.io login. |
+| `<part>-prune-images` (docker) | Lists the image's versions in ghcr.io that are untagged or tagged only with git shas and older than 30 days (`KEEP_DAYS=`), never a platform manifest of a version that stays; `CONFIRM=prune` deletes them. |
 | `make version` / `make bump PART= LEVEL=patch\|minor\|major` | Show each part's version / release one part (4.12). |
 | `make hooks` | The pre-commit hook: format check, gitleaks, LFS check, large-file guard (files over `STD_MAX_FILE_MB`, 5 MB by default, not in LFS; KiCad design files `.kicad_pcb`, `.kicad_sch`, `.kicad_pro` are skipped, since they are text that git stores as deltas and diffs). |
 | `make clean` / `make distclean` | Build output / also project-local dependencies. Shared toolchains are never removed (`make teardown` and `make prune`, 4.1, are the commands that do). |
@@ -494,7 +592,7 @@ GitHub marks one Release of a repository **Latest**. Since v20 that is the Relea
 `<project> latest`): it holds the newest files of every part, and the part Releases are made with `--latest=false`.
 Its files keep their names from one version to the next, so `.../releases/download/latest/<file>` always gets the
 newest: the version is taken out of the name and the part put in front (`app-1.0.0-linux-amd64.deb` is
-`app-linux-amd64.deb`, `rev4-firmware.bin` is `firmware-rev4-firmware.bin`). A hardware part keeps one group per major
+`app-linux-amd64.deb`, `rev4-firmware.bin` is `firmware-rev4-firmware.bin`). A hardware, altium or mechanical part keeps one group per major
 version, so every board revision has its files (`hardware-v3-...`, `hardware-v4-...`). Each group has its own
 `<group>-SHA256SUMS`; the part's own checksum files are left out. Its notes are a table of each group's version and
 Release.
@@ -520,8 +618,9 @@ a board revision `2` is `3` whatever the level; patch on a pre-release `1.5.0-rc
 | Kind | Version lives in | bump also |
 |---|---|---|
 | zephyr | `<dir>/VERSION`, Zephyr format (`VERSION_MAJOR`, `VERSION_MINOR`, `PATCHLEVEL`, `EXTRAVERSION` for a pre-release), or plain | creates it in Zephyr format when missing |
-| espidf, pio, arm-gcc, circuitpython | `<dir>/VERSION` (Zephyr format or plain), else `<dir>/version.txt` | creates a plain `VERSION` when missing |
+| espidf, pio, arm-gcc, circuitpython, silabs | `<dir>/VERSION` (Zephyr format or plain), else `<dir>/version.txt` | creates a plain `VERSION` when missing |
 | hardware | `<dir>/VERSION`, else the `rev` of the board's title block | writes `VERSION` (the title block is left as it is; say so in the board) |
+| altium, mechanical | `<dir>/VERSION` (a revision, as hardware) | creates it on the first bump |
 | go, docker, cloud-worker, web-pages | `<dir>/VERSION` (plain) | creates it on the first bump |
 | app-flutter | `pubspec.yaml` `version: x.y.z+build` | counts the build number up |
 | app-tauri | `src-tauri/tauri.conf.json` `"version"` (or the `package.json` it points to) | sets the same version in the `[package]` table of `src-tauri/Cargo.toml` (not a dependency's), the top-level `"version"` of `package.json` and, when it is tracked, the app's own entry in `src-tauri/Cargo.lock`, each when it exists |
@@ -573,7 +672,10 @@ saying so, a missing required one fails):
 | pio | per env (`PIO_ENV`, else `default_envs`, else every `[env:*]`): `<env>-firmware.bin` / `.hex` / `.uf2`, `<env>-firmware.elf` |
 | arm-gcc | `<name>.bin`, `.hex` (objcopy when the build has none), `.elf`, `.map` |
 | circuitpython | `<board>-firmware.uf2` / `.bin`, `<part>-<version>-code.zip` (the content of `<dir>/src`) |
+| silabs | `<name>.hex` (factory programming), `<name>.out` (ELF), `<name>-signed.rps` (with `SIGN=1`) and `<name>.rps` (OTA), and the `.map`, `.s37` and `.bin` when the build made them |
 | hardware | `<Board>_v<rev>.zip` (Gerbers and drill), `-bom.csv`, `-bom-jlcpcb.csv`, `-pos.csv`, `-cpl-jlcpcb.csv`, `.ipc356` (IPC-D-356 netlist, when kicad-cli exports it), `-schematic.pdf`, `-ibom.html`, `.step`, `.wrl`, `-top.png` / `-bottom.png` (after `make <part>-render`), `-erc.rpt`, `-drc.rpt` |
+| altium | `<Board>_v<rev>.zip` (Gerbers and drill, or the ODB++ set), the pick and place, BOM and PDF files of `outputs/`, and `bom/<Board>_BOM.csv`; made with `make <part>-github-release FORCE=1` where the outputs are, not by CI (4.10) |
+| mechanical | every `.step` and `.stl` of `outputs/`, and the `.FCStd` models |
 | cloud-worker | none: the Release carries the CHANGELOG notes only. What a Worker releases is its production deploy, which the tag's job makes before the Release. The `latest` Release has nothing to copy for it |
 | web-pages | none, as cloud-worker: the notes only, after the tag's production deploy |
 | app-flutter | per PLATFORM (since v8): android `-android.apk` (linked), `.aab` and `-android-mapping.txt` (workflow artifact only); ios `-ios-dSYMs.zip` (the build number goes to the notes); macos `-macos-universal.zip`; linux-amd64 and linux-arm64 `-<platform>.tar.gz`; windows `-windows-x64.zip` (Flutter's arm64 Windows build needs an arm64 host: not built) |
@@ -817,10 +919,10 @@ of the project's repository (from stdin, never on a command line), adds the publ
 ## 6. CI/CD
 
 The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/name`, default
-`mayankgautam-me/ci-templates`), tagged `v1.0`. It is a setting of its own, independent of the project's `GITHUB_OWNER`:
-projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
+`mayankgautam-me/ci-templates`), tagged `v1.1` (`v1.0` stays for projects not updated yet). It is a setting of its
+own, independent of the project's `GITHUB_OWNER`: projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.0`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.1`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -864,6 +966,15 @@ production deploy of a part runs at a time.
 an exact comparison. The make target refuses a tag that does not match the part's version. `checks.yml` does not repeat
 that work for the tag.
 
+**The 1.1 kinds.** `silabs.yml` runs check, build, release and the OTA publish like the other firmware kinds, on the
+runner itself (no image): `<part>-setup` installs the pinned slt, slc, the Simplicity SDK and WiseConnect (about 2
+GB), kept in the Actions cache per version and saved right after setup; a `SIGN=1` build needs Simplicity Commander
+on the runner (or keep `SIGN=0` in CI). `mechanical.yml` runs check, build (STEP and STL, kept 7 days) and release,
+with Ubuntu 24.04's FreeCAD. `altium.yml` runs the check only, on the LFS pointers: `checks.yml` has a job for an
+altium part and `release.yml` none, and its `run_build` and `run_release` do nothing (4.10, Altium). `hardware.yml`
+takes `library: shared` (default) or `local`: with `local` it checks out no KiCad library (4.10). A project whose only
+parts are altium has no `latest` job in `release.yml`.
+
 A production-only part (section 4.5) has no deploy-staging job: a push to main deploys nothing for it, and its tag
 deploys production like any cloud part. The caller passes `production_only: true`, and `scaffold.sh` sets it for the parts named with `--production-only` and for cloud-worker and
 web-pages parts whose `wrangler.jsonc` has no `env.staging`.
@@ -879,7 +990,8 @@ on each job:
   `SECRETS_REMOTE`), checked out sparsely (the project's folder and
   `recipients`) beside the project; `SECRETS_DIR` points there.
 - `KICAD_LIBRARY_REPO` = `<owner>/kicad-library`: the shared KiCad library for the hardware jobs (3D models only, see
-  Limits and billing). The scaffold writes it from `KICAD_LIBRARY_PROJECT` in the user config.
+  Limits and billing). `make ci-setup` sets it from `KICAD_LIBRARY_PROJECT` (section 9), and not at all when every
+  hardware part has its own library (`<part>_LIBRARY := local`).
 - `STD_APT_PACKAGES`: extra Debian packages for every apt install, e.g. `libudev-dev` for the `hidapi` crate.
 - `STD_RUNNER`: the runner label for every Linux job (default `ubuntu-24.04`, GitHub's). Set it on the organization to
   a self-hosted runner's label (a Linux machine with Docker, amd64, since the jobs run amd64 containers) and every
@@ -1062,9 +1174,10 @@ permissions (https://developers.cloudflare.com/r2/api/tokens/), the Workers Buil
 SECRETS_REMOTE        := git@github.com:<owner>/secrets.git   (optional: the default owner's secrets repo)
 GITHUB_OWNER          := <owner>                              (the default owner)
 # CI_TEMPLATES_REPO   := mayankgautam-me/ci-templates   (the default; set it only for another repository)
-DOCKER_REGISTRY       := ghcr.io/<owner>
+DOCKER_REGISTRY       := ghcr.io/<owner>                      (optional: the default owner's registry)
 KICAD_LIBRARY_DIR     := <your kicad-library checkout>
-KICAD_LIBRARY_PROJECT := <owner>/kicad-library
+KICAD_LIBRARY_PROJECT := <owner>/kicad-library                (optional: the default is <owner>/kicad-library)
+FREECADCMD            := <path to freecadcmd>                 (optional: when it is not found by itself)
 ```
 
 `GITHUB_OWNER` is the default owner: the GitHub account (a personal account or an organization) of a project that has
@@ -1079,10 +1192,19 @@ owner at all. Write all three with `:=` (common.mk reads this file's own values 
 wins over this file; scaffold the workflows again after changing it. `CI_TEMPLATES_PROJECT` (before 1.7, default
 `<owner>/ci-templates`) is ignored, and the scaffold and the audit warn while it is set.
 
+`DOCKER_REGISTRY` follows the project's owner like the secrets repo (since 1.1). It is, in order: the value in
+`make/project.mk` or the environment; this file's, only when the project's owner is this file's `GITHUB_OWNER` (it never
+reaches another owner's project); else `ghcr.io/<owner>`, the owner in lowercase (ghcr.io refuses capitals). `make
+<part>-doctor` of a docker part says where it came from. The repository of the project's `origin` (`STD_ORIGIN_REPO`,
+read with its owner from the same `git remote get-url origin`) names the images' source label (4.11).
+
 `KICAD_LIBRARY_DIR` is optional: without it the hardware kind uses the library KiCad already points at (its
 `FABROLABS_LIB_DIR` path variable, or `<KICAD_LIB_PREFIX>_LIB_DIR`), and `make <part>-doctor` says which one it
-found. `KICAD_LIBRARY_PROJECT` is the GitHub repository of the shared KiCad library: the scaffold writes the CI variable
-`KICAD_LIBRARY_REPO` from it for a project with a hardware part.
+found. `KICAD_LIBRARY_PROJECT` (`owner/name`) is the GitHub repository of the shared KiCad library. It is, in order:
+the value in `make/project.mk`; this file's (or the environment's); else `<owner>/kicad-library` of the project's
+owner. `make ci-setup` adds the KiCad deploy key to it and sets the CI variable `KICAD_LIBRARY_REPO` from it, for a
+project with a hardware part that uses the shared library (none when every hardware part is `<part>_LIBRARY := local`);
+the hardware doctor prints it.
 
 `OTA_BUCKET` is not a per-user setting (since v6): it is the project's, `OTA_BUCKET := <bucket>` in
 `make/project.mk` (the scaffold leaves a commented line for the kinds that release OTA). Each project has its own
@@ -1106,6 +1228,37 @@ Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) an
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
 
+- **1.1** (2026-11-16): three new kinds, and the owner's registry and library. `make/VERSION`, the managed headers and
+  the workflows' `@v1.1` say 1.1; `mayankgautam-me/ci-templates` gets the tag `v1.1` and keeps `v1.0`.
+  - Kinds: `silabs` (Silicon Labs slc projects on the Simplicity SDK and WiseConnect, SiWx917 / SiWG917 M4; slt, slc,
+    Simplicity Commander; `power`, `power-live`, `power-avg` through Commander's energy monitor; the optional signing
+    key `silabs-m4`), in `firmware/`; `altium` (Altium Designer boards: Altium runs on Windows, so the kind checks the
+    project, its fixed layout and Git LFS, verifies the OutJob's outputs and packages the fab zip; `make <part>-layout`
+    prints the moves into the layout; CI checks only, and the Release is made where the outputs are), in `hardware/`;
+    `mechanical` (FreeCAD models in Git LFS: open and recompute, STEP and STL exports), in the new group folder
+    `mechanical/`. Their workflows are `silabs.yml`, `altium.yml` and `mechanical.yml`; their docs `power.md` (silabs,
+    with `protocol.md` and `flashing.md`), `bringup.md` and `manufacturing.md` (altium), `assembly.md` (mechanical).
+    None of them is started before its file exists (`*.slcp`, `*.PrjPcb`, `*.FCStd`).
+  - zephyr: upstream Zephyr with `<part>_ZEPHYR := v4.3.0` (and no `<part>_NCS`), `PROBE=commander` (west's Silicon Labs
+    Commander runner), and `make <part>-power` with `POWER=ppk2` or `joulescope` (4.9).
+  - hardware: `<part>_LIBRARY := local` makes the board's own library tables its library; its CI jobs pass the new
+    `hardware.yml` input `library: local` and check out no KiCad library (4.10). `KICAD_LIBRARY_PROJECT` is read from
+    `make/project.mk`, else the user config, else `<owner>/kicad-library` (section 9).
+  - docker: `DOCKER_REGISTRY` follows the project's owner (`ghcr.io/<owner>`, lowercase; section 9); images carry the
+    OCI source, revision, version and created labels, so a ghcr.io package inherits its repository's access; setup logs
+    docker in to ghcr.io with gh's token, doctor checks the `write:packages` scope, and `make <part>-prune-images`
+    deletes old untagged and sha-only versions with `CONFIRM=prune` (4.11).
+  - `make refs-fetch` and `make refs-check`: the reference documents listed in `docs/references.md` (written for every
+    project) downloaded into the ignored `references/` and checked by SHA256 (4.1).
+  - `.gitattributes` has `*.FCStd` next to `*.fcstd` (git matches with case on Linux, so a Linux checkout got the
+    pointer file of `Case.FCStd`), and Altium's binaries with an altium part; the audit checks the case of every CAD
+    file in LFS, reports an Altium binary committed as a plain blob as an error, reports an origin that is not on
+    GitHub (area `repo`, with the move to GitHub as its fix), suggests the `PARTS` entry for a KiCad, Altium or
+    FreeCAD folder no part covers, and checks the docs of the new kinds.
+  - Teardown never removes an altium part's `outputs/` (only Altium makes them again); it removes its `production/`.
+  Update from 1.0: refresh the managed files, move the `uses:` lines to `@v1.1`, add `references/` to `.gitignore`
+  and `*.FCStd` to `.gitattributes` (`scaffold.sh --force` adds both, and `docs/references.md` when it is missing), and
+  `library: local` on the jobs of a hardware part that sets `<part>_LIBRARY := local`.
 - **1.0** (2026-11-15, second restart): the version restarts at 1.0 again. `make/VERSION`, the managed files'
   headers, the workflows' `@v1.0` and the `mayankgautam-me/ci-templates` tag all say 1.0; ci-templates' history is one
   commit, tagged `v1.0`. 1.1 to 1.8 below (and the first 1.0) are the versions before this restart; 1.8 and this 1.0

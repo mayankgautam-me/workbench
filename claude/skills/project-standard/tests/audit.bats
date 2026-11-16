@@ -6,7 +6,7 @@ if [[ -f "$BATS_TEST_DIRNAME/helpers.bash" ]]; then
   load helpers
 fi
 
-SA_HEADER='# project-standard v1.0 (managed: refresh with the project-standard skill, put project changes in make/local.mk)'
+SA_HEADER='# project-standard v1.1 (managed: refresh with the project-standard skill, put project changes in make/local.mk)'
 SA_KINDS="zephyr espidf pio arm-gcc circuitpython hardware cloud-worker web-pages app-flutter app-tauri app-xcode app-android docker go python"
 
 setup() {
@@ -96,7 +96,7 @@ EOF
   run "$(sa_skill_copy)/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -eq 0 ]
-  [[ $output == *"standard v1.0"* ]]
+  [[ $output == *"standard v1.1"* ]]
   [[ $output == *clean* ]]
 }
 
@@ -126,9 +126,9 @@ EOF
   [ "$status" -eq 1 ]
   [[ $output == *"not standard"* ]]
   [[ $output == *"not a project-standard project"* ]]
-  [[ $output == *"Firmware: folder name is not lowercase"* ]]
-  [[ $output == *"git mv firmware/WidgetNode firmware/WidgetNode.tmp && git mv firmware/WidgetNode.tmp firmware/widget-node"* ]]
-  [[ $output == *"Hardware/WidgetNode: folder name is not lowercase"* ]]
+  [[ $output == *"Firmware: folder name is not lowercase"* ]] || false
+  [[ $output == *"git mv 'firmware/WidgetNode' 'firmware/WidgetNode.tmp' && git mv 'firmware/WidgetNode.tmp' 'firmware/widgetnode'"* ]] || false
+  [[ $output == *"Hardware/WidgetNode: folder name is not lowercase"* ]] || false
   [[ $output != *"upmuse.xcodeproj: folder"* ]]
   [[ $output == *"Firmware/WidgetNode/Makefile: sub-Makefile, adopt moves its targets"* ]]
   [[ $output == *"Website/Makefile: sub-Makefile"* ]]
@@ -323,8 +323,8 @@ sa_git_lfs() {
   run "$(sa_skill_copy)/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -eq 1 ]
-  [[ $output == *"warn"*"hardware"*"hardware/outputs: 2 tracked file(s) in a build output folder"*"git rm -r --cached hardware/outputs"* ]] || false
-  [[ $output == *"hardware/production: 1 tracked file(s)"*"git rm -r --cached hardware/production"* ]] || false
+  [[ $output == *"warn"*"hardware"*"hardware/outputs: 2 tracked file(s) in a build output folder"*"git rm -r --cached 'hardware/outputs'"* ]] || false
+  [[ $output == *"hardware/production: 1 tracked file(s)"*"git rm -r --cached 'hardware/production'"* ]] || false
   [[ $output != *"docs/production"* ]] || false
   # a folder with a tracked .kicad_pro counts too when the project is not standard
   l="$BATS_TEST_TMPDIR/hwlegacy"
@@ -357,7 +357,7 @@ sa_git_lfs() {
   sa_git "$d" commit -q -m release
   run "$(sa_skill_copy)/scripts/audit.sh" "$d"
   [ "$status" -eq 1 ]
-  [[ $output == *"hardware/release: 1 tracked file(s) in the release folder"*"git rm -r --cached hardware/release"* ]] || false
+  [[ $output == *"hardware/release: 1 tracked file(s) in the release folder"*"git rm -r --cached 'hardware/release'"* ]] || false
 }
 
 # --- v7: documents ---------------------------------------------------------------------------
@@ -475,14 +475,14 @@ sa_git_lfs() {
   sa_fresh "$d"
   ci="$d/.github/workflows/checks.yml"
   sed -i.bak -e 's|actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1|actions/checkout@v7|' "$ci"
-  sed -i.bak -e 's|zephyr.yml@v1.0|zephyr.yml@v8|' "$ci"
+  sed -i.bak -e 's|zephyr.yml@v1.1|zephyr.yml@v8|' "$ci"
   printf '      - uses: some-org/deploy-tool@v1\n' >>"$ci"
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -eq 1 ]
   [[ $output == *"error    ci        .github/workflows/checks.yml: uses some-org/deploy-tool@v1: a third-party action"* ]]
   [[ $output == *"uses actions/checkout@v7: not pinned by a full commit SHA"* ]]
-  [[ $output == *"uses mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v8: the skill is at v1.0"* ]]
+  [[ $output == *"uses mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v8: the skill is at v1.1"* ]]
 }
 
 @test "audit: a reusable workflow with no @version is an error, and one from another owner is a warning" {
@@ -490,7 +490,7 @@ sa_git_lfs() {
   d="$BATS_TEST_TMPDIR/nover"
   sa_fresh "$d"
   ci="$d/.github/workflows/checks.yml"
-  sed -i.bak -e 's|zephyr.yml@v1.0|zephyr.yml|' -e 's|mayankgautam-me/ci-templates/.github/workflows/go|other-owner/ci-templates/.github/workflows/go|' "$ci"
+  sed -i.bak -e 's|zephyr.yml@v1.1|zephyr.yml|' -e 's|mayankgautam-me/ci-templates/.github/workflows/go|other-owner/ci-templates/.github/workflows/go|' "$ci"
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -508,7 +508,7 @@ sa_git_lfs() {
   sed -i.bak -e 's|mayankgautam-me/ci-templates/|fabrolabs-innovations/ci-templates/|' "$ci"
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
-  [[ $output == *"warn     ci        .github/workflows/checks.yml: uses fabrolabs-innovations/ci-templates/.github/workflows/zephyr.yml@v1.0: outdated, the CI templates are mayankgautam-me/ci-templates (CI_TEMPLATES_REPO), not fabrolabs-innovations/ci-templates"* ]]
+  [[ $output == *"warn     ci        .github/workflows/checks.yml: uses fabrolabs-innovations/ci-templates/.github/workflows/zephyr.yml@v1.1: outdated, the CI templates are mayankgautam-me/ci-templates (CI_TEMPLATES_REPO), not fabrolabs-innovations/ci-templates"* ]]
   [[ $output == *"change the uses lines to mayankgautam-me/ci-templates"* ]]
   [[ $output != *"release.yml: uses fabrolabs-innovations"* ]]
   # the project's CI_TEMPLATES_REPO makes that repo the right one, and the other file's lines outdated
@@ -569,7 +569,7 @@ sa_git_lfs() {
   [[ $output == *".github/workflows/checks.yml: missing"* ]]
   # scaffold --force keeps it and does not write a second checks workflow next to it
   run "$skill/scripts/scaffold.sh" "$d" --project demo --part firmware:zephyr --part hardware:hardware --part cloud-api:cloud-worker:cloud/api --force
-  [[ $output == *"rename it with git mv .github/workflows/ci.yml .github/workflows/checks.yml"* ]]
+  [[ $output == *"rename it with git mv .github/workflows/ci.yml .github/workflows/checks.yml"* ]] || false
   [ ! -e "$d/.github/workflows/checks.yml" ]
 }
 
@@ -649,15 +649,15 @@ sa_layout() {
   sa_scaf "$d" api:cloud-worker:api fw:zephyr:src/fw
   sa_layout "$d"
   [[ $output == *"part api (cloud-worker) is outside cloud/"* ]]
-  [[ $output == *"git mv api cloud"* ]]
+  [[ $output == *"git mv 'api' 'cloud'"* ]] || false
   [[ $output == *"part fw (zephyr) is outside firmware/"* ]]
-  [[ $output == *"git mv src/fw firmware"* ]]
+  [[ $output == *"git mv 'src/fw' 'firmware'"* ]] || false
   # with several parts of the group the fix names <group>/<name>
   d="$BATS_TEST_TMPDIR/outside-many"
   sa_scaf "$d" api:cloud-worker:api tools:python
   sa_layout "$d"
   [[ $output == *"part api (cloud-worker) is outside cloud/"* ]]
-  [[ $output == *"git mv api cloud/api"* ]]
+  [[ $output == *"git mv 'api' 'cloud/api'"* ]] || false
   [[ $output != *"part tools"* ]]
 }
 
@@ -682,9 +682,9 @@ sa_layout() {
   : >"$d/firmware/Drivers/CMSIS/a.h"
   : >"$d/hardware/Src/x.txt"
   sa_layout "$d"
-  [[ $output != *"firmware/Src: folder name is not lowercase"* ]]
-  [[ $output != *"firmware/Drivers: folder name is not lowercase"* ]]
-  [[ $output == *"hardware/Src: folder name is not lowercase"* ]]
+  [[ $output != *"firmware/Src: folder name is not lowercase"* ]] || false
+  [[ $output != *"firmware/Drivers: folder name is not lowercase"* ]] || false
+  [[ $output == *"hardware/Src: folder name is not lowercase"* ]] || false
 }
 
 @test "audit 2c: several firmware parts with one directly in firmware/ warns about the subfolder" {
@@ -692,7 +692,7 @@ sa_layout() {
   sa_scaf "$d" nrf9151:zephyr:firmware stm32f042:pio
   sa_layout "$d"
   [[ $output == *"part nrf9151 (zephyr) shares firmware/ with other parts and needs its own subfolder firmware/nrf9151"* ]]
-  [[ $output == *"git mv firmware firmware/nrf9151"* ]]
+  [[ $output == *"git mv 'firmware' 'firmware/nrf9151'"* ]] || false
   [[ $output != *"part stm32f042"* ]]
   [[ $output != *"name firmware parts"* ]]
 }
@@ -801,6 +801,143 @@ GH
   echo "$output"
   [[ $output == *"routes small files to LFS: *.png *.zip"* ]]
   [[ $output == *"git add --renormalize ."* ]]
+  # step stp wrl, and FreeCAD's fcstd in both cases (1.1: git matches with case on Linux)
   run grep -c 'filter=lfs' "$(sa_skill_copy)/templates/project/.gitattributes"
-  [ "$output" = 4 ]
+  [ "$output" = 5 ]
+}
+
+# sa_refs DIR: an unstandard repo with reference folders named the way vendors name them, a project-local KiCad
+# library, and code whose naming is its language's
+sa_refs() {
+  local d=$1
+  mkdir -p "$d/References/Cavli CQM220" "$d/References/SiLabs SiWG917" \
+    "$d/References/SimCOM M.2/simcom_sim82xx__sim83xx_application_note_archive" \
+    "$d/Hardware/Library/Footprints/Capacitor.pretty" "$d/Hardware/Library/Symbols" "$d/Hardware/Library/Models/Capacitor" \
+    "$d/cloud/agent/my_pkg/sub_mod" "$d/app/Assets.xcassets/Icon_1" "$d/.github/Odd_Name"
+  : >"$d/References/Cavli CQM220/a.md"
+  : >"$d/References/SiLabs SiWG917/a.md"
+  : >"$d/References/SimCOM M.2/simcom_sim82xx__sim83xx_application_note_archive/a.md"
+  : >"$d/Hardware/Library/Footprints/Capacitor.pretty/C_0402.kicad_mod"
+  : >"$d/Hardware/Library/Symbols/Capacitor.kicad_sym"
+  : >"$d/Hardware/Library/Models/Capacitor/C.wrl"
+  : >"$d/Hardware/Board.kicad_pro"
+  : >"$d/cloud/agent/pyproject.toml"
+  : >"$d/cloud/agent/my_pkg/sub_mod/__init__.py"
+  : >"$d/app/Assets.xcassets/Icon_1/x.json"
+  : >"$d/.github/Odd_Name/x"
+  sa_git "$d" init -q -b main
+  sa_git "$d" add -A
+  sa_git "$d" commit -q -m refs
+}
+
+@test "audit: folder slugs keep words whole, drop dots, turn runs of spaces and underscores into one -, and the git mv quotes paths" {
+  d="$BATS_TEST_TMPDIR/refs"
+  sa_refs "$d"
+  run "$(sa_skill_copy)/scripts/audit.sh" "$d"
+  echo "$output"
+  [[ $output == *"References/Cavli CQM220: folder name is not lowercase kebab"*"git mv 'references/Cavli CQM220' 'references/Cavli CQM220.tmp' && git mv 'references/Cavli CQM220.tmp' 'references/cavli-cqm220'"* ]] || false
+  [[ $output == *"rename to references/silabs-siwg917 "* ]] || false
+  [[ $output == *"rename to references/simcom-m2 "* ]] || false
+  [[ $output == *"References/SimCOM M.2/simcom_sim82xx__sim83xx_application_note_archive: folder name is not lowercase kebab"* ]] || false
+  [[ $output == *"git mv 'references/simcom-m2/simcom_sim82xx__sim83xx_application_note_archive' 'references/simcom-m2/simcom_sim82xx__sim83xx_application_note_archive.tmp' && git mv 'references/simcom-m2/simcom_sim82xx__sim83xx_application_note_archive.tmp' 'references/simcom-m2/simcom-sim82xx-sim83xx-application-note-archive'"* ]] || false
+  [[ $output == *"Hardware/Library: folder name is not lowercase"* ]] || false
+  [[ $output != *"si-labs"* ]] || false
+  # not reported: KiCad library folders, a bundle, hidden folders, and a Python package inside code
+  [[ $output != *"Capacitor.pretty: folder"* ]] || false
+  [[ $output != *"Hardware/Library/Symbols: folder"* ]] || false
+  [[ $output != *"Hardware/Library/Footprints: folder"* ]] || false
+  [[ $output != *"Hardware/Library/Models"* ]] || false
+  [[ $output != *"my_pkg"* ]] || false
+  [[ $output != *"xcassets"* ]] || false
+  [[ $output != *"Odd_Name"* ]] || false
+}
+
+@test "audit: an origin that is not on GitHub is an error with the move to GitHub as its fix; a GitHub origin is not" {
+  d="$BATS_TEST_TMPDIR/gitlab"
+  sa_refs "$d"
+  sa_git "$d" remote add origin git@gitlab.com:acme-labs/corelink.git
+  run "$(sa_skill_copy)/scripts/audit.sh" "$d"
+  echo "$output"
+  [[ $output == *"error    repo      origin: origin is not on GitHub (git@gitlab.com:acme-labs/corelink.git)"* ]] || false
+  [[ $output == *"gh repo create acme-labs/corelink --private && git lfs fetch --all origin && git remote rename origin gitlab && git remote add origin git@github.com:acme-labs/corelink.git && git push origin --all && git push origin --tags && git lfs push --all origin"* ]] || false
+  sa_git "$d" remote set-url origin https://github.com/acme-labs/corelink.git
+  run "$(sa_skill_copy)/scripts/audit.sh" "$d"
+  [[ $output != *"not on GitHub"* ]] || false
+}
+
+@test "audit: KiCad, Altium and FreeCAD folders with no part get the PARTS entry to add" {
+  d="$BATS_TEST_TMPDIR/cad"
+  mkdir -p "$d/Hardware" "$d/Altium Board" "$d/Mechanical"
+  : >"$d/Hardware/Board.kicad_pro"
+  printf '(sym_lib_table (lib (name "X") (uri "${KIPRJMOD}/Library/X.kicad_sym")))\n' >"$d/Hardware/sym-lib-table"
+  printf '[Design]\n' >"$d/Altium Board/Main.PrjPcb"
+  printf 'x' >"$d/Mechanical/Case.FCStd"
+  sa_git "$d" init -q -b main
+  sa_git "$d" add -A
+  sa_git "$d" commit -q -m cad
+  run "$(sa_skill_copy)/scripts/audit.sh" "$d"
+  echo "$output"
+  [[ $output == *"parts     Hardware: a KiCad project with no part (kind hardware)"*"add hardware:hardware:hardware to PARTS in make/project.mk and hardware_LIBRARY := local"* ]] || false
+  [[ $output == *"parts     Altium Board: an Altium project (*.PrjPcb) with no part (kind altium)"*"add altium-board:altium:altium-board to PARTS"* ]] || false
+  [[ $output == *"parts     Mechanical: a FreeCAD model (*.FCStd) with no part (kind mechanical)"*"add mechanical:mechanical:mechanical to PARTS"* ]] || false
+}
+
+@test "audit: a binary Altium document as a plain blob is an error; an ASCII one is not; LFS patterns must match the case" {
+  d="$BATS_TEST_TMPDIR/altium"
+  mkdir -p "$d/hardware" "$d/mechanical"
+  printf '[Design]\n' >"$d/hardware/Main.PrjPcb"
+  printf 'bin\000ary' >"$d/hardware/Main.PcbDoc"
+  printf '|RECORD=1|\n' >"$d/hardware/Text.SchDoc"
+  # an LFS pointer committed while *.fcstd (lowercase) routed it: on Linux the pattern does not match Case.FCStd
+  printf 'version https://git-lfs.github.com/spec/v1\noid sha256:%064d\nsize 1\n' 0 >"$d/mechanical/Case.FCStd"
+  printf '*.fcstd filter=lfs diff=lfs merge=lfs -text\n' >"$d/.gitattributes"
+  sa_git "$d" init -q -b main
+  sa_git "$d" -c core.ignorecase=false -c filter.lfs.clean=cat -c filter.lfs.smudge=cat -c filter.lfs.process= add -A
+  sa_git "$d" commit -q -m altium
+  run "$(sa_skill_copy)/scripts/audit.sh" "$d"
+  echo "$output"
+  [[ $output == *"error    lfs       hardware/Main.PcbDoc: Altium binary document committed as a plain git blob"*"*.PcbDoc filter=lfs diff=lfs merge=lfs -text"*"git add --renormalize 'hardware/Main.PcbDoc'"* ]] || false
+  [[ $output != *"Text.SchDoc"* ]] || false
+  [[ $output != *"Main.PrjPcb: "* ]] || false
+  [[ $output == *"mechanical/Case.FCStd: in Git LFS, but no .gitattributes line routes *.FCStd there with this case"* ]] || false
+}
+
+@test "audit 1.1: a fresh hardware + silabs + mechanical scaffold and a fresh altium one are clean (altium: no release job)" {
+  skill=$(sa_skill_copy)
+  d="$BATS_TEST_TMPDIR/trio"
+  "$skill/scripts/scaffold.sh" "$d" --project trio --part hardware:hardware --part firmware:silabs --part mechanical:mechanical >/dev/null
+  run "$skill/scripts/audit.sh" "$d"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  d="$BATS_TEST_TMPDIR/alt"
+  "$skill/scripts/scaffold.sh" "$d" --project alt --part hardware:altium >/dev/null
+  run "$skill/scripts/audit.sh" "$d"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ $output != *"no release job"* ]]
+  [[ $output != *"no latest job"* ]]
+  # a missing kind doc is still reported, with the lists the scaffold writes
+  rm "$d/docs/hardware/manufacturing.md" "$BATS_TEST_TMPDIR/trio/docs/firmware/power.md" "$BATS_TEST_TMPDIR/trio/docs/mechanical/assembly.md"
+  run "$skill/scripts/audit.sh" "$d"
+  [[ $output == *"docs/hardware/manufacturing.md: missing (part hardware, altium)"* ]]
+  run "$skill/scripts/audit.sh" "$BATS_TEST_TMPDIR/trio"
+  [[ $output == *"docs/firmware/power.md: missing (part firmware, silabs)"* ]]
+  [[ $output == *"docs/mechanical/assembly.md: missing (part mechanical, mechanical)"* ]]
+}
+
+@test "audit 1.1: a project still on 1.0 is outdated: make/VERSION, the managed headers and the @v1.0 uses lines" {
+  skill=$(sa_skill_copy)
+  d="$BATS_TEST_TMPDIR/old"
+  sa_fresh "$d"
+  printf '1.0\n' >"$d/make/VERSION"
+  sed -i.bak '1s/v1\.1/v1.0/' "$d/make/common.mk"
+  sed -i.bak 's/\.yml@v1\.1/.yml@v1.0/' "$d/.github/workflows/checks.yml"
+  rm -f "$d"/make/*.bak "$d"/.github/workflows/*.bak
+  run "$skill/scripts/audit.sh" "$d"
+  echo "$output"
+  [ "$status" -ne 0 ]
+  [[ $output == *"standard v1.0"* ]]
+  [[ $output == *"make/common.mk: standard v1.0, the skill is at v1.1"* ]]
+  [[ $output == *"make/VERSION: says 1.0, the skill is at v1.1"* ]]
+  [[ $output == *"zephyr.yml@v1.0: the skill is at v1.1"* ]]
 }

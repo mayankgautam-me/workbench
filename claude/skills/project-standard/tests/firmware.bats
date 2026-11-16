@@ -921,3 +921,115 @@ cpy_VOLUME := $BATS_TEST_TMPDIR/CIRCUITPY"
   [[ "$output" == *"> fw: not started yet (no platformio.ini in fw): test skipped"* ]]
   for t in idf.py pio cmake arm-none-eabi-gcc docker; do [ ! -f "$STUB_LOG/$t.argv" ] || { echo "$t ran"; false; }; done
 }
+
+# --- zephyr: upstream Zephyr, Simplicity Commander, energy profiling --------------------------
+
+@test "zephyr upstream: <part>_ZEPHYR sets up west init -m zephyr --mr <ver> in toolchains/zephyr-<ver> with only zephyr's requirements" {
+  zephyr_proj
+  echo 'firmware_ZEPHYR := v4.3.0' >>make/project.mk
+  echo "firmware_TOOLCHAIN_ENV := $BATS_TEST_TMPDIR/no-image/toolchain-env.sh" >>make/project.mk
+  zephyr_stub_git
+  for t in dtc gperf; do stub_recorder "$t"; done
+  stub_recorder pip
+  stub_cmd python3 'printf "%s\n" "$@" >>"$STUB_LOG/python3.argv"; mkdir -p "$3/bin"; cp "$STUBS/west" "$STUBS/pip" "$3/bin/"'
+  ws="$STD_TOOLCHAINS/zephyr-v4.3.0"
+  run env -u ZEPHYR_SDK_INSTALL_DIR make firmware-setup
+  [ "$status" -eq 0 ]
+  [[ "$(argv west)" == *$'init\n-m\nhttps://github.com/zephyrproject-rtos/zephyr\n--mr\nv4.3.0\n'"$ws"$'\n'* ]]
+  [[ "$(argv west)" == *$'update\n--narrow\n-o=--depth=1'* ]]
+  [[ "$(argv west)" != *$'init\n-l'* ]]
+  [ ! -f "$STUB_LOG/git.argv" ]
+  [[ "$(argv pip)" == *"$ws/zephyr/scripts/requirements.txt"* ]]
+  [[ "$(argv pip)" != *"nrf/scripts"* ]]
+  [ -f "$ws/.std-updated" ]
+  [ ! -e "$STD_TOOLCHAINS/ncs-v3.2.1/.west" ]
+  [[ "$output" == *"firmware: Zephyr v4.3.0 in $ws"* ]]
+}
+
+@test "zephyr upstream: build, doctor and help use the Zephyr workspace; NCS and ZEPHYR together are refused" {
+  zephyr_proj
+  echo 'firmware_ZEPHYR := v4.3.0' >>make/project.mk
+  ws="$STD_TOOLCHAINS/zephyr-v4.3.0"
+  # the workspace set up (std_ready), so nothing here runs a real setup
+  mkdir -p "$ws/zephyr" "$ws/.venv/bin"
+  : >"$ws/zephyr/zephyr-env.sh"
+  : >"$ws/.std-updated"
+  cp "$STUBS/west" "$ws/.venv/bin/west"
+  rm -f "$STUB_LOG/west.argv"
+  run make firmware-build
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"not set up yet"* ]]
+  [[ "$(argv west)" == *$'build\n--pristine\nauto'* ]]
+  run make firmware-doctor
+  [[ "$output" == *"firmware: zephyr, Zephyr v4.3.0, Zephyr SDK 0.17.4"* ]]
+  [[ "$output" == *"Zephyr $ws"* ]]
+  run make help
+  [[ "$output" == *"Install Zephyr v4.3.0 and Zephyr SDK"* ]]
+  echo 'firmware_NCS := v3.2.1' >>make/project.mk
+  run make firmware-build
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"set firmware_ZEPHYR (upstream Zephyr) or firmware_NCS (nRF Connect SDK) in make/project.mk, not both"* ]]
+}
+
+@test "zephyr upstream: update lists Zephyr tags and pins TO= into <part>_ZEPHYR" {
+  zephyr_proj
+  echo 'firmware_ZEPHYR := v4.2.0' >>make/project.mk
+  stub_cmd git 'printf "%s\n" "$@" >>"$STUB_LOG/git.argv"; [ "$1" = ls-remote ] && printf "x\trefs/tags/v4.3.0\nx\trefs/tags/v4.2.0\nx\trefs/tags/v4.3.0-rc1\n"; exit 0'
+  run make firmware-update
+  [ "$status" -eq 0 ]
+  [[ "$(argv git)" == *"https://github.com/zephyrproject-rtos/zephyr"* ]]
+  [[ "$output" == *"v4.3.0"* ]]
+  [[ "$output" != *"rc1"* ]]
+  # the v4.3.0 workspace already there, so the setup that follows the pin fetches nothing
+  ws="$STD_TOOLCHAINS/zephyr-v4.3.0"
+  mkdir -p "$ws/.west" "$ws/.venv/bin"
+  : >"$ws/.std-updated"
+  cp "$STUBS/west" "$ws/.venv/bin/west"
+  for t in dtc gperf; do stub_recorder "$t"; done
+  run env -u ZEPHYR_SDK_INSTALL_DIR make firmware-update TO=v4.3.0 firmware_TOOLCHAIN_ENV=/nonexistent/toolchain-env.sh
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"firmware: Zephyr v4.3.0 in $ws"* ]]
+  grep -q '^firmware_ZEPHYR = v4.3.0' make/project.mk || grep -q '^firmware_ZEPHYR := v4.3.0' make/project.mk
+  ! grep -q '^firmware_NCS' make/project.mk
+}
+
+@test "zephyr PROBE=commander flashes through west's silabs_commander runner and erases with commander" {
+  zephyr_proj
+  zephyr_built
+  stub_recorder commander
+  run make firmware-flash PROBE=commander NOBUILD=1
+  [ "$status" -eq 0 ]
+  [[ "$(argv west)" == *$'flash\n--skip-rebuild\n-d\n'"$B"$'\n-r\nsilabs_commander'* ]]
+  run make firmware-erase PROBE=commander CONFIRM=erase firmware_DEVICE=SiWG917M111MGTBA
+  [ "$status" -eq 0 ]
+  [[ "$(argv commander)" == $'device\nmasserase\n--device\nSiWG917M111MGTBA'* ]]
+}
+
+@test "zephyr power: a clear install hint when the profiler's python package is missing" {
+  zephyr_proj
+  stub_cmd python3 'exit 1'
+  run make firmware-power
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ppk2-api is not installed for python3: python3 -m pip install ppk2-api"* ]]
+  run make firmware-power POWER=joulescope
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"joulescope is not installed for python3: python3 -m pip install joulescope"* ]]
+  run make firmware-power POWER=otii
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"POWER=otii: zephyr measures with ppk2 or joulescope"* ]]
+}
+
+@test "zephyr power with a PPK2: the capture script gets its settings, then the summary of build/power.csv" {
+  zephyr_proj
+  # a python that "has" ppk2-api: the capture writes the CSV it is told to, with the settings it got
+  stub_cmd python3 'if [ "$2" = "import ppk2_api" ]; then exit 0; fi
+printf "%s\n" "$STD_PW_SECONDS $STD_PW_MV $STD_PW_MODE $STD_PW_PORT" >"$STUB_LOG/pw.env"
+case "$2" in *PPK2_API*) ;; *) exit 3;; esac
+printf "time_s,current_mA,voltage_V\n0.01,1.5,3.3\n0.02,0.5,3.3\n" >"$STD_PW_CSV"'
+  run make firmware-power DURATION=3 PORT=/dev/cu.usbmodemPPK
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_LOG/pw.env")" = "3 3300 source /dev/cu.usbmodemPPK" ]
+  [[ "$output" == *"avg       1.0000 mA"* ]]
+  [[ "$output" == *"max       1.5000 mA"* ]]
+  [ -f firmware/build/power.txt ]
+}

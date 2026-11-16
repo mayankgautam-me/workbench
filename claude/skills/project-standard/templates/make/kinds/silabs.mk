@@ -1,0 +1,515 @@
+# project-standard v1.1 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+#
+# Kind silabs: a Silicon Labs firmware part built from an slc project (*.slcp) on the Simplicity SDK and
+# WiseConnect 3, for SiWx917 / SiWG917 (Cortex-M4 SoC mode).
+#
+# make/project.mk declares it as   <name>:silabs[:<dir>]   (dir usually firmware). slt, Silicon Labs' Simplicity
+# Tools CLI, is pinned per part and installed once into $(STD_TOOLCHAINS)/slt-<ver>; it installs slc-cli, a Java
+# runtime, the GNU Arm toolchain, the Simplicity SDK and WiseConnect into its own folder (~/.silabs/slt). A build is
+# slc generate (a makefile project) into <dir>/build/<board>, then the generated makefile. Flash, erase and the
+# energy monitor go through Simplicity Commander (commander), the console through the kit's J-Link VCOM port, debug
+# through the J-Link GDB server. The image signing key never touches the project: it is decrypted from the secrets
+# repo into a temporary file for the one commander call that signs (secrets.sh with-file), then removed.
+
+# --- shared firmware helpers --------------------------------------------------------------------
+# The same block is in every firmware kind (zephyr, espidf, pio, arm-gcc, circuitpython, silabs); the first
+# kind included defines it. Helpers are recursive variables expanded when a recipe runs, called as
+# $(call name,part,dir,...). They are shell text: one line, `$$` for the shell, no `#`.
+ifndef STD_FW_HELPERS
+STD_FW_HELPERS := 1
+
+# west build --pristine value (auto rebuilds from scratch only when the configuration changed)
+PRISTINE ?= auto
+# serial ports looked at when PORT= is not given
+STD_PORT_GLOB ?= /dev/cu.usbmodem* /dev/cu.usbserial* /dev/cu.SLAB* /dev/ttyACM* /dev/ttyUSB*
+
+# Shell prelude: strict mode, Tokyo Night colour on a TTY, say/ok/warn/bad/die/have/ports.
+STD_FW_SH = set -euo pipefail; \
+  if [ -t 1 ] && [ -z "$${NO_COLOR:-}" ]; then c_ok=$$'\033[38;2;158;206;106m'; c_warn=$$'\033[38;2;224;175;104m'; c_err=$$'\033[38;2;247;118;142m'; c_info=$$'\033[38;2;122;162;247m'; c_0=$$'\033[0m'; else c_ok=; c_warn=; c_err=; c_info=; c_0=; fi; \
+  problems=0; \
+  say() { printf '%s>%s %s\n' "$$c_info" "$$c_0" "$$*"; }; \
+  ok() { printf '  %sok%s    %s\n' "$$c_ok" "$$c_0" "$$*"; }; \
+  warn() { printf '  %swarn%s  %s\n' "$$c_warn" "$$c_0" "$$*"; }; \
+  bad() { printf '  %smiss%s  %s\n' "$$c_err" "$$c_0" "$$*"; problems=$$((problems + 1)); }; \
+  die() { printf '%serror%s %s\n' "$$c_err" "$$c_0" "$$*" >&2; exit 1; }; \
+  have() { command -v "$$1" >/dev/null 2>&1; }; \
+  ports() { ls -d $(STD_PORT_GLOB) 2>/dev/null || true; };
+
+# Sets $$port: PORT= when given, else the only serial port connected; several or none is an error.
+STD_FW_PORT = port="$(PORT)"; \
+  if [ -z "$$port" ]; then \
+    list=$$(ports); n=$$(printf '%s' "$$list" | grep -c . || true); \
+    [ "$$n" -gt 0 ] || die "no serial port found (looked for $(STD_PORT_GLOB)): plug the board in or pass PORT=/dev/..."; \
+    [ "$$n" -eq 1 ] || die "several serial ports, pick one with PORT=...: $$(echo $$list)"; \
+    port="$$list"; \
+  fi; \
+  say "port $$port";
+
+# Defines logged LOGFILE CMD...: runs an interactive CMD on a pseudo-terminal and keeps a copy of
+# everything it prints in LOGFILE (script(1): BSD syntax on macOS, util-linux syntax elsewhere).
+STD_FW_LOGGED = logged() { log="$$1"; shift; mkdir -p "$$(dirname "$$log")"; say "console log: $$log"; \
+  if [ "$$(uname -s)" = Darwin ]; then script -q "$$log" "$$@"; else script -q -e -c "$$(printf '%q ' "$$@")" "$$log"; fi; };
+
+# $(call std_fw_version_sh,dir): sets $$ver from dir/VERSION (Zephyr VERSION_MAJOR/... format or a
+# plain first line) or dir/version.txt; empty when neither exists.
+std_fw_version_sh = ver=; vf="$(CURDIR)/$(1)/VERSION"; [ -f "$$vf" ] || vf="$(CURDIR)/$(1)/version.txt"; \
+  if [ -f "$$vf" ]; then \
+    if grep -q '^VERSION_MAJOR' "$$vf"; then \
+      ver=$$(sed -nE 's/^(VERSION_MAJOR|VERSION_MINOR|PATCHLEVEL)[[:space:]]*=[[:space:]]*([0-9]+).*/\2/p' "$$vf" | paste -sd. -); \
+      x=$$(sed -nE 's/^EXTRAVERSION[[:space:]]*=[[:space:]]*([^[:space:]]+).*/\1/p' "$$vf"); [ -z "$$x" ] || ver="$$ver-$$x"; \
+    else ver=$$(head -n 1 "$$vf" | tr -d '[:space:]'); fi; \
+  fi;
+
+# $(call std_fw_print_version,part,dir)
+std_fw_print_version = $(STD_FW_SH) $(call std_fw_version_sh,$(2)) printf '%s %s\n' "$(1)" "$${ver:-unknown (no $(2)/VERSION)}"
+
+# $(call std_fw_pin,VAR,VALUE): set VAR := VALUE in make/project.mk (rewrites the line or appends it).
+std_fw_pin = pf=make/project.mk; [ -f "$$pf" ] || die "make/project.mk not found (run from the project root)"; \
+  if grep -qE '^$(1)[[:space:]]*[:?]?=' "$$pf"; then \
+    awk -v n='$(2)' '/^$(1)[[:space:]]*[:?]?=/ { sub(/=.*/, "= " n) } { print }' "$$pf" > "$$pf.tmp" && mv "$$pf.tmp" "$$pf"; \
+  else printf '%s := %s\n' '$(1)' '$(2)' >> "$$pf"; fi; \
+  ok "$(1) = $(2) in $$pf";
+
+# Signing keys come from the secrets repo through `secrets.sh with-file NAME -- cmd ... {}` (a
+# mode-600 temp file that is removed afterwards). SIGNING_KEY=path uses a local key file instead.
+std_fw_secrets = PROJECT="$(PROJECT)" "$(abspath $(STD_BIN))/secrets.sh"
+std_fw_with_key = $(if $(SIGNING_KEY),,$(std_fw_secrets) with-file $(1) --)
+std_fw_keyarg = $(if $(SIGNING_KEY),$(abspath $(SIGNING_KEY)),{})
+std_fw_key_file = $(SECRETS_DIR)/$(PROJECT)/keys/$(1).sops
+
+# $(call std_fw_keygen,part,keyname,type): create the key in the secrets repo, never overwrite one.
+std_fw_keygen = $(STD_FW_SH) f="$(call std_fw_key_file,$(2))"; \
+  [ ! -e "$$f" ] || die "signing key $(2) already exists ($$f): not overwriting it. Rotating it on purpose is a secrets.sh rotate job, and devices signed with the old key need a probe to move."; \
+  say "creating signing key $(2) ($(3)) in the secrets repo"; \
+  $(std_fw_secrets) keygen $(2) --type $(3); \
+  ok "key $(2) stored encrypted in $$f"; \
+  say "it is backed up with the secrets repo. Devices that boot images signed with it accept only images signed with it.";
+
+# $(call std_fw_key_check,part,keyname): doctor line for a signing key.
+std_fw_key_check = if [ -n "$(SIGNING_KEY)" ]; then if [ -f "$(SIGNING_KEY)" ]; then ok "signing key $(SIGNING_KEY) (SIGNING_KEY)"; else bad "SIGNING_KEY=$(SIGNING_KEY) does not exist"; fi; \
+  elif [ -f "$(call std_fw_key_file,$(2))" ]; then ok "signing key $(2) in the secrets repo"; \
+  else bad "signing key $(2) missing from $(SECRETS_DIR)/$(PROJECT)/keys: make $(1)-keygen (or restore it)"; fi;
+
+# $(call std_fw_ports_check): doctor line for serial ports.
+std_fw_ports_check = n=$$(ports | grep -c . || true); \
+  if [ -n "$(PORT)" ]; then if [ -e "$(PORT)" ]; then ok "port $(PORT)"; else bad "PORT=$(PORT) does not exist"; fi; \
+  elif [ "$$n" -eq 1 ]; then ok "serial port $$(ports)"; \
+  elif [ "$$n" -gt 1 ]; then warn "several serial ports, pass PORT=: $$(echo $$(ports))"; \
+  else warn "no serial port connected (fine unless you flash or monitor over serial)"; fi;
+
+# $(call std_fw_doctor_end,part)
+std_fw_doctor_end = if [ "$$problems" -eq 0 ]; then ok "$(1) ready"; else die "$(1): $$problems problem(s), fixes above"; fi
+
+# In a tag pipeline (CI_COMMIT_TAG set) only a <part>-v* tag releases the part; locally always true.
+std_fw_tag_ok = case "$${GITHUB_REF_NAME:-$${CI_COMMIT_TAG:-}}" in ""|$(1)-v*) true;; *) false;; esac
+
+# Refuses releases outside staging and production (the OTA store is remote).
+std_fw_remote_env = $(STD_FW_SH) case "$(ENV)" in staging|production) ;; *) die "release uploads to the OTA store: run it with ENV=staging or ENV=production";; esac
+
+# $(call std_fw_release,part,dir,object-name), after $(STD_FW_SH) and f=FILE: uploads FILE to the
+# OTA bucket as <prefix>/<ver>/<name> and <prefix>/latest/<name> (and stable/ with PROMOTE=1),
+# through wrangler under `secrets.sh exec --env ENV`, then runs <part>_RELEASE_HOOK when set.
+std_fw_release = $(call std_fw_version_sh,$(2)) \
+  [ -n "$$ver" ] || die "no version: write it to $(2)/VERSION"; \
+  [ -f "$$f" ] || die "$$f not found: the build did not produce it"; \
+  bucket="$($(1)_OTA_BUCKET)"; [ -n "$$bucket" ] || die "no OTA bucket: set OTA_BUCKET (or $(1)_OTA_BUCKET) in make/project.mk"; \
+  pfx="$($(1)_OTA_PREFIX)"; key="$$pfx/$$ver/$(3)"; \
+  set -- "$$bucket/$$key" "$$bucket/$$pfx/latest/$(3)"; \
+  if [ "$(PROMOTE)" = 1 ]; then set -- "$$@" "$$bucket/$$pfx/stable/$(3)"; fi; \
+  sha=$$({ sha256sum "$$f" 2>/dev/null || shasum -a 256 "$$f"; } | cut -d' ' -f1); \
+  say "release $(1) $$ver to $$bucket/$$pfx ($(ENV)), sha256 $$sha"; \
+  $(std_fw_secrets) exec --env $(ENV) -- bash -c 'set -euo pipefail; f="$$1"; shift; for k in "$$@"; do $($(1)_WRANGLER) r2 object put "$$k" --file "$$f" --remote; done' _ "$$f" "$$@"; \
+  for k in "$$@"; do ok "uploaded $$k"; done; \
+  export VERSION="$$ver" SHA256="$$sha" OTA_BUCKET="$$bucket" OTA_KEY="$$key" OTA_FILE="$$f"; \
+  $(call $(if $($(1)_RELEASE_HOOK),std_fw_release_hook,std_fw_noop),$(1))
+std_fw_release_hook = say "running $(1)_RELEASE_HOOK"; $($(1)_RELEASE_HOOK)
+std_fw_noop = :
+
+# $(call std_fw_provision,part): SERIAL= is required; runs <part>_PROVISION (a shell command line
+# from make/project.mk, with SERIAL, PART, PORT and PROBE exported), else flashes only.
+std_fw_provision = $(STD_FW_SH) serial="$(SERIAL)"; \
+  [ -n "$$serial" ] || die "SERIAL= is required: the serial number of the device being provisioned"; \
+  case "$$serial" in *[!A-Za-z0-9._-]*) die "SERIAL=$$serial: letters, digits, dot, dash and underscore only";; esac; \
+  export SERIAL="$$serial" PART="$(1)" PORT="$(PORT)" PROBE="$(PROBE)"; \
+  say "provisioning $(1) serial $$serial"; \
+  $(call $(if $($(1)_PROVISION),std_fw_provision_hook,std_fw_provision_default),$(1))
+std_fw_provision_hook = $($(1)_PROVISION)
+std_fw_provision_default = warn "$(1)_PROVISION is not set in make/project.mk: flashing only"; $(MAKE) --no-print-directory $(1)-flash
+
+# $(call std_fw_hook,part,VAR,what): run the shell command line in VAR or explain that it is unset.
+std_fw_hook = $(STD_FW_SH) $(call $(if $($(2)),std_fw_hook_run,std_fw_hook_missing),$(1),$(2),$(3))
+std_fw_hook_run = say "running $(2)"; $($(2))
+std_fw_hook_missing = die "$(3): set $(2) in make/project.mk to the command that does it for this board"
+
+endif
+
+# --- energy profiling ----------------------------------------------------------------------------
+# The same block is in zephyr and silabs; the first kind included defines it.
+ifndef STD_FW_POWER
+STD_FW_POWER := 1
+# $(call std_fw_power_summary,part,dir), after $$csv (time_s,current_mA,voltage_V) is written: the sample count, the
+# duration, the average, minimum and maximum current (and the average power when the voltage is known), printed and
+# kept in <dir>/build/power.txt.
+std_fw_power_summary = [ -s "$$csv" ] || die "no samples in $$csv"; \
+  awk -F, 'NR > 1 && $$2 != "" { n++; c = $$2 + 0; s += c; if (n == 1 || c < mn) mn = c; if (n == 1 || c > mx) mx = c; \
+      if ($$3 != "") { v += $$3; nv++ }; t = $$1 } \
+    END { if (!n) { print "no samples"; exit 1 }; printf "samples   %d over %.1f s\navg       %.4f mA\nmin       %.4f mA\nmax       %.4f mA\n", n, t, s / n, mn, mx; \
+      if (nv) printf "voltage   %.3f V (avg)\npower     %.3f mW (avg)\n", v / nv, (s / n) * (v / nv) }' "$$csv" | tee "$${csv%.csv}.txt"; \
+  ok "$(1): samples in $(2)/build/power.csv, summary in $(2)/build/power.txt"
+endif
+
+# --- silabs helpers -----------------------------------------------------------------------------
+
+# Where Silicon Labs publishes the slt (Simplicity Tools) CLI zips: <url>/slt-cli-<ver>-<mac-arm64|mac-x64|linux-x64>.zip
+SILABS_SLT_URL ?= https://www.silabs.com/documents/public/software
+# Simplicity Commander: on PATH, else these (the first that exists), else one slt installed. SILABS_COMMANDER= wins.
+SILABS_COMMANDER ?=
+SILABS_COMMANDER_PATHS ?= $(HOME)/.silabs/commander/Commander.app/Contents/MacOS/commander /Applications/Commander.app/Contents/MacOS/commander /opt/commander/commander
+
+# $(call silabs_find,part,dir): sets d, slcp (the part's one *.slcp, or <part>_SLCP) and name (its project_name).
+silabs_find = d="$(CURDIR)/$(2)"; slcp="$($(1)_SLCP)"; \
+  if [ -z "$$slcp" ]; then set -- "$$d"/*.slcp; [ -f "$$1" ] || die "no .slcp in $(2): the part is a Simplicity Studio / slc project"; \
+    [ -z "$${2:-}" ] || die "several .slcp in $(2): pick one with $(1)_SLCP in make/project.mk"; slcp="$$1"; \
+  else case "$$slcp" in /*) ;; *) slcp="$$d/$$slcp";; esac; [ -f "$$slcp" ] || die "$(1)_SLCP=$($(1)_SLCP) not found in $(2)"; fi; \
+  name=$$(sed -nE 's/^project_name:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/p' "$$slcp" | head -n 1); [ -n "$$name" ] || name=$$(basename "$$slcp" .slcp);
+
+# $(call silabs_cmdr,part): sets cmdr to Simplicity Commander (empty when not found).
+silabs_cmdr = cmdr="$(SILABS_COMMANDER)"; \
+  if [ -z "$$cmdr" ]; then cmdr=$$(command -v commander 2>/dev/null || true); fi; \
+  if [ -z "$$cmdr" ]; then for c in $(SILABS_COMMANDER_PATHS); do if [ -x "$$c" ]; then cmdr="$$c"; break; fi; done; fi; \
+  if [ -z "$$cmdr" ]; then cmdr=$$(find "$($(1)_SLT_HOME)/installs" -name commander -type f -perm -u+x 2>/dev/null | head -n 1 || true); fi;
+silabs_need_cmdr = $(call silabs_cmdr,$(1)) [ -n "$$cmdr" ] || die "Simplicity Commander not found: install it from Silicon Labs (Simplicity Commander), put commander on PATH or set SILABS_COMMANDER";
+
+# $(call silabs_tools,part): what slt installed into <part>_SLT_HOME/installs. Sets slt, slc, java (a bin folder),
+# gccdir (the bin folder of arm-none-eabi-gcc), sdk (the folder of the *.slcs of version <part>_SDK) and wc (the folder
+# of the *.slce of version <part>_WISECONNECT); each empty when missing. pkg EXT VER prints the folder of the first
+# *.EXT whose version: line is VER.
+silabs_tools = slt="$($(1)_SLT_DIR)/slt"; inst="$($(1)_SLT_HOME)/installs"; \
+  pkg() { find "$$inst/conan" -name "*.$$1" -type f 2>/dev/null | while IFS= read -r f; do \
+    if grep -qE "^version:[[:space:]]*\"?$$2\"?[[:space:]]*$$" "$$f"; then dirname "$$f"; break; fi; done; }; \
+  slc=$$(ls "$$inst"/archive/slc-cli-*/slc_cli/slc 2>/dev/null | head -n 1 || true); [ -n "$$slc" ] || slc=$$(command -v slc 2>/dev/null || true); \
+  java=$$(find "$$inst/archive" -path '*/jre/*/bin/java' -type f 2>/dev/null | head -n 1 || true); [ -z "$$java" ] || java=$$(dirname "$$java"); \
+  gccdir=$$(find "$$inst/conan" -name arm-none-eabi-gcc -type f 2>/dev/null | head -n 1 || true); \
+  if [ -n "$$gccdir" ]; then gccdir=$$(dirname "$$gccdir"); elif command -v arm-none-eabi-gcc >/dev/null 2>&1; then gccdir=$$(dirname "$$(command -v arm-none-eabi-gcc)"); fi; \
+  sdk=$$(pkg slcs "$($(1)_SDK)" || true); wc=$$(pkg slce "$($(1)_WISECONNECT)" || true);
+
+# The versions of what slt installed, for the messages: every *.slcs / *.slce version found.
+silabs_have_versions = found=$$(find "$$inst/conan" \( -name '*.slcs' -o -name '*.slce' \) -type f 2>/dev/null | while IFS= read -r f; do \
+    sed -nE 's/^version:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/p' "$$f" | head -n 1; done | sort -u | paste -sd' ' - || true);
+
+silabs_need_tools = [ -x "$$slt" ] || die "slt $($(1)_SLT) is not in $($(1)_SLT_DIR): run make $(1)-setup"; \
+  [ -n "$$slc" ] || die "slc not found among the packages slt installed in $$inst: run make $(1)-setup"; \
+  [ -n "$$java" ] || command -v java >/dev/null 2>&1 || die "no Java runtime for slc (slt installs one with slc-cli): run make $(1)-setup"; \
+  [ -n "$$gccdir" ] || die "arm-none-eabi-gcc not found (slt installs the GNU Arm toolchain with the SDK): run make $(1)-setup"; \
+  $(silabs_have_versions) \
+  [ -n "$$sdk" ] || die "Simplicity SDK $($(1)_SDK) not found in $$inst (installed: $${found:-none}): run make $(1)-setup or pin $(1)_SDK"; \
+  [ -n "$$wc" ] || die "WiseConnect $($(1)_WISECONNECT) not found in $$inst (installed: $${found:-none}): run make $(1)-setup or pin $(1)_WISECONNECT";
+
+# The slcp's own SDK pins (sdk: version and the wiseconnect3_sdk sdk_extension version), set as slcp_sdk and slcp_wc.
+silabs_slcp_versions = slcp_sdk=$$(awk '/^sdk:/ { f = 1; next } /^[^[:space:]-]/ { f = 0 } f && /version:/ { sub(/.*version:[[:space:]]*"?/, ""); sub(/"?[[:space:]]*$$/, ""); print; exit }' "$$slcp"); \
+  slcp_wc=$$(awk '/^sdk_extension:/ { f = 1; next } /^[^[:space:]-]/ { f = 0 } f && /id:[[:space:]]*wiseconnect/ { w = 1 } f && w && /version:/ { sub(/.*version:[[:space:]]*"?/, ""); sub(/"?[[:space:]]*$$/, ""); print; exit }' "$$slcp");
+
+# Ready for std_ready: the stamp setup leaves once slt, slc and the pinned SDK and WiseConnect are installed and trusted.
+silabs_stamp = $($(1)_SLT_DIR)/.std-setup-$($(1)_SDK)-$($(1)_WISECONNECT)
+silabs_ready = [ -f "$(call silabs_stamp,$(1))" ]
+
+# Setup: the slt CLI of the pinned version from Silicon Labs into $(STD_TOOLCHAINS)/slt-<ver> (ledgered, shared), then
+# slt install of <part>_SLT_INSTALL (slt keeps its packages in <part>_SLT_HOME, its own folder: not in the ledger, so
+# make teardown and prune never remove them), then slc signature trust on the SDK and WiseConnect.
+silabs_setup = $(STD_FW_SH) dir="$($(1)_SLT_DIR)"; mkdir -p "$(STD_TOOLCHAINS)"; \
+  if [ -x "$$dir/slt" ]; then ok "slt $($(1)_SLT) in $$dir"; \
+  else \
+    $(STD_TC) sdk-begin "$$dir" || true; \
+    case "$$(uname -s)-$$(uname -m)" in Darwin-arm64) arch=mac-arm64;; Darwin-*) arch=mac-x64;; Linux-x86_64) arch=linux-x64;; *) die "slt has no build for $$(uname -s)-$$(uname -m)";; esac; \
+    for t in curl unzip; do have $$t || die "$$t not found: brew install $$t"; done; \
+    url="$(SILABS_SLT_URL)/slt-cli-$($(1)_SLT)-$$arch.zip"; say "slt $($(1)_SLT) from $$url"; \
+    tmp="$$dir.partial"; rm -rf "$$tmp"; mkdir -p "$$tmp"; \
+    curl -fsSL --retry 3 -o "$$tmp/slt.zip" "$$url"; unzip -q -o "$$tmp/slt.zip" -d "$$tmp"; rm -f "$$tmp/slt.zip"; \
+    [ -f "$$tmp/slt" ] || die "the slt zip has no slt at its top"; chmod +x "$$tmp/slt"; mv "$$tmp" "$$dir"; \
+  fi; \
+  $(STD_TC) sdk-use "$$dir" || true; \
+  if [ ! -f "$(call silabs_stamp,$(1))" ]; then \
+    for p in $($(1)_SLT_INSTALL); do say "slt install $$p (first run downloads about 2 GB)"; "$$dir/slt" install "$$p" --non-interactive; done; \
+  fi; \
+  $(call silabs_tools,$(1)) $(call silabs_need_tools,$(1)) \
+  if PATH="$$java:$$PATH" "$$slc" signature trust --sdk-package-path "$$sdk,$$wc" >/dev/null 2>&1; then ok "slc trusts the SDK and WiseConnect"; else warn "slc signature trust failed (slc generate asks for it)"; fi; \
+  touch "$(call silabs_stamp,$(1))"; \
+  ok "$(1): slt $($(1)_SLT), Simplicity SDK $($(1)_SDK), WiseConnect $($(1)_WISECONNECT)"
+
+silabs_doctor = $(STD_FW_SH) say "$(1): silabs, slt $($(1)_SLT), Simplicity SDK $($(1)_SDK), WiseConnect $($(1)_WISECONNECT), probe $($(1)_P)"; \
+  $(call silabs_tools,$(1)) $(silabs_have_versions) \
+  if [ -x "$$slt" ]; then ok "slt $$slt"; else bad "slt $($(1)_SLT) missing: make $(1)-setup"; fi; \
+  if [ -n "$$slc" ]; then ok "slc $$slc"; else bad "slc missing: make $(1)-setup"; fi; \
+  if [ -n "$$java" ] || have java; then ok "java for slc"; else bad "no Java runtime for slc: make $(1)-setup"; fi; \
+  if [ -n "$$gccdir" ]; then ok "arm-none-eabi-gcc in $$gccdir"; else bad "arm-none-eabi-gcc missing: make $(1)-setup"; fi; \
+  if [ -n "$$sdk" ]; then ok "Simplicity SDK $($(1)_SDK)"; else bad "Simplicity SDK $($(1)_SDK) missing (installed: $${found:-none}): make $(1)-setup"; fi; \
+  if [ -n "$$wc" ]; then ok "WiseConnect $($(1)_WISECONNECT)"; else bad "WiseConnect $($(1)_WISECONNECT) missing (installed: $${found:-none}): make $(1)-setup"; fi; \
+  $(call std_doctor_started,$(1),$(2)) \
+  if $(call std_started,$(1),$(2)); then $(call silabs_find,$(1),$(2)) $(silabs_slcp_versions) \
+    if [ -n "$$slcp_sdk" ] && [ "$$slcp_sdk" != "$($(1)_SDK)" ]; then warn "$$(basename "$$slcp") asks for Simplicity SDK $$slcp_sdk, $(1)_SDK is $($(1)_SDK)"; fi; \
+    if [ -n "$$slcp_wc" ] && [ "$$slcp_wc" != "$($(1)_WISECONNECT)" ]; then warn "$$(basename "$$slcp") asks for WiseConnect $$slcp_wc, $(1)_WISECONNECT is $($(1)_WISECONNECT)"; fi; \
+  fi; \
+  if [ -n "$($(1)_B)" ]; then ok "board $($(1)_B)"; else bad "no board: set $(1)_BOARD in make/project.mk (for example brd4338a)"; fi; \
+  $(call silabs_cmdr,$(1)) if [ -n "$$cmdr" ]; then ok "Simplicity Commander $$cmdr"; else bad "Simplicity Commander missing (flash, erase, power): install it from Silicon Labs or set SILABS_COMMANDER"; fi; \
+  case "$($(1)_P)" in \
+    commander) ;; \
+    jlink) if have JLinkExe; then ok "J-Link"; else bad "J-Link: brew install --cask segger-jlink"; fi; \
+      if [ -z "$($(1)_JLINK_DEVICE)" ]; then bad "PROBE=jlink needs $(1)_JLINK_DEVICE (the J-Link device name of the chip)"; fi;; \
+    *) bad "PROBE=$($(1)_P): use commander or jlink";; \
+  esac; \
+  if have JLinkGDBServerCLExe || have JLinkGDBServer; then ok "J-Link GDB server (debug)"; else warn "J-Link GDB server missing, needed by make $(1)-debug: brew install --cask segger-jlink"; fi; \
+  if [ "$($(1)_SIGN)" = 1 ]; then $(call std_fw_key_check,$(1),$($(1)_KEY)) fi; \
+  if have tio; then ok "tio (monitor)"; else warn "tio missing, needed by make $(1)-monitor: brew install tio"; fi; \
+  $(std_fw_ports_check) \
+  $(call std_fw_doctor_end,$(1))
+
+silabs_update = $(STD_FW_SH) \
+  if [ -n "$(TO)" ]; then $(call std_fw_pin,$(1)_SLT,$(TO)) $(if $(SDK),$(call std_fw_pin,$(1)_SDK,$(SDK))) $(if $(WISECONNECT),$(call std_fw_pin,$(1)_WISECONNECT,$(WISECONNECT))) $(MAKE) --no-print-directory $(1)-setup; \
+  else say "$(1): slt $($(1)_SLT), Simplicity SDK $($(1)_SDK), WiseConnect $($(1)_WISECONNECT)"; \
+    $(call silabs_tools,$(1)) if [ -x "$$slt" ]; then say "what slt has (slt list)"; "$$slt" list || true; fi; \
+    say "pin with make $(1)-update TO=<slt version> [SDK=<simplicity_sdk version>] [WISECONNECT=<version>] (keep the .slcp sdk: versions the same), then commit make/project.mk"; fi
+
+# $(call silabs_build,part,dir,build-dir,sign,check): slc generate from the .slcp into build-dir (a makefile project),
+# then the generated <name>.Makefile. check: the compiler runs with -Werror (CC overridden on the make line, which
+# assumes the generated makefile compiles through $(CC), as slc's gcc makefiles do). sign: the .rps image is signed
+# with the key KEY from the secrets repo into <name>-signed.rps (see silabs_sign).
+silabs_build = $(STD_FW_SH) $(call silabs_find,$(1),$(2)) $(call silabs_tools,$(1)) $(call silabs_need_tools,$(1)) \
+  board="$($(1)_B)"; [ -n "$$board" ] || die "no board: set $(1)_BOARD in make/project.mk or pass BOARD=... (for example brd4338a)"; \
+  b="$(3)"; mkdir -p "$$b"; ARM_GCC_DIR=$$(dirname "$$gccdir"); export PATH="$${java:+$$java:}$$gccdir:$$PATH" ARM_GCC_DIR; \
+  say "slc generate $$(basename "$$slcp") for $$board into $$b"; \
+  "$$slc" generate "$$slcp" -np -cp -d "$$b" -o makefile --with "$$board" --toolchain gcc --sdk-package-path "$$sdk,$$wc" --force $($(1)_SLC_ARGS); \
+  [ -f "$$b/$$name.Makefile" ] || die "slc made no $$name.Makefile in $$b"; \
+  jobs=$$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4); \
+  say "make -f $$name.Makefile$(if $(5), with -Werror)"; \
+  env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL make -C "$$b" -f "$$name.Makefile" -j "$$jobs" $(if $(5),CC="$$gccdir/arm-none-eabi-gcc -Werror") $($(1)_MAKE_ARGS); \
+  o="$$b/$($(1)_OUT)"; [ -f "$$o/$$name.hex" ] || [ -f "$$o/$$name.out" ] || die "the build made no $$name.hex or $$name.out in $$o"; \
+  $(if $(4),$(if $(filter 1,$($(1)_SIGN)),$(call silabs_sign,$(1)))) \
+  ok "built $$o"
+
+# Image signing for SiWx917 M4 secure boot, run when SIGN=1 (default 0: a board whose secure boot is not provisioned
+# runs unsigned images, and provisioning is a one-way manufacturing step). The key is an ECDSA P-256 private key in
+# PEM from the secrets repo (make <part>-keygen), reaching commander only as secrets.sh with-file's temporary file.
+# TODO(verify): the commander syntax below (rps convert OUT --app IN --sign KEY) is from Silicon Labs' SiWx917
+# secure boot application note as remembered, not checked against `commander rps convert --help` of the installed
+# Simplicity Commander. Check it, and the image format the OTA path expects, before setting <part>_SIGN := 1.
+silabs_sign = rps="$$o/$$name.rps"; [ -f "$$rps" ] || die "no $$name.rps to sign in $$o: the SiWx917 post-build makes it with Simplicity Commander"; \
+  $(call silabs_need_cmdr,$(1)) say "signing $$name.rps with $(if $(SIGNING_KEY),$(SIGNING_KEY),$($(1)_KEY))"; \
+  $(call std_fw_with_key,$($(1)_KEY)) "$$cmdr" rps convert "$$o/$$name-signed.rps" --app "$$rps" --sign "$(std_fw_keyarg)"; \
+  ok "signed $$o/$$name-signed.rps";
+
+# Sets b, o, name and img (the image to flash and to publish: <name>-signed.rps with SIGN=1, else <name>.hex for flash).
+silabs_need_build = $(call silabs_find,$(1),$(2)) b="$($(1)_BUILD)"; o="$$b/$($(1)_OUT)"; [ -d "$$o" ] || die "no build in $$o: run make $(1)-build";
+
+silabs_sel = $(if $($(1)_DEVICE),--device "$($(1)_DEVICE)") $(if $($(1)_PROBE_ID),--serialno "$($(1)_PROBE_ID)")
+
+silabs_flash = $(STD_FW_SH) $(call silabs_need_build,$(1),$(2)) \
+  if [ "$($(1)_SIGN)" = 1 ]; then img="$$o/$$name-signed.rps"; else img="$$o/$$name.hex"; fi; [ -f "$$img" ] || die "$$img not found: run make $(1)-build"; \
+  case "$($(1)_P)" in \
+    commander) $(call silabs_need_cmdr,$(1)) say "commander flash $$(basename "$$img")"; "$$cmdr" flash "$$img" $(call silabs_sel,$(1));; \
+    jlink) have JLinkExe || die "JLinkExe not found: brew install --cask segger-jlink"; \
+      [ -n "$($(1)_JLINK_DEVICE)" ] || die "PROBE=jlink needs $(1)_JLINK_DEVICE in make/project.mk (SiWx917 flash goes through its ROM bootloader: use PROBE=commander there)"; \
+      cmd=$$(mktemp); trap 'rm -f "$$cmd"' EXIT; printf 'r\nh\nloadfile %s\nr\ng\nexit\n' "$$o/$$name.hex" > "$$cmd"; \
+      JLinkExe -device "$($(1)_JLINK_DEVICE)" -if SWD -speed 4000 -autoconnect 1 $(if $($(1)_PROBE_ID),-SelectEmuBySN "$($(1)_PROBE_ID)") -CommandFile "$$cmd";; \
+    *) die "PROBE=$($(1)_P): silabs flashes with commander or jlink";; \
+  esac; \
+  ok "flashed $$img"
+
+silabs_erase = $(STD_FW_SH) $(call silabs_need_cmdr,$(1)) "$$cmdr" device masserase $(call silabs_sel,$(1)); ok "$(1): flash mass erased"
+
+silabs_monitor = $(STD_FW_SH) $(STD_FW_PORT) $(STD_FW_LOGGED) \
+  have $(firstword $($(1)_MONITOR)) || die "$(firstword $($(1)_MONITOR)) not found: brew install $(firstword $($(1)_MONITOR))"; \
+  logged "$(CURDIR)/$(2)/build/monitor.log" $($(1)_MONITOR) "$$port"
+
+# GDB through the J-Link of the board (its J-Link OB) on the built .out (ELF).
+silabs_debug = $(STD_FW_SH) $(call silabs_need_build,$(1),$(2)) $(call silabs_tools,$(1)) \
+  elf="$$o/$$name.out"; [ -f "$$elf" ] || die "$$elf not found: run make $(1)-build"; \
+  [ -n "$($(1)_JLINK_DEVICE)" ] || die "debug needs $(1)_JLINK_DEVICE in make/project.mk: the J-Link device name of the chip"; \
+  srv=JLinkGDBServerCLExe; have "$$srv" || srv=JLinkGDBServer; have "$$srv" || die "J-Link GDB server not found: brew install --cask segger-jlink"; \
+  gdb="$$gccdir/arm-none-eabi-gdb"; [ -x "$$gdb" ] || gdb=arm-none-eabi-gdb; \
+  "$$srv" -device "$($(1)_JLINK_DEVICE)" -if SWD -speed 4000 -port 2331 $(if $($(1)_PROBE_ID),-select USB="$($(1)_PROBE_ID)") & pid=$$!; trap 'kill $$pid 2>/dev/null || true' EXIT; sleep 1; \
+  "$$gdb" "$$elf" -ex 'target remote :2331'
+
+silabs_size = $(STD_FW_SH) $(call silabs_need_build,$(1),$(2)) $(call silabs_tools,$(1)) \
+  size="$$gccdir/arm-none-eabi-size"; [ -x "$$size" ] || size=arm-none-eabi-size; "$$size" -A -d "$$o/$$name.out"; "$$size" "$$o/$$name.out"
+
+# Energy profiling through the Advanced Energy Monitor of a Silicon Labs kit, read with Simplicity Commander.
+# power: aem dump for <part>_POWER_S seconds (DURATION= wins) at AEM_RATE_HZ into <dir>/build/power.csv (commander
+# prints the time in microseconds, the current in mA and the voltage in V), then the summary. power-live: the stream
+# as it comes. power-avg: commander's own average over AEM_WINDOW_MS.
+silabs_power = $(STD_FW_SH) $(call silabs_need_cmdr,$(1)) out="$(CURDIR)/$(2)/build"; mkdir -p "$$out"; csv="$$out/power.csv"; raw="$$out/power.raw"; \
+  say "AEM at $($(1)_AEM_RATE) Hz for $($(1)_PW_S) s"; \
+  "$$cmdr" aem dump --datarate "$($(1)_AEM_RATE)" --noheader $(if $($(1)_PROBE_ID),--serialno "$($(1)_PROBE_ID)") > "$$raw" & pid=$$!; \
+  sleep "$($(1)_PW_S)"; kill "$$pid" 2>/dev/null || true; wait "$$pid" 2>/dev/null || true; \
+  awk -F, 'BEGIN { print "time_s,current_mA,voltage_V" } /^[0-9]/ { printf "%.6f,%.6f,%.4f\n", $$1 / 1e6, $$2 + 0, $$3 + 0 }' "$$raw" > "$$csv"; \
+  $(call std_fw_power_summary,$(1),$(2))
+silabs_power_live = $(STD_FW_SH) $(call silabs_need_cmdr,$(1)) \
+  "$$cmdr" aem dump --datarate "$($(1)_AEM_RATE)" --noheader $(if $($(1)_PROBE_ID),--serialno "$($(1)_PROBE_ID)") | \
+  awk -F, '/^[0-9]/ { printf "%10.3f s  %8.3f mA  %6.3f V\n", $$1 / 1e6, $$2 + 0, $$3 + 0; fflush() }'
+silabs_power_avg = $(STD_FW_SH) $(call silabs_need_cmdr,$(1)) \
+  say "AEM average over $($(1)_AEM_WINDOW) ms"; "$$cmdr" aem measure --windowlength "$($(1)_AEM_WINDOW)" $(if $($(1)_PROBE_ID),--serialno "$($(1)_PROBE_ID)")
+
+# OTA: the .rps image (signed with SIGN=1) to the OTA bucket as <part>.rps.
+silabs_release = $(STD_FW_SH) $(call silabs_need_build,$(1),$(2)) \
+  if [ "$($(1)_SIGN)" = 1 ]; then f="$$o/$$name-signed.rps"; else f="$$o/$$name.rps"; warn "$(1)_SIGN is not 1: publishing an unsigned image"; fi; \
+  $(call std_fw_release,$(1),$(2),$(1).rps)
+
+# GitHub Release assets: the hex (factory programming), the .rps images (OTA; signed with SIGN=1), the .out (ELF,
+# debug symbols), the map, and the .s37 and .bin when the build made them.
+silabs_release_assets = $(STD_FW_SH) $(call silabs_need_build,$(1),$(2)) $(call std_rel_begin,$(1),silabs,$(2)) \
+  need "$$o/$$name.hex"; need "$$o/$$name.out"; \
+  if [ "$($(1)_SIGN)" = 1 ]; then need "$$o/$$name-signed.rps"; fi; opt "$$o/$$name.rps"; \
+  opt "$$o/$$name.map"; opt "$$o/$$name.s37"; opt "$$o/$$name.bin"; \
+  $(std_rel_end)
+
+# --- the kind -----------------------------------------------------------------------------------
+#
+# Per-part settings (make/project.mk, <part>_<VAR>), with their defaults:
+#   BOARD          brd4338a  the slc board (--with), for example brd4338a (SiWx917 radio board); BOARD= wins
+#   SLT            1.1.1     the slt CLI, in $(STD_TOOLCHAINS)/slt-<ver>, shared across projects
+#   SDK            2025.12.2 Simplicity SDK (simplicity_sdk) version the build uses
+#   WISECONNECT    4.0.1     WiseConnect 3 (wiseconnect3_sdk) version the build uses
+#   SLT_INSTALL    slc-cli wiseconnect   what setup asks slt to install (slt keeps it in SLT_HOME, ~/.silabs/slt);
+#                  setup then checks that SDK and WISECONNECT are among what is installed
+#   SLCP           (the one *.slcp in the part dir)   the slc project
+#   OUT            build/debug   where the generated makefile puts <name>.hex/.out/.rps, under the build dir
+#   SLC_ARGS, MAKE_ARGS   extra slc generate / make arguments
+#   PROBE          commander  commander (Simplicity Commander) or jlink (PROBE= wins); DEVICE commander --device;
+#                  PROBE_ID the kit's J-Link serial (commander --serialno, J-Link -SelectEmuBySN)
+#   JLINK_DEVICE   the J-Link device name, for debug (JLinkGDBServer) and PROBE=jlink flash
+#   SIGN 0, KEY silabs-m4   SIGN=1 signs the .rps with the ECDSA P-256 key KEY from the secrets repo
+#                  (make <part>-keygen); SIGNING_KEY=path uses a local key file instead
+#   MONITOR        tio -b BAUD (BAUD 115200), on the kit's J-Link VCOM port
+#   POWER_S 10     seconds of make <part>-power (DURATION= wins); AEM_RATE_HZ 10 (AEM_RATE_HZ= wins);
+#   AEM_WINDOW_MS  310000  make <part>-power-avg window (AEM_WINDOW_MS= wins)
+#   PROVISION      shell command for make <part>-provision SERIAL=... (default: flash only)
+#   OTA_BUCKET     $(OTA_BUCKET) from make/project.mk;  OTA_PREFIX  <project>/<part>/<env>;  WRANGLER  npx --yes wrangler@4
+#   RELEASE_HOOK   shell command run after a release upload (VERSION SHA256 OTA_KEY OTA_FILE set)
+# Builds go to <dir>/build/<board>; `make <part>-check` builds with -Werror into <dir>/build/check-<board>.
+
+define kind_silabs
+# the part is started once its folder has its .slcp (std_started in common.mk)
+$(1)_START ?= *.slcp
+$(1)_BOARD ?= brd4338a
+$(1)_SLT ?= 1.1.1
+$(1)_SDK ?= 2025.12.2
+$(1)_WISECONNECT ?= 4.0.1
+$(1)_SLT_INSTALL ?= slc-cli wiseconnect
+$(1)_SLT_HOME ?= $$(HOME)/.silabs/slt
+$(1)_SLT_DIR ?= $$(STD_TOOLCHAINS)/slt-$$($(1)_SLT)
+$(1)_SLCP ?=
+$(1)_OUT ?= build/debug
+$(1)_SLC_ARGS ?=
+$(1)_MAKE_ARGS ?=
+$(1)_PROBE ?= commander
+$(1)_DEVICE ?=
+$(1)_PROBE_ID ?=
+$(1)_JLINK_DEVICE ?=
+$(1)_SIGN ?= 0
+$(1)_KEY ?= silabs-m4
+$(1)_BAUD ?= 115200
+$(1)_MONITOR ?= tio -b $$($(1)_BAUD)
+$(1)_POWER_S ?= 10
+$(1)_AEM_RATE_HZ ?= 10
+$(1)_AEM_WINDOW_MS ?= 310000
+$(1)_PROVISION ?=
+$(1)_OTA_BUCKET ?= $$(OTA_BUCKET)
+# no OTA bucket (no Cloudflare in the project): <part>-release publishes nothing, and help leaves it out
+STD_HELP_HIDE += $$(if $$(strip $$($(1)_OTA_BUCKET)),,$(1)-release)
+$(1)_OTA_PREFIX ?= $$(PROJECT)/$(1)/$$(ENV)
+$(1)_WRANGLER ?= npx --yes wrangler@4
+$(1)_RELEASE_HOOK ?=
+$(1)_B = $$(or $$(BOARD),$$($(1)_BOARD))
+$(1)_P = $$(or $$(PROBE),$$($(1)_PROBE))
+$(1)_PW_S = $$(or $$(DURATION),$$($(1)_POWER_S))
+$(1)_AEM_RATE = $$(or $$(AEM_RATE_HZ),$$($(1)_AEM_RATE_HZ))
+$(1)_AEM_WINDOW = $$(or $$(AEM_WINDOW_MS),$$($(1)_AEM_WINDOW_MS))
+$(1)_BUILD = $$(CURDIR)/$(2)/build/$$($(1)_B)
+$(1)_CHECK_BUILD = $$(CURDIR)/$(2)/build/check-$$($(1)_B)
+
+.PHONY: $(1)-release-run $(1)-doctor $(1)-setup $(1)-update $(1)-check $(1)-build $(1)-clean $(1)-distclean $(1)-flash $(1)-erase $(1)-monitor $(1)-debug $(1)-release $(1)-version $(1)-size $(1)-keygen $(1)-provision $(1)-power $(1)-power-live $(1)-power-avg
+
+$(call std_verb,$(1),doctor,firmware,Check slt and slc and the SDK and WiseConnect and Commander and probe and ports read only)
+$(1)-doctor:
+	@$$(call silabs_doctor,$(1),$(2))
+
+$(call std_verb,$(1),setup,firmware,Install slt $$($(1)_SLT) into $$(STD_TOOLCHAINS) and through it slc and Simplicity SDK $$($(1)_SDK) and WiseConnect $$($(1)_WISECONNECT))
+$(1)-setup:
+	@$$(call std_skip_unstarted,$(1),$(2),setup) $$(call silabs_setup,$(1),$(2))
+
+# The commands that run slc or the toolchain set up the pinned slt, SDK and WiseConnect first when they are not ready.
+$(call std_ready,$(1),$(2),silabs_ready,check build flash debug size)
+
+$(call std_verb,$(1),update,firmware,Show the pinned slt and SDK versions or pin TO= [SDK=] [WISECONNECT=] in make/project.mk and set up)
+$(1)-update:
+	@$$(call silabs_update,$(1),$(2))
+
+$(call std_verb,$(1),check,firmware,slc generate and build with -Werror into $(2)/build/check-<board>)
+$(1)-check:
+	@$$(call std_skip_unstarted,$(1),$(2),check) $$(call silabs_build,$(1),$(2),$$($(1)_CHECK_BUILD),,1)
+
+$(call std_verb,$(1),build,firmware,slc generate and build for $$($(1)_B) into $(2)/build and sign with SIGN=1)
+$(1)-build:
+	@$$(call std_skip_unstarted,$(1),$(2),build) $$(call silabs_build,$(1),$(2),$$($(1)_BUILD),1,)
+
+$(call std_verb,$(1),flash,firmware,Build then flash with PROBE= commander or jlink and NOBUILD=1 to skip the build)
+$(1)-flash: $$(if $$(NOBUILD),,$(1)-build)
+	@$$(call std_refuse_unstarted,$(1),$(2),flash) $$(call silabs_flash,$(1),$(2))
+
+$(call std_verb,$(1),erase,firmware,Mass erase the flash with Simplicity Commander and needs CONFIRM=erase)
+$(1)-erase:
+	@$$(call std_confirm,erase) && { $$(call silabs_erase,$(1),$(2)); }
+
+$(call std_verb,$(1),monitor,firmware,Serial console on the kit VCOM PORT or the only port and logged to $(2)/build/monitor.log)
+$(1)-monitor:
+	@$$(call silabs_monitor,$(1),$(2))
+
+$(call std_verb,$(1),debug,firmware,GDB on the built image through the J-Link GDB server)
+$(1)-debug:
+	@$$(call silabs_debug,$(1),$(2))
+
+$(call std_extra,$(1),size,firmware,Section sizes of the built image)
+$(1)-size:
+	@$$(call silabs_size,$(1),$(2))
+
+$(call std_extra,$(1),power,firmware,AEM current profile for DURATION= seconds into $(2)/build/power.csv with avg min max)
+$(1)-power:
+	@$$(call silabs_power,$(1),$(2))
+
+$(call std_extra,$(1),power-live,firmware,Stream the AEM current and voltage at AEM_RATE_HZ)
+$(1)-power-live:
+	@$$(call silabs_power_live,$(1),$(2))
+
+$(call std_extra,$(1),power-avg,firmware,Average current over AEM_WINDOW_MS from Simplicity Commander)
+$(1)-power-avg:
+	@$$(call silabs_power_avg,$(1),$(2))
+
+$(call std_extra,$(1),keygen,firmware,Create the SiWx917 M4 image signing key $$($(1)_KEY) (ECDSA P-256) in the secrets repo and never overwrite)
+$(1)-keygen:
+	@$$(call std_fw_keygen,$(1),$$($(1)_KEY),ecdsa-p256)
+
+$(call std_extra,$(1),provision,firmware,Per device setup SERIAL= through $(1)_PROVISION else flash only)
+$(1)-provision:
+	@$$(call std_fw_provision,$(1))
+
+$(call std_verb,$(1),release,release,The .rps image to the OTA store as ver and latest with ENV= and PROMOTE=1 for stable)
+$(1)-release:
+	@if [ -z "$$(strip $$($(1)_OTA_BUCKET))" ]; then echo "> $(1): no OTA bucket (no Cloudflare in this project): firmware publish skipped"; exit 0; fi; if $$(call std_fw_tag_ok,$(1)); then $$(MAKE) --no-print-directory $(1)-release-run; else echo "$(1): tag $$$$CI_COMMIT_TAG is not a $(1) release, nothing to do"; fi
+
+$(1)-release-run:
+	@$$(call std_refuse_unstarted,$(1),$(2),release) $$(std_production_guard) && { $$(std_fw_remote_env); } && $$(if $$(NOBUILD),true,$$(MAKE) --no-print-directory $(1)-build) && { $$(call silabs_release,$(1),$(2)); }
+
+$(call std_verb,$(1),version,release,Firmware version from $(2)/VERSION)
+
+# release.sh knows the version source of the firmware kinds by name; silabs keeps its version as they do (<dir>/VERSION,
+# else version.txt), so it is passed as espidf until release.sh lists silabs itself.
+$(call std_release,$(1),silabs,$(2),silabs_release_assets,build)
+$(1)-version:
+	@$$(call std_fw_print_version,$(1),$(2))
+
+$(call std_verb,$(1),clean,firmware,Remove $(2)/build)
+$(1)-clean:
+	@rm -rf "$$(CURDIR)/$(2)/build"
+
+$(call std_verb,$(1),distclean,firmware,Remove $(2)/build and keep the shared slt and SDK)
+$(1)-distclean: $(1)-clean
+endef

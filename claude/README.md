@@ -134,11 +134,11 @@ The workbench's own [PLAN.md](../PLAN.md) is a full example.
 
 ### Project standard
 
-The `project-standard` skill gives every project the same layout and the same `make` commands for each stage of work: toolchains and setup, the local runtime, testing, Cloudflare auth and resources, secrets, deployment and deployment testing, GitLab CI/CD, firmware (Zephyr, ESP-IDF, PlatformIO, arm-gcc, CircuitPython), KiCad hardware, apps and releases. The tools underneath stay what they are; only the commands in front of them are the same everywhere.
+The `project-standard` skill gives every project the same layout and the same `make` commands for each stage of work: toolchains and setup, the local runtime, testing, Cloudflare auth and resources, secrets, deployment and deployment testing, GitHub Actions CI, firmware (Zephyr, ESP-IDF, PlatformIO, arm-gcc, CircuitPython, Silicon Labs Simplicity SDK), boards (KiCad, Altium), FreeCAD models, apps and releases. The tools underneath stay what they are; only the commands in front of them are the same everywhere.
 
 - `new` scaffolds a project from the parts you pick, `adopt` moves an existing project over (only when asked), `update` refreshes a project's managed files, and `audit` reports how a project differs.
 - Secrets live in one private, SOPS + age encrypted repository for all projects (`~/.secrets`), unlocked on each Mac by a key in the Secure Enclave (Touch ID). Make commands decrypt them into the environment of the one command that needs them, and CI reads the same files with a per-project key.
-- The CI jobs are kept in `skills/project-standard/ci-templates/`, meant to be pushed to a GitLab project that each repository includes.
+- The CI jobs are reusable GitHub Actions workflows kept in `skills/project-standard/ci-templates/`, published as the public `mayankgautam-me/ci-templates` (one tag per version, `v1.1` now) that each project's workflows call.
 - The session-start hook says whether the folder is on the standard.
 
 The full spec is [skills/project-standard/reference/standard.md](skills/project-standard/reference/standard.md). Its tests:

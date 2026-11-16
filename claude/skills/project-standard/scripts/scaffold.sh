@@ -7,7 +7,8 @@
 # Copies the managed make files (common.mk, bin/, the kinds the parts use) and the project templates,
 # fills project.mk, Brewfile, mise.toml, .gitignore, .github/workflows/checks.yml and release.yml, secrets.schema,
 # README.md and PLAN.md, and creates a minimal starter for each part whose folder does not exist yet. It writes the
-# documents: docs/README.md, docs/architecture.md, docs/operations.md (with a deployable part), and per part
+# documents: docs/README.md, docs/architecture.md, docs/operations.md (with a deployable part), docs/references.md
+# (the table make refs-fetch reads), and per part
 # <dir>/README.md, <dir>/CHANGELOG.md and the kind's docs in docs/<part>/; each only when it does not exist. It
 # never runs a network command and never touches git: `git init`, `make setup` and `make secrets-init` are separate
 # steps.
@@ -23,19 +24,20 @@
 # when the user asks for Pages: Pages always keeps *.pages.dev). Without --domain the host is a CHANGE-ME placeholder
 # the audit reports. The wrangler.jsonc is written when missing, also in a part folder that exists (adopt).
 #
-# A part given without a dir goes in the folder of its kind (firmware/, hardware/, cloud/, web/, app/) when it is the
-# only part of that group, else in <folder>/<name>; explicit dirs are used as given.
+# A part given without a dir goes in the folder of its kind (firmware/, hardware/, mechanical/, cloud/, web/, app/) when
+# it is the only part of that group, else in <folder>/<name>; explicit dirs are used as given. altium shares hardware/
+# with hardware, silabs firmware/ with the other firmware kinds.
 #
 # Refuses a non-empty <dir> unless --force. With --force, managed files are (re)written and files
 # the project owns (project.mk, local.mk, README.md, PLAN.md, ...) are kept when they exist.
 set -euo pipefail
 
-readonly STD_VERSION=1.0
+readonly STD_VERSION=1.1
 SKILL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 readonly SKILL_DIR
 readonly TPL_MAKE="$SKILL_DIR/templates/make"
 readonly TPL_PROJECT="$SKILL_DIR/templates/project"
-readonly KINDS="zephyr espidf pio arm-gcc circuitpython hardware cloud-worker web-pages app-flutter app-tauri app-xcode app-android docker go python"
+readonly KINDS="zephyr espidf pio arm-gcc circuitpython silabs hardware altium mechanical cloud-worker web-pages app-flutter app-tauri app-xcode app-android docker go python"
 readonly WRANGLER_VERSION="4.42.0"
 readonly TYPESCRIPT_VERSION="5.9.3"
 readonly VITEST_VERSION="3.2.4"
@@ -70,11 +72,11 @@ usage: scaffold.sh <dir> --project NAME --part name:kind[:dir] [--part ...] [--p
 --domain NAME=HOST       the production custom domain of a web-pages part (its only address)
 --pages NAME             a web-pages part on Cloudflare Pages instead of a Worker (only when asked for)
 
-A part given without a dir goes in the folder of its kind (firmware/ hardware/ cloud/ web/ app/) when it is the only
-part of that group, else in <folder>/<name>. An explicit dir is used as given.
+A part given without a dir goes in the folder of its kind (firmware/ hardware/ mechanical/ cloud/ web/ app/) when it is
+the only part of that group, else in <folder>/<name>. An explicit dir is used as given.
 
-kinds: zephyr espidf pio arm-gcc circuitpython hardware cloud-worker web-pages
-       app-flutter app-tauri app-xcode app-android docker go python
+kinds: firmware zephyr espidf pio arm-gcc circuitpython silabs; hardware hardware altium; mechanical mechanical;
+       cloud cloud-worker web-pages; apps app-flutter app-tauri app-xcode app-android; services docker go python
 EOF
 }
 
@@ -88,8 +90,9 @@ warn() { printf '%swarning:%s %s\n' "$C_YELLOW" "$C_OFF" "$*" >&2; }
 # kind_group KIND: the folder a part of this kind lives in (reference/standard.md section 1).
 kind_group() {
   case $1 in
-    zephyr | espidf | pio | arm-gcc | circuitpython) printf 'firmware' ;;
-    hardware) printf 'hardware' ;;
+    zephyr | espidf | pio | arm-gcc | circuitpython | silabs) printf 'firmware' ;;
+    hardware | altium) printf 'hardware' ;;
+    mechanical) printf 'mechanical' ;;
     cloud-worker | docker | go | python) printf 'cloud' ;;
     web-pages) printf 'web' ;;
     app-flutter | app-tauri | app-xcode | app-android) printf 'app' ;;
@@ -111,7 +114,10 @@ kind_tech() {
     pio) echo "PlatformIO firmware" ;;
     arm-gcc) echo "bare-metal Cortex-M firmware: arm-none-eabi-gcc, libopencm3 or CubeMX" ;;
     circuitpython) echo "CircuitPython firmware: circup" ;;
+    silabs) echo "Silicon Labs firmware: Simplicity SDK, WiseConnect, slc, Simplicity Commander" ;;
     hardware) echo "KiCad 10 board: kicad-cli, JLCPCB rules" ;;
+    altium) echo "Altium Designer board: OutJob outputs, Git LFS" ;;
+    mechanical) echo "FreeCAD models: freecadcmd, STEP and STL" ;;
     cloud-worker) echo "Cloudflare Worker: TypeScript, wrangler, D1 / KV / R2" ;;
     web-pages) echo "static site on Cloudflare Pages: wrangler" ;;
     app-flutter) echo "Flutter app" ;;
@@ -130,7 +136,9 @@ kind_brew() {
     zephyr) printf '%s\n' 'brew "cmake"' 'brew "ninja"' 'brew "dtc"' 'brew "gperf"' 'brew "ccache"' 'cask "segger-jlink"' ;;
     espidf) printf '%s\n' 'brew "cmake"' 'brew "ninja"' 'brew "dfu-util"' 'brew "ccache"' 'brew "libusb"' ;;
     arm-gcc) printf '%s\n' 'cask "gcc-arm-embedded"' 'brew "openocd"' 'brew "stlink"' 'brew "dfu-util"' ;;
+    silabs) printf '%s\n' 'cask "segger-jlink"' 'brew "tio"' ;;
     hardware) printf '%s\n' 'cask "kicad"' ;;
+    mechanical) printf '%s\n' 'cask "freecad"' ;;
     app-flutter) printf '%s\n' 'cask "flutter"' 'brew "cocoapods"' ;;
     app-xcode) printf '%s\n' 'brew "xcbeautify"' 'brew "swiftlint"' ;;
     app-android) printf '%s\n' 'cask "temurin@21"' 'cask "android-commandlinetools"' ;;
@@ -160,7 +168,10 @@ kind_ignore() {
     espidf) printf '%s\n' 'build/' 'managed_components/' 'sdkconfig.old' ;;
     pio) printf '%s\n' '.pio/' '.pioenvs/' '.piolibdeps/' ;;
     circuitpython) printf '%s\n' '__pycache__/' ;;
+    silabs) printf '%s\n' 'build/' ;;
     hardware) printf '%s\n' 'outputs/' '*-backups/' '_autosave-*' '*.lck' 'fp-info-cache' '*.kicad_prl' ;;
+    altium) grep -v '^#' "$SKILL_DIR/templates/altium/gitignore" | grep -v '^[[:space:]]*$' ;;
+    mechanical) printf '%s\n' 'outputs/' '*.FCBak' '*.FCStd1' ;;
     cloud-worker) printf '%s\n' 'node_modules/' '.wrangler/' 'dist/' ;;
     web-pages) printf '%s\n' 'node_modules/' '.wrangler/' 'dist/' '.svelte-kit/' '.astro/' 'vite.config.*.timestamp-*' ;;
     app-flutter) printf '%s\n' '.dart_tool/' '.flutter-plugins' '.flutter-plugins-dependencies' 'build/' 'Pods/' ;;
@@ -195,6 +206,15 @@ kind_settings() {
     circuitpython)
       echo "# ${p}_DRIVE := /Volumes/CIRCUITPY"
       ;;
+    silabs)
+      echo "# ${p}_BOARD       := brd4338a   # the slc board (radio board), see $d/README.md"
+      echo "# ${p}_SDK         := 2025.12.2  # Simplicity SDK version"
+      echo "# ${p}_WISECONNECT := 4.0.1      # WiseConnect version"
+      echo "# ${p}_PROBE       := commander  # commander or jlink"
+      ;;
+    hardware)
+      echo "# ${p}_LIBRARY := local          # the board's own sym-lib-table and fp-lib-table instead of the shared KiCad library"
+      ;;
     web-pages)
       echo "# what gets deployed: the build output folder"
       echo "${p}_OUT := $d/public"
@@ -222,13 +242,21 @@ kind_settings() {
 kind_tasks() {
   local p=$1 k=$2 d=$3
   case $k in
-    zephyr | espidf | pio | arm-gcc | circuitpython)
+    zephyr | espidf | pio | arm-gcc | circuitpython | silabs)
       echo "- [ ] Board set in make/project.mk (see $d/README.md) {#$p-board}"
       echo "- [ ] First build with make $p-build and flash with make $p-flash {#$p-first-build}"
       ;;
     hardware)
       echo "- [ ] Board started with make $p-new NAME=<board> {#$p-new}"
       echo "- [ ] ERC and DRC clean with make $p-check {#$p-check}"
+      ;;
+    altium)
+      echo "- [ ] Board files in the standard layout (make $p-layout prints the moves) {#$p-layout}"
+      echo "- [ ] make $p-check passes and make $p-build packages the OutJob's outputs {#$p-check}"
+      ;;
+    mechanical)
+      echo "- [ ] First FreeCAD model in $d (*.FCStd, in Git LFS) {#$p-create}"
+      echo "- [ ] make $p-check recomputes every model and make $p-build exports STEP and STL {#$p-check}"
       ;;
     cloud-worker)
       echo "- [ ] Project Cloudflare API token stored with make cf-login {#$p-token}"
@@ -273,7 +301,9 @@ kind_tasks() {
 kind_docs() {
   case $1 in
     zephyr | espidf | pio | arm-gcc | circuitpython) echo "protocol flashing" ;;
-    hardware) echo "bringup manufacturing" ;;
+    silabs) echo "protocol flashing power" ;;
+    hardware | altium) echo "bringup manufacturing" ;;
+    mechanical) echo "assembly" ;;
     cloud-worker) echo "api data" ;;
     app-*) echo "distribution" ;;
     docker | go | python) echo "usage" ;;
@@ -287,6 +317,8 @@ doc_title() {
     flashing) echo "Flashing" ;;
     bringup) echo "Bring-up" ;;
     manufacturing) echo "Manufacturing" ;;
+    power) echo "Power" ;;
+    assembly) echo "Assembly" ;;
     api) echo "API" ;;
     data) echo "Data" ;;
     distribution) echo "Distribution" ;;
@@ -300,6 +332,8 @@ doc_what() {
     flashing) echo "bootloader, recovery, factory programming, board revisions" ;;
     bringup) echo "first power-on and test checklist" ;;
     manufacturing) echo "fab and assembly options, stackup, design rules, supplier notes" ;;
+    power) echo "power modes, measured currents, battery life" ;;
+    assembly) echo "parts, fasteners, assembly order, printing and machining notes" ;;
     api) echo "endpoints, authentication, errors" ;;
     data) echo "D1 tables, KV keys, R2 layout, migrations" ;;
     distribution) echo "bundle ids, signing, stores, OTA channel, permissions" ;;
@@ -310,8 +344,10 @@ doc_what() {
 # Where a part of kind K runs, for docs/architecture.md.
 kind_runs_on() {
   case $1 in
-    zephyr | espidf | pio | arm-gcc | circuitpython) echo "the device's microcontroller" ;;
+    zephyr | espidf | pio | arm-gcc | circuitpython | silabs) echo "the device's microcontroller" ;;
     hardware) echo "the board itself (made from this part's KiCad files)" ;;
+    altium) echo "the board itself (made from this part's Altium files)" ;;
+    mechanical) echo "the enclosure and mechanical parts (made from this part's FreeCAD models)" ;;
     cloud-worker) echo "Cloudflare Workers" ;;
     web-pages) echo "Cloudflare Pages" ;;
     app-flutter) echo "phones, tablets and desktops (Flutter)" ;;
@@ -371,6 +407,20 @@ readme_build() {
     circuitpython)
       echo "\`code.py\` and \`lib/\` live here. \`make $p-flash\` copies them to the board, \`make $p-monitor\` opens the"
       echo "serial console."
+      ;;
+    silabs)
+      echo "\`make setup\` installs slt, and through it slc, the Simplicity SDK and WiseConnect. Put the slc project"
+      echo "(\`*.slcp\`) here; then \`make $p-build\`, \`make $p-flash\`, \`make $p-monitor\` and \`make $p-power\` work"
+      echo "from the project root."
+      ;;
+    altium)
+      echo "Altium Designer (Windows) makes the outputs: run the board's OutJob, which writes into \`outputs/\`."
+      echo "\`make $p-check\` checks the layout, the documents and Git LFS, \`make $p-build\` checks the outputs and"
+      echo "packages the fab zip into \`production/\`; \`make $p-layout\` prints the moves into the standard layout."
+      ;;
+    mechanical)
+      echo "FreeCAD models (\`*.FCStd\`, in Git LFS) live here. \`make $p-check\` opens and recomputes every model,"
+      echo "\`make $p-build\` exports each visible body or part to STEP and STL in \`outputs/\`."
       ;;
     hardware)
       echo "Start a board from the template (title block, JLCPCB design rules and stackup, the shared library):"
@@ -454,9 +504,25 @@ readme_config() {
     circuitpython)
       echo "\`${p}_DRIVE\` in \`make/project.mk\` when the board is not mounted at /Volumes/CIRCUITPY."
       ;;
+    silabs)
+      echo "Set the board in \`make/project.mk\` before the first build:"
+      echo
+      echo "    ${p}_BOARD       := <board>    # for example brd4338a (SiWx917 radio board)"
+      echo "    ${p}_SDK         := 2025.12.2  # optional: the Simplicity SDK version"
+      echo "    ${p}_WISECONNECT := 4.0.1      # optional: the WiseConnect version"
+      echo "    ${p}_SIGN        := 1          # optional: sign the image with the key silabs-m4"
+      ;;
     hardware)
       echo "The shared KiCad library comes from \`KICAD_LIBRARY_DIR\` (user config) or KiCad's own setting;"
-      echo "\`make $p-doctor\` says which."
+      echo "\`make $p-doctor\` says which. \`${p}_LIBRARY := local\` in \`make/project.mk\` uses the board's own"
+      echo "library tables instead (no shared library, none checked out in CI)."
+      ;;
+    altium)
+      echo "The layout is fixed (\`<Board>.PrjPcb\`, \`.SchDoc\`, \`.PcbDoc\` and \`.OutJob\` here, \`sheets/\`, \`library/\`,"
+      echo "\`bom/\`); \`make $p-check\` enforces it. The revision is \`VERSION\`."
+      ;;
+    mechanical)
+      echo "\`FREECADCMD\` (user config or environment) when freecadcmd is neither on PATH nor in FreeCAD.app."
       ;;
     cloud-worker)
       # shellcheck disable=SC2016 # the backticks are Markdown
@@ -495,6 +561,9 @@ readme_release() {
       echo "(.github/workflows/release.yml) checks, builds and runs \`make $p-deploy ENV=production CONFIRM=production\`,"
       echo "then creates the GitHub Release \"$p <version>\" with those notes and no files, so a Release is what is live."
       ;;
+    altium)
+      echo "tags \`$p-v<version>\`; it pushes nothing. No workflow makes this part's GitHub Release \"$p <version>\"."
+      ;;
     *)
       echo "tags \`$p-v<version>\`; it pushes nothing. The tag's workflow (.github/workflows/release.yml) builds the release"
       echo "files and creates the GitHub Release \"$p <version>\" with those notes; the files are attached to it."
@@ -503,7 +572,7 @@ readme_release() {
   # the production steps run by hand from the Actions tab: workflow_dispatch of release.yml with part and confirm
   manual="from the Actions tab: release.yml with part \`$p\` and confirm \`production\`"
   case $k in
-    zephyr | espidf | pio | arm-gcc | circuitpython)
+    zephyr | espidf | pio | arm-gcc | circuitpython | silabs)
       if fw_publishes; then
         echo "The OTA upload stays manual, $manual (locally: \`make $p-release ENV=production CONFIRM=production\`)."
       else
@@ -525,6 +594,14 @@ readme_release() {
       ;;
     hardware)
       echo "The fab zip, BOMs, CPL, netlist, schematic PDF, iBOM and 3D files are attached to the Release."
+      ;;
+    altium)
+      echo "Altium runs on Windows only, so CI only checks the board. After the bump and \`make release-push\`, run"
+      echo "\`make $p-github-release FORCE=1\` where the OutJob's outputs are (Git Bash on that Windows machine, or a Mac"
+      echo "they were copied to). It attaches the fab zip and the outputs to the Release."
+      ;;
+    mechanical)
+      echo "The STEP and STL exports and the \`.FCStd\` models are attached to the Release."
       ;;
     docker)
       echo "The workflow pushes the image to ghcr.io tagged \`:<version>\` and records its digest in the Release."
@@ -594,7 +671,7 @@ EOF
 
 # part_doc P K NAME: the content of docs/<part>/<name>.md.
 part_doc() {
-  local p=$1 k=$2 name=$3
+  local p=$1 k=$2 name=$3 d=${4:-}
   printf '# %s: %s\n\n' "$p" "$(doc_title "$name")"
   case $name in
     protocol)
@@ -683,6 +760,8 @@ _Errata per revision, with the rework that fixes each._
 EOF
       ;;
     manufacturing)
+      local stackup_src="the board's \`.kicad_pcb\` (Board Setup, Physical Stackup)"
+      [[ $k != altium ]] || stackup_src="the board's \`.PcbDoc\` (Layer Stack Manager)"
       cat <<EOF
 _How this board is fabricated and assembled. \`make $p-release\` publishes the fab files._
 
@@ -692,7 +771,7 @@ _Fab house, layer count, thickness, copper weight, finish, colour, panelisation.
 
 ## Stackup
 
-_The layer stack and controlled impedances; it matches the stackup in the board's \`.kicad_pcb\` (Board Setup, Physical Stackup)._
+_The layer stack and controlled impedances; it matches the stackup in $stackup_src._
 
 ## Design rules
 
@@ -705,6 +784,59 @@ _Who assembles, which side, parts by LCSC basic / extended, hand-placed or consi
 ## Suppliers and parts
 
 _Long lead-time parts, alternates, what to check before ordering._
+
+## Revisions
+
+_What changed in each revision; the details are in the CHANGELOG._
+EOF
+      ;;
+    power)
+      cat <<EOF
+_How much current $p draws and how long a battery lasts. \`make $p-power\` records the samples (Simplicity Commander's
+energy monitor on the kit), \`make $p-power-avg\` the long average._
+
+## Power modes
+
+_Each mode the firmware uses (active, radio on, sleep, deep sleep), what enters and leaves it, the wake sources._
+
+## Measurements
+
+| Firmware version | Board / revision | Mode | Average current | Peak | Date |
+|---|---|---|---|---|---|
+
+## Budget
+
+_The duty cycle of a typical day and the average current it gives._
+
+## Battery life
+
+_The battery, its usable capacity, and the life the budget gives; what shortens it._
+
+## How to measure
+
+_The kit or probe, the wiring, \`make $p-power DURATION=<s>\` and what to keep fixed between runs._
+EOF
+      ;;
+    assembly)
+      cat <<EOF
+_How the parts of $p are made and put together. The models are in \`$d/\`; \`make $p-build\` exports STEP and STL._
+
+## Parts
+
+| Part | Model (.FCStd) | Made by | Material | Quantity |
+|---|---|---|---|---|
+
+## Fasteners and bought parts
+
+_Screws, inserts, magnets, gaskets: size, quantity, supplier._
+
+## Assembly order
+
+_The steps, in order, with what to check at each (fit of the board, connectors, buttons, cables)._
+
+## Printing and machining
+
+_Per part: process, orientation, layer height or tolerance, finish, supports._
 
 ## Revisions
 
@@ -859,10 +991,32 @@ EOF
 }
 
 part_docs() {
-  local p=$1 k=$2 name
+  local p=$1 k=$2 d=$3 name
   for name in $(kind_docs "$k"); do
-    part_doc "$p" "$k" "$name" | own_doc "docs/$p/$name.md"
+    part_doc "$p" "$k" "$name" "$d" | own_doc "docs/$p/$name.md"
   done
+}
+
+# references_doc: docs/references.md, the table make refs-fetch reads (refs.sh). Written for every project: firmware
+# has its chip's reference manual and SDK notes, hardware its datasheets, mechanical its vendors' drawings.
+# shellcheck disable=SC2016 # the backticks are Markdown
+references_doc() {
+  {
+    printf '# %s: references
+
+' "$PROJECT"
+    printf '_The datasheets, reference manuals, application notes and drawings this project works from. They are never
+'
+    printf 'committed: `make refs-fetch` downloads each row into `references/<File>` (git-ignored) and checks its SHA256,
+'
+    printf '`make refs-check` checks what is there. A row without SHA256 gets it printed by refs-fetch: paste it in._
+
+'
+    printf '| Title | Vendor | File | URL | SHA256 |
+'
+    printf '|---|---|---|---|---|
+'
+  } | own_doc docs/references.md
 }
 
 # mermaid_id NAME: a part name as a Mermaid node id.
@@ -887,6 +1041,7 @@ project_docs() {
     printf -- '- [README](../README.md): what the project is and how to start\n'
     printf -- '- [Architecture](architecture.md): the parts, how they connect, where each runs\n'
     ((deployable == 0)) || printf -- '- [Operations](operations.md): deploy, rollback, backup, checks\n'
+    printf -- '- [References](references.md): datasheets, manuals and drawings (make refs-fetch downloads them)\n'
     printf '\n## Parts\n'
     i=0
     while ((i < n)); do
@@ -1298,10 +1453,14 @@ fw_publishes() {
 
 ci_has_production() {
   case $1 in
-    zephyr | espidf | pio | arm-gcc | circuitpython | cloud-worker | web-pages | app-*) return 0 ;;
+    zephyr | espidf | pio | arm-gcc | circuitpython | silabs | cloud-worker | web-pages | app-*) return 0 ;;
   esac
   return 1
 }
+
+# ci_has_release KIND: the kind gets a <part>-release job in release.yml. Not altium: its outputs come from Altium on
+# Windows, so its GitHub Release is made there (make <part>-github-release FORCE=1), and CI only checks it.
+ci_has_release() { [[ $1 != altium ]]; }
 
 # ci_key PART: the output name of a part in the changes job (an output name cannot hold '-').
 ci_key() { printf '%s\n' "${1//-/_}"; }
@@ -1369,6 +1528,10 @@ ci_job() {
       if is_prod_only "$p"; then printf '      production_only: true\n'; else printf '      production_only: false\n'; fi
       ;;
   esac
+  # a board with its own library tables (<part>_LIBRARY := local in make/project.mk): CI checks out no KiCad library
+  if [[ $k == hardware && $(project_mk_value "${p}_LIBRARY") == local ]]; then
+    printf '      library: local\n'
+  fi
   # a push to main deploys staging (a production-only part: nothing)
   if [[ $mode == ci ]]; then
     case $k in
@@ -1380,7 +1543,7 @@ ci_job() {
   # the production step takes the build or staging run from the dispatch's source_run_id
   if [[ $mode == production ]]; then
     case $k in
-      arm-gcc | circuitpython | espidf | pio | zephyr)
+      arm-gcc | circuitpython | espidf | pio | silabs | zephyr)
         printf "      source_run_id: \${{ inputs.source_run_id }}\\n"
         ;;
     esac
@@ -1514,6 +1677,10 @@ EOF
 ci_latest_job() {
   local i=0 needs='tag' cond=''
   while ((i < n)); do
+    if ! ci_has_release "${P_KINDS[$i]}"; then
+      i=$((i + 1))
+      continue
+    fi
     needs="$needs, ${P_NAMES[$i]}-release"
     [[ -z $cond ]] || cond="$cond || "
     cond="${cond}needs.${P_NAMES[$i]}-release.result == 'success'"
@@ -1553,7 +1720,7 @@ EOF
 
 # ci_release_workflow: .github/workflows/release.yml
 ci_release_workflow() {
-  local i=0 p k
+  local i=0 p k has_release=0
   ci_header "release.yml: release for $PROJECT. A tag <part>-v<version> (make <part>-bump) runs that part's job."
   cat <<'EOF'
 name: release
@@ -1587,17 +1754,20 @@ EOF
   echo "jobs:"
   ci_tag_job
   while ((i < n)); do
-    ci_job release "${P_NAMES[$i]}" "${P_KINDS[$i]}" "${P_DIRS[$i]}"
+    if ci_has_release "${P_KINDS[$i]}"; then
+      ci_job release "${P_NAMES[$i]}" "${P_KINDS[$i]}" "${P_DIRS[$i]}"
+      has_release=1
+    fi
     i=$((i + 1))
   done
-  ci_latest_job
+  ((has_release == 0)) || ci_latest_job
   printf '\n'
   i=0
   while ((i < n)); do
     p=${P_NAMES[$i]} k=${P_KINDS[$i]}
     if ci_has_production "$k"; then
       case $k in
-        zephyr | espidf | pio | arm-gcc | circuitpython) fw_publishes || { i=$((i + 1)); continue; } ;;
+        zephyr | espidf | pio | arm-gcc | circuitpython | silabs) fw_publishes || { i=$((i + 1)); continue; } ;;
       esac
       ci_job production "$p" "$k" "${P_DIRS[$i]}"
     fi
@@ -1859,7 +2029,7 @@ while ((i < n)); do
   i=$((i + 1))
 done
 # The OTA bucket is the project's (its Cloudflare account; CI reads it from here), for the kinds that release OTA.
-if grep -Eqx 'zephyr|espidf|pio|arm-gcc|circuitpython|app-android|app-tauri' <<<"$USED_KINDS"; then
+if grep -Eqx 'zephyr|espidf|pio|arm-gcc|circuitpython|silabs|app-android|app-tauri' <<<"$USED_KINDS"; then
   {
     echo "# R2 bucket that <part>-release uploads OTA images to, in this project's Cloudflare account"
     echo "# (a part can override it with <part>_OTA_BUCKET); make cf-provision ENV=production CONFIRM=production creates it:"
@@ -1904,6 +2074,8 @@ if grep -Eqx 'cloud-worker|web-pages' <<<"$USED_KINDS"; then
   place tests/smoke/README.md own
   place tests/remote/README.md own
 fi
+ga_existed=0
+[[ ! -e "$DEST/.gitattributes" ]] || ga_existed=1
 place .gitattributes own
 
 if [[ ! -e "$DEST/Brewfile" ]]; then
@@ -1932,7 +2104,7 @@ fi
 # or reordered), for a new .gitignore and for an existing one alike: the CI checkouts (.ci/), the local CI runner's
 # work folder and secrets file, and per part the release files (and a hardware part's production/). Prints what it added.
 gitignore_required() {
-  local added l i before
+  local added l i before altium=0
   before=$(wc -l <"$DEST/.gitignore")
   added=''
   grep -Fxq -- ".ci/" "$DEST/.gitignore" || added=".ci/"$'\n'
@@ -1943,12 +2115,22 @@ gitignore_required() {
     grep -Fxq -- "$l" "$DEST/.gitignore" || added="$added$l"$'\n'
   done
   if [[ -n $added ]]; then printf '\n# local CI runs (make ci-local): the work folder and the secrets file\n%s' "$added" >>"$DEST/.gitignore"; fi
-  # Per part: a hardware part's fab zips (production/), and every part's release files (make <part>-release-assets,
-  # attached to the GitHub Release), only in that part's folder so an unrelated folder elsewhere is not hidden.
+  # the reference documents of docs/references.md (make refs-fetch): downloaded, never committed
+  if ! grep -Fxq -- "references/" "$DEST/.gitignore"; then
+    printf '\n# reference documents (make refs-fetch downloads what docs/references.md lists; never committed)\nreferences/\n' >>"$DEST/.gitignore"
+  fi
+  # Per part: a hardware or altium part's fab zips (production/), an altium part's OutJob outputs (outputs/), and every
+  # part's release files (make <part>-release-assets, attached to the GitHub Release), only in that part's folder so an
+  # unrelated folder elsewhere is not hidden.
   added=''
   i=0
   while ((i < n)); do
-    if [[ ${P_KINDS[$i]} == hardware ]]; then
+    if [[ ${P_KINDS[$i]} == altium ]]; then
+      l="${P_DIRS[$i]}/outputs/"
+      grep -Fxq -- "$l" "$DEST/.gitignore" || added="$added$l"$'\n'
+      altium=1
+    fi
+    if [[ ${P_KINDS[$i]} == hardware || ${P_KINDS[$i]} == altium ]]; then
       l="${P_DIRS[$i]}/production/"
       grep -Fxq -- "$l" "$DEST/.gitignore" || added="$added$l"$'\n'
     fi
@@ -1956,8 +2138,36 @@ gitignore_required() {
     grep -Fxq -- "$l" "$DEST/.gitignore" || added="$added$l"$'\n'
     i=$((i + 1))
   done
-  if [[ -n $added ]]; then printf '\n# release files (make <part>-release-assets; the GitHub Release keeps them)\n%s' "$added" >>"$DEST/.gitignore"; fi
+  if [[ -n $added ]]; then printf '\n# release files (make <part>-release-assets; the GitHub Release keeps them) and generated board outputs\n%s' "$added" >>"$DEST/.gitignore"; fi
+  # Altium's history, logs, previews and locks: make <part>-doctor warns about each one that is not ignored
+  if ((altium == 1)); then
+    added=''
+    while IFS= read -r l; do
+      grep -Fxq -- "$l" "$DEST/.gitignore" || added="$added$l"$'\n'
+    done < <(kind_ignore altium)
+    if [[ -n $added ]]; then printf '\n# altium\n%s' "$added" >>"$DEST/.gitignore"; fi
+  fi
   if (($(wc -l <"$DEST/.gitignore") > before)); then echo "added"; fi
+}
+
+# gitattributes_required: the Git LFS lines a part's kind needs, appended to .gitattributes when no line has their
+# pattern yet (never removed or reordered): *.FCStd for a mechanical part (git matches with case on Linux, so *.fcstd
+# alone leaves a Linux checkout with the pointer files), and Altium's binary documents for an altium part
+# (templates/altium/gitattributes). Prints what it added.
+gitattributes_required() {
+  local f="$DEST/.gitattributes" added='' l pat
+  [[ -f $f ]] || return 0
+  {
+    if has_kind mechanical; then printf '%s\n' '*.FCStd filter=lfs diff=lfs merge=lfs -text'; fi
+    if has_kind altium; then grep -v '^#' "$SKILL_DIR/templates/altium/gitattributes" | grep -v '^[[:space:]]*$'; fi
+  } >"$WORK/gitattributes.want"
+  while IFS= read -r l; do
+    pat=${l%%[[:space:]]*}
+    awk -v p="$pat" '$1 == p { found = 1 } END { exit !found }' "$f" || added="$added$l"$'\n'
+  done <"$WORK/gitattributes.want"
+  [[ -n $added ]] || return 0
+  printf '\n# Git LFS for the CAD files of this project'"'"'s kinds (binary, never merged)\n%s' "$added" >>"$f"
+  echo "added"
 }
 
 if [[ ! -e "$DEST/.gitignore" ]]; then
@@ -1973,7 +2183,7 @@ if [[ ! -e "$DEST/.gitignore" ]]; then
   done
   gitignore_required >/dev/null
 elif [[ -n $(gitignore_required) ]]; then
-  note "kept existing .gitignore, and added the standard's missing CI and release lines (.ci/, ci-local, <dir>/release/) at its end"
+  note "kept existing .gitignore, and added the standard's missing CI and release lines (.ci/, ci-local, references/, <dir>/release/) at its end"
 else
   note "kept existing .gitignore"
 fi
@@ -1986,6 +2196,10 @@ has_kind() {
   done
   return 1
 }
+
+if [[ -n $(gitattributes_required) ]] && ((ga_existed == 1)); then
+  note "added the Git LFS lines of the project's kinds (*.FCStd, Altium's documents) at the end of .gitattributes"
+fi
 
 # schema_row NAME ENVS USED-BY GEN DESCRIPTION   one secrets.schema row, in the template's columns.
 schema_row() { printf '%-22s %-26s %-14s %-5s %s\n' "$@"; }
@@ -2038,11 +2252,18 @@ if [[ ! -e "$DEST/secrets.schema" ]]; then
   # (app_secret_rows). All are optional: without them the build is unsigned or the upload is not possible, and
   # the release helper says so.
   app_secret_rows >>"$DEST/secrets.schema"
+  # silabs: the image signing key, read only when a part sets <part>_SIGN := 1 (make <part>-keygen creates it)
+  if has_kind silabs; then
+    schema_row silabs-m4 keys firmware ecdsa-p256 "optional: SiWx917 M4 image signing key, used when <part>_SIGN := 1 (make <part>-keygen)" >>"$DEST/secrets.schema"
+  fi
 else
   note "kept existing secrets.schema"
   # an existing schema is never rewritten: say what the standard would add
   if { ((has_cloud == 1)) || fw_publishes; } && ! grep -Eq '^[[:space:]]*CLOUDFLARE_API_TOKEN[[:space:]]' "$DEST/secrets.schema"; then
     note "secrets.schema has no CLOUDFLARE_API_TOKEN row, and this project uses Cloudflare (a Worker or Pages part, or OTA_BUCKET): add the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID rows (project-standard reference/standard.md, section 5, secrets.schema)"
+  fi
+  if has_kind silabs && ! grep -Eq '^[[:space:]]*silabs-m4[[:space:]]' "$DEST/secrets.schema"; then
+    note "secrets.schema has no silabs-m4 row (the silabs image signing key, used with <part>_SIGN := 1): add it as in reference/standard.md, section 5"
   fi
 fi
 
@@ -2076,10 +2297,11 @@ while ((i < n)); do
   # the part's documents: written when missing, also in a part folder that exists (adopt)
   part_readme "$p" "$k" "$d"
   part_changelog "$p" "$d"
-  part_docs "$p" "$k"
+  part_docs "$p" "$k" "$d"
   i=$((i + 1))
 done
 project_docs
+references_doc
 
 printf '%sscaffolded%s %s%s%s  (project-standard v%s, %d parts, port base %s)\n' \
   "$C_GREEN" "$C_OFF" "$C_BLUE" "$DEST" "$C_OFF" "$STD_VERSION" "$n" "$PORT_BASE"

@@ -2,7 +2,7 @@
 
 Reusable GitHub Actions workflows of the project standard, one per part kind, at
 `.github/workflows/<kind>.yml`, each with only `on: workflow_call`. Projects call them from their own
-`checks.yml` and `release.yml` with `uses: mayankgautam-me/ci-templates/.github/workflows/<kind>.yml@v1.0`.
+`checks.yml` and `release.yml` with `uses: mayankgautam-me/ci-templates/.github/workflows/<kind>.yml@v1.1`.
 README.md shows the calls.
 
 ## Where to change things
@@ -10,17 +10,16 @@ README.md shows the calls.
 - This repository is published from the project-standard skill: the source is
   `~/.workbench/claude/skills/project-standard/ci-templates/` in the workbench repository. Change the files
   there, never here; a change made only here is lost at the next publish.
-- Publishing: copy the source over this clone (`rsync -a --delete --exclude .git <source>/ ./`), amend the one
-  commit, force-push `main`, and move the `v1.0` tag to the new commit (`git tag -f v1.0`,
-  `git push -f origin v1.0`). The repository keeps exactly one commit and one tag; projects pin the tag.
-- A new major version of the standard gets a new tag (`v2.0`) instead of moving `v1.0`, and the projects' `uses:`
-  lines move to it with `make update`-style refreshes.
+- Publishing a version: copy the source over this clone (`rsync -a --delete --exclude .git <source>/ ./`), commit it
+  on `main` as "v<version>", tag it `v<version>` (the skill's `templates/project/make/VERSION`, now `v1.1`) and push
+  `main` and the tag. A published tag is never moved: projects on an older version (`@v1.0`) keep calling it until
+  the skill's update mode moves their `uses:` lines to the new tag (`reference/standard.md` section 10).
 
 ## Rules for the workflows
 
 - Every step runs a `make` target, so CI runs what a developer runs locally; no build logic lives in YAML.
 - Inputs: `part`, `part_dir` and the kind's own flags. Secrets passed by the caller: `SECRETS_DEPLOY_KEY`,
-  `SOPS_AGE_KEY`, and for hardware `KICAD_LIBRARY_DEPLOY_KEY`.
+  `SOPS_AGE_KEY`, and for hardware `KICAD_LIBRARY_DEPLOY_KEY` (not used with the input `library: local`).
 - Repository variables read (each optional, with a default in the workflow): `SECRETS_REPO`,
   `KICAD_LIBRARY_REPO`, `KICAD_LIB_PREFIX`, `STD_APT_PACKAGES`, `STD_IBOM_COMMIT`, `MACOS_CI` (macOS jobs run
   only when it is `true`), and `STD_RUNNER`, `STD_RUNNER_LINUX_ARM`, `STD_RUNNER_MACOS`, `STD_RUNNER_WINDOWS`

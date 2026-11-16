@@ -1101,3 +1101,127 @@ PARTS := fw-a:fake'
   [[ "$output" == *"OTA="$'\n'* || "$output" == *"OTA=" ]]
   [[ "$output" != *"user-bucket"* ]]
 }
+
+# reg_probe: a local.mk target that prints the registry, where it came from, the origin's repository and the KiCad library repository
+reg_probe() {
+  mkdir -p "$STD_CONFIG"
+  printf 'GITHUB_OWNER := fabrolabs-innovations\nDOCKER_REGISTRY := ghcr.io/fabrolabs-innovations\n' >"$STD_CONFIG/config.mk"
+  cat >make/local.mk <<'EOF'
+showreg:
+	@echo "REG=$(DOCKER_REGISTRY) FROM=$(STD_DOCKER_REGISTRY_FROM) REPO=$(STD_ORIGIN_OWNER)/$(STD_ORIGIN_REPO) ENV=$$DOCKER_REGISTRY KLIB=$(KICAD_LIBRARY_PROJECT)"
+sub:
+	@$(MAKE) --no-print-directory showreg
+EOF
+}
+
+@test "DOCKER_REGISTRY follows the project's owner (lowercase); the user config's applies only to its own owner; make/project.mk wins" {
+  reg_probe
+  git init -q
+  git remote add origin git@github.com:I2Sage-Technologies/CoreLink.git
+  run make showreg
+  echo "$output"
+  [[ "$output" == *"REG=ghcr.io/i2sage-technologies FROM=owner REPO=i2sage-technologies/CoreLink ENV=ghcr.io/i2sage-technologies KLIB=i2sage-technologies/kicad-library"* ]] || false
+  # a sub-make reads the same, with the same word for where it came from
+  run make sub
+  [[ "$output" == *"REG=ghcr.io/i2sage-technologies FROM=owner "* ]] || false
+  # the config's owner: the config's registry
+  git remote set-url origin https://github.com/fabrolabs-innovations/gateway.git
+  run make showreg
+  [[ "$output" == *"REG=ghcr.io/fabrolabs-innovations FROM=config REPO=fabrolabs-innovations/gateway "* ]] || false
+  # no origin: the default owner, the config's registry
+  git remote remove origin
+  run make showreg
+  [[ "$output" == *"REG=ghcr.io/fabrolabs-innovations FROM=config "* ]] || false
+  # in CI: GITHUB_REPOSITORY_OWNER, lowercase
+  GITHUB_REPOSITORY_OWNER=Acme-Org run make showreg
+  [[ "$output" == *"REG=ghcr.io/acme-org FROM=owner "* ]] || false
+  # make/project.mk wins over everything but the command line
+  printf 'DOCKER_REGISTRY := registry.example/team\n' >>make/project.mk
+  GITHUB_REPOSITORY_OWNER=Acme-Org run make showreg
+  [[ "$output" == *"REG=registry.example/team FROM=make/project.mk "* ]] || false
+  run make showreg DOCKER_REGISTRY=other.example/x
+  [[ "$output" == *"REG=other.example/x FROM=command line "* ]] || false
+}
+
+refs_table() {
+  mkdir -p docs
+  printf '# References\n\n| Title | Vendor | File | URL | SHA256 |\n|---|---|---|---|---|\n' >docs/references.md
+  printf '| Manual | Acme | acme/manual.pdf | https://example.invalid/manual.pdf | %s |\n' "$1" >>docs/references.md
+  printf '| Note | Acme | `note.pdf` | [link](https://example.invalid/note.pdf) |  |\n' >>docs/references.md
+  printf '\nAfter the table.\n| not | a | row |\n' >>docs/references.md
+}
+
+@test "refs-fetch downloads docs/references.md into references/, checks SHA256, skips what is there; refs-check never downloads" {
+  # curl writes "body of <url>" to -o
+  stub_cmd curl 'out=; url=; while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; -*) shift;; *) url=$1; shift;; esac; done; echo "$url" >>"$STUB_LOG/curl.urls"; printf "body of %s" "$url" >"$out"'
+  good=$(printf 'body of %s' https://example.invalid/manual.pdf | shasum -a 256 | cut -d' ' -f1)
+  note=$(printf 'body of %s' https://example.invalid/note.pdf | shasum -a 256 | cut -d' ' -f1)
+  refs_table "$good"
+  git init -q
+  printf 'references/\n' >.gitignore
+  cp docs/references.md "$BATS_TEST_TMPDIR/before.md"
+  run make refs-check
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"acme/manual.pdf: missing"* ]] || false
+  [ ! -f "$STUB_LOG/curl.urls" ]
+  run make refs-fetch
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ "$(cat references/acme/manual.pdf)" = "body of https://example.invalid/manual.pdf" ]
+  [ -f references/note.pdf ]
+  [[ "$output" == *"note.pdf: downloaded; no SHA256 in docs/references.md: $note (paste it into the row)"* ]] || false
+  [[ "$output" != *"not in .gitignore"* ]] || false
+  cmp docs/references.md "$BATS_TEST_TMPDIR/before.md"
+  # present and matching: no second download
+  run make refs-fetch
+  [ "$status" -eq 0 ]
+  [ "$(grep -c . "$STUB_LOG/curl.urls")" -eq 2 ]
+  run make refs-check
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"note.pdf: no SHA256 in docs/references.md; this file's is $note"* ]] || false
+  # a changed file fails the check; fetch downloads it again
+  printf 'tampered' >references/acme/manual.pdf
+  run make refs-check
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"acme/manual.pdf: SHA256 is "* ]] || false
+  run make refs-fetch
+  [ "$status" -eq 0 ]
+  [ "$(cat references/acme/manual.pdf)" = "body of https://example.invalid/manual.pdf" ]
+}
+
+@test "refs-fetch refuses a wrong SHA256 download, a path outside references/ and a URL that is not https; help lists refs only with docs/references.md" {
+  stub_cmd curl 'out=; while [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; *) shift;; esac; done; printf x >"$out"'
+  run make help
+  [[ "$output" != *"refs-fetch"* ]] || false
+  mkdir -p docs
+  printf '| title | file | url | sha256 |\n|---|---|---|---|\n| Manual | acme/manual.pdf | https://example.invalid/m.pdf | %064d |\n| Bad | ../escape.pdf | https://example.invalid/e.pdf | |\n| Plain | plain.pdf | http://example.invalid/p.pdf | |\n' 0 >docs/references.md
+  run make help
+  [[ "$output" == *"refs-fetch"* && "$output" == *"refs-check"* ]] || false
+  run make refs-fetch
+  echo "$output"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"acme/manual.pdf: the download's SHA256 is"*"not kept"* ]] || false
+  [ ! -e references/acme/manual.pdf ]
+  [ ! -e references/acme/manual.pdf.part ]
+  [[ "$output" == *"File '../escape.pdf' must be a relative path inside references/"* ]] || false
+  [[ "$output" == *"plain.pdf: URL 'http://example.invalid/p.pdf' is not https://"* ]] || false
+  [ ! -e escape.pdf ]
+  [ ! -e references/plain.pdf ]
+}
+
+@test "refs-fetch and refs-check pass on the scaffold's empty table (header only), and still fail with no table" {
+  stub_cmd curl 'echo "curl $*" >>"$STUB_LOG/curl.urls"; exit 1'
+  mkdir -p docs
+  printf '# References\n\n| Title | Vendor | File | URL | SHA256 |\n|---|---|---|---|---|\n' >docs/references.md
+  run make refs-check
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"lists no reference documents yet"* ]] || false
+  run make refs-fetch
+  [ "$status" -eq 0 ]
+  [ ! -f "$STUB_LOG/curl.urls" ]
+  printf '# References\n\nnone yet\n' >docs/references.md
+  run make refs-check
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"has no table with File and URL columns"* ]] || false
+}

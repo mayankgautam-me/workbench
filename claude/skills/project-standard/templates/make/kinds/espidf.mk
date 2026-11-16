@@ -1,4 +1,4 @@
-# project-standard v1.0 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.1 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind espidf: an ESP-IDF firmware part (idf.py, one build per chip target).
 #

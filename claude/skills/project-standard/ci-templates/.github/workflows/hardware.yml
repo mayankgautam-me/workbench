@@ -1,5 +1,6 @@
-# project-standard ci-templates v1.0: hardware (KiCad 10 boards through kicad-cli; the 3D models come from the KiCad library).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/hardware.yml@v1.0.
+# project-standard ci-templates v1.1: hardware (KiCad 10 boards through kicad-cli; the 3D models come from the KiCad library,
+# or, with library: local, from the board's own library in the project).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/hardware.yml@v1.1.
 
 on:
   workflow_call:
@@ -10,6 +11,8 @@ on:
       run_build: { type: boolean, default: true }
       run_release: { type: boolean, default: false }
       confirm: { type: string, default: '' }
+      # local: the board's own sym-lib-table and fp-lib-table are its library (<part>_LIBRARY := local); no KiCad library checkout
+      library: { type: string, default: 'shared' }
     secrets:
       SECRETS_DEPLOY_KEY:
         required: false
@@ -71,7 +74,7 @@ jobs:
           git lfs install --local
           git lfs pull --include "$PART_DIR/**"
       - name: Check out the KiCad library (3D models)
-        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        if: ${{ inputs.library != 'local' && vars.KICAD_LIBRARY_REPO != '' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ vars.KICAD_LIBRARY_REPO }}
@@ -79,7 +82,7 @@ jobs:
           path: .ci/kicad-library
           lfs: false
       - name: Export the KiCad library paths
-        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        if: ${{ inputs.library != 'local' && vars.KICAD_LIBRARY_REPO != '' }}
         env:
           LIB_PREFIX: ${{ vars.KICAD_LIB_PREFIX }}
         run: |
@@ -169,7 +172,7 @@ jobs:
           git lfs install --local
           git lfs pull --include "$PART_DIR/**"
       - name: Check out the KiCad library (3D models)
-        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        if: ${{ inputs.library != 'local' && vars.KICAD_LIBRARY_REPO != '' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ vars.KICAD_LIBRARY_REPO }}
@@ -177,11 +180,11 @@ jobs:
           path: .ci/kicad-library
           lfs: false
       - name: Get the KiCad library commit
-        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        if: ${{ inputs.library != 'local' && vars.KICAD_LIBRARY_REPO != '' }}
         id: libsha
         run: echo "sha=$(git -C "$GITHUB_WORKSPACE/.ci/kicad-library" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Keep the KiCad library LFS objects (per library commit)
-        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        if: ${{ inputs.library != 'local' && vars.KICAD_LIBRARY_REPO != '' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/kicad-library/.git/lfs/objects
@@ -189,10 +192,10 @@ jobs:
           restore-keys: |
             kicad-lfs-v1-
       - name: Get the 3D models from Git LFS (the 3D Models folder only, not the datasheets)
-        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        if: ${{ inputs.library != 'local' && vars.KICAD_LIBRARY_REPO != '' }}
         run: git -C "$GITHUB_WORKSPACE/.ci/kicad-library" lfs pull --include "3D Models/**"
       - name: Export the KiCad library paths
-        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        if: ${{ inputs.library != 'local' && vars.KICAD_LIBRARY_REPO != '' }}
         env:
           LIB_PREFIX: ${{ vars.KICAD_LIB_PREFIX }}
         run: |
@@ -302,7 +305,7 @@ jobs:
           git lfs install --local
           git lfs pull --include "$PART_DIR/**"
       - name: Check out the KiCad library (3D models)
-        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        if: ${{ inputs.library != 'local' && vars.KICAD_LIBRARY_REPO != '' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ vars.KICAD_LIBRARY_REPO }}
@@ -310,11 +313,11 @@ jobs:
           path: .ci/kicad-library
           lfs: false
       - name: Get the KiCad library commit
-        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        if: ${{ inputs.library != 'local' && vars.KICAD_LIBRARY_REPO != '' }}
         id: libsha
         run: echo "sha=$(git -C "$GITHUB_WORKSPACE/.ci/kicad-library" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
       - name: Keep the KiCad library LFS objects (per library commit)
-        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        if: ${{ inputs.library != 'local' && vars.KICAD_LIBRARY_REPO != '' }}
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .ci/kicad-library/.git/lfs/objects
@@ -322,10 +325,10 @@ jobs:
           restore-keys: |
             kicad-lfs-v1-
       - name: Get the 3D models from Git LFS (the 3D Models folder only, not the datasheets)
-        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        if: ${{ inputs.library != 'local' && vars.KICAD_LIBRARY_REPO != '' }}
         run: git -C "$GITHUB_WORKSPACE/.ci/kicad-library" lfs pull --include "3D Models/**"
       - name: Export the KiCad library paths
-        if: ${{ vars.KICAD_LIBRARY_REPO != '' }}
+        if: ${{ inputs.library != 'local' && vars.KICAD_LIBRARY_REPO != '' }}
         env:
           LIB_PREFIX: ${{ vars.KICAD_LIB_PREFIX }}
         run: |
