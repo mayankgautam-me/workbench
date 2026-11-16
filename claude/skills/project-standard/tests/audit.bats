@@ -6,7 +6,7 @@ if [[ -f "$BATS_TEST_DIRNAME/helpers.bash" ]]; then
   load helpers
 fi
 
-SA_HEADER='# project-standard v1.2 (managed: refresh with the project-standard skill, put project changes in make/local.mk)'
+SA_HEADER='# project-standard v1.3 (managed: refresh with the project-standard skill, put project changes in make/local.mk)'
 SA_KINDS="zephyr espidf pio arm-gcc circuitpython hardware cloud-worker web-pages app-flutter app-tauri app-xcode app-android docker go python"
 
 setup() {
@@ -96,7 +96,7 @@ EOF
   run "$(sa_skill_copy)/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -eq 0 ]
-  [[ $output == *"standard v1.2"* ]]
+  [[ $output == *"standard v1.3"* ]]
   [[ $output == *clean* ]]
 }
 
@@ -475,14 +475,14 @@ sa_git_lfs() {
   sa_fresh "$d"
   ci="$d/.github/workflows/checks.yml"
   sed -i.bak -e 's|actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1|actions/checkout@v7|' "$ci"
-  sed -i.bak -e 's|zephyr.yml@v1.2|zephyr.yml@v8|' "$ci"
+  sed -i.bak -e 's|zephyr.yml@v1.3|zephyr.yml@v8|' "$ci"
   printf '      - uses: some-org/deploy-tool@v1\n' >>"$ci"
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -eq 1 ]
   [[ $output == *"error    ci        .github/workflows/checks.yml: uses some-org/deploy-tool@v1: a third-party action"* ]]
   [[ $output == *"uses actions/checkout@v7: not pinned by a full commit SHA"* ]]
-  [[ $output == *"uses mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v8: the skill is at v1.2"* ]]
+  [[ $output == *"uses mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v8: the skill is at v1.3"* ]]
 }
 
 @test "audit: a reusable workflow with no @version is an error, and one from another owner is a warning" {
@@ -490,7 +490,7 @@ sa_git_lfs() {
   d="$BATS_TEST_TMPDIR/nover"
   sa_fresh "$d"
   ci="$d/.github/workflows/checks.yml"
-  sed -i.bak -e 's|zephyr.yml@v1.2|zephyr.yml|' -e 's|mayankgautam-me/ci-templates/.github/workflows/go|other-owner/ci-templates/.github/workflows/go|' "$ci"
+  sed -i.bak -e 's|zephyr.yml@v1.3|zephyr.yml|' -e 's|mayankgautam-me/ci-templates/.github/workflows/go|other-owner/ci-templates/.github/workflows/go|' "$ci"
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -508,7 +508,7 @@ sa_git_lfs() {
   sed -i.bak -e 's|mayankgautam-me/ci-templates/|fabrolabs-innovations/ci-templates/|' "$ci"
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
-  [[ $output == *"warn     ci        .github/workflows/checks.yml: uses fabrolabs-innovations/ci-templates/.github/workflows/zephyr.yml@v1.2: outdated, the CI templates are mayankgautam-me/ci-templates (CI_TEMPLATES_REPO), not fabrolabs-innovations/ci-templates"* ]]
+  [[ $output == *"warn     ci        .github/workflows/checks.yml: uses fabrolabs-innovations/ci-templates/.github/workflows/zephyr.yml@v1.3: outdated, the CI templates are mayankgautam-me/ci-templates (CI_TEMPLATES_REPO), not fabrolabs-innovations/ci-templates"* ]]
   [[ $output == *"change the uses lines to mayankgautam-me/ci-templates"* ]]
   [[ $output != *"release.yml: uses fabrolabs-innovations"* ]]
   # the project's CI_TEMPLATES_REPO makes that repo the right one, and the other file's lines outdated
@@ -775,6 +775,53 @@ GH
   [[ $output == *"firmware/fw/Makefile: sub-Makefile, adopt moves its targets"* ]] || false
 }
 
+@test "audit 1.3: a silabs part's test/Makefile and tests/Makefile are its make <part>-test, not sub-Makefiles" {
+  d="$BATS_TEST_TMPDIR/silabs"
+  "$(sa_skill_copy)/scripts/scaffold.sh" "$d" --project demo --part firmware:silabs:firmware --part fw2:zephyr >/dev/null
+  mkdir -p "$d/firmware/tests" "$d/firmware/test" "$d/firmware/tools" "$d/firmware/tests/unit"
+  printf 'all:\n\t@true\nclean:\n\t@true\n' >"$d/firmware/tests/Makefile"
+  printf 'all:\n\t@true\n' >"$d/firmware/test/Makefile"
+  # anything else under the part, and a tests/Makefile of another kind, is still a sub-Makefile
+  printf 'gen:\n\t@true\n' >"$d/firmware/tools/Makefile"
+  printf 'unit:\n\t@true\n' >"$d/firmware/tests/unit/Makefile"
+  printf 'all:\n\t@true\n' >"$d/firmware/Makefile"
+  mkdir -p "$d/firmware/fw2/tests"
+  printf 'all:\n\t@true\n' >"$d/firmware/fw2/tests/Makefile"
+  run "$(sa_skill_copy)/scripts/audit.sh" "$d"
+  echo "$output"
+  [[ $output != *"firmware/tests/Makefile:"* ]] || false
+  [[ $output != *"firmware/test/Makefile:"* ]] || false
+  [[ $output == *"firmware/tools/Makefile: sub-Makefile, adopt moves its targets"* ]] || false
+  [[ $output == *"firmware/tests/unit/Makefile: sub-Makefile, adopt moves its targets"* ]] || false
+  [[ $output == *"firmware/Makefile: sub-Makefile, adopt moves its targets"* ]] || false
+  [[ $output == *"firmware/fw2/tests/Makefile: sub-Makefile, adopt moves its targets"* ]] || false
+}
+
+@test "audit 1.3: a make/project.mk or make/local.mk assignment with a trailing comment, commented out or not, is a warning" {
+  d="$BATS_TEST_TMPDIR/trailing"
+  sa_fresh "$d"
+  run "$(sa_skill_copy)/scripts/audit.sh" "$d"
+  echo "$output"
+  [[ $output != *"comment after its value"* ]] || false
+  printf '%s\n' 'firmware_BOARD := nrf9151dk   # the dev kit' '# firmware_NCS := v3.2.1 # the pinned NCS' \
+    '# a note # with a hash' 'X ?= $(HOME) # home' '# OK := fine' 'Y = 1' >>"$d/make/project.mk"
+  printf '%s\n' 'LOCAL_FLAG := 1 # why' >>"$d/make/local.mk"
+  run "$(sa_skill_copy)/scripts/audit.sh" "$d"
+  echo "$output"
+  [ "$status" -ne 0 ]
+  [[ $output == *"warn     make      make/project.mk: line "*" has a comment after its value: firmware_BOARD := nrf9151dk   # the dev kit (make keeps the spaces before the # in the value)  fix: put the comment on its own line above"* ]] || false
+  [[ $output == *"make/project.mk: line "*": # firmware_NCS := v3.2.1 # the pinned NCS"* ]] || false
+  [[ $output == *"make/project.mk: line "*": X ?= \$(HOME) # home"* ]] || false
+  [[ $output == *"make/local.mk: line "*": LOCAL_FLAG := 1 # why"* ]] || false
+  [ "$(printf '%s\n' "$output" | grep -c 'comment after its value')" -eq 4 ]
+  # the line number is the file's
+  n=$(grep -n 'nrf9151dk   # the dev kit' "$d/make/project.mk" | cut -d: -f1)
+  [[ $output == *"make/project.mk: line $n has a comment after its value: firmware_BOARD"* ]] || false
+  # --json carries the same finding in area make
+  run "$(sa_skill_copy)/scripts/audit.sh" --json "$d"
+  [[ $output == *'"severity":"warn","area":"make","path":"make/project.mk"'* ]] || false
+}
+
 @test "audit v34: a web-pages part without a wrangler file or with a CHANGE-ME route warns; with its domain it does not" {
   d="$BATS_TEST_TMPDIR/webdom"
   "$(sa_skill_copy)/scripts/scaffold.sh" "$d" --project demo --part web:web-pages --part docs:web-pages >/dev/null
@@ -931,16 +978,16 @@ sa_refs() {
   d="$BATS_TEST_TMPDIR/old"
   sa_fresh "$d"
   printf '1.0\n' >"$d/make/VERSION"
-  sed -i.bak '1s/v1\.2/v1.0/' "$d/make/common.mk"
-  sed -i.bak 's/\.yml@v1\.2/.yml@v1.0/' "$d/.github/workflows/checks.yml"
+  sed -i.bak '1s/v1\.3/v1.0/' "$d/make/common.mk"
+  sed -i.bak 's/\.yml@v1\.3/.yml@v1.0/' "$d/.github/workflows/checks.yml"
   rm -f "$d"/make/*.bak "$d"/.github/workflows/*.bak
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -ne 0 ]
   [[ $output == *"standard v1.0"* ]]
-  [[ $output == *"make/common.mk: standard v1.0, the skill is at v1.2"* ]]
-  [[ $output == *"make/VERSION: says 1.0, the skill is at v1.2"* ]]
-  [[ $output == *"zephyr.yml@v1.0: the skill is at v1.2"* ]]
+  [[ $output == *"make/common.mk: standard v1.0, the skill is at v1.3"* ]]
+  [[ $output == *"make/VERSION: says 1.0, the skill is at v1.3"* ]]
+  [[ $output == *"zephyr.yml@v1.0: the skill is at v1.3"* ]]
 }
 
 # sa_on_11 DIR: a fresh scaffold turned back into a 1.1 project: make/VERSION, the managed headers, the @v1.1 uses
@@ -949,9 +996,9 @@ sa_on_11() {
   local d=$1 f
   printf '1.1\n' >"$d/make/VERSION"
   for f in "$d/Makefile" "$d/make/common.mk" "$d"/make/bin/*.sh "$d"/make/kinds/*.mk; do
-    sed -i.bak '1,2s/project-standard v1\.2 /project-standard v1.1 /' "$f"
+    sed -i.bak '1,2s/project-standard v1\.3 /project-standard v1.1 /' "$f"
   done
-  sed -i.bak 's/\.yml@v1\.2/.yml@v1.1/' "$d/.github/workflows/checks.yml" "$d/.github/workflows/release.yml"
+  sed -i.bak 's/\.yml@v1\.3/.yml@v1.1/' "$d/.github/workflows/checks.yml" "$d/.github/workflows/release.yml"
   printf '#!/usr/bin/env bash\n%s\n' "$(sed -n 1p "$d/make/common.mk")" >"$d/make/bin/refs.sh"
   printf '\n# reference documents (make refs-fetch downloads what docs/references.md lists; never committed)\nreferences/\n' >>"$d/.gitignore"
   rm -f "$d"/make/*.bak "$d"/make/bin/*.bak "$d"/make/kinds/*.bak "$d"/*.bak "$d"/.github/workflows/*.bak
@@ -968,9 +1015,9 @@ sa_on_11() {
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -ne 0 ]
-  [[ $output == *"make/common.mk: standard v1.1, the skill is at v1.2"* ]] || false
-  [[ $output == *"make/VERSION: says 1.1, the skill is at v1.2"* ]] || false
-  [[ $output == *"zephyr.yml@v1.1: the skill is at v1.2"* ]] || false
+  [[ $output == *"make/common.mk: standard v1.1, the skill is at v1.3"* ]] || false
+  [[ $output == *"make/VERSION: says 1.1, the skill is at v1.3"* ]] || false
+  [[ $output == *"zephyr.yml@v1.1: the skill is at v1.3"* ]] || false
   [[ $output == *"make/bin/refs.sh: a managed file the standard no longer has"*"git rm make/bin/refs.sh"* ]] || false
   [[ $output != *"wrl"* ]] || false
   [[ $output != *"docs      docs/references.md"* ]] || false

@@ -32,7 +32,7 @@
 # the project owns (project.mk, local.mk, README.md, PLAN.md, ...) are kept when they exist.
 set -euo pipefail
 
-readonly STD_VERSION=1.2
+readonly STD_VERSION=1.3
 SKILL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 readonly SKILL_DIR
 readonly TPL_MAKE="$SKILL_DIR/templates/make"
@@ -2317,4 +2317,10 @@ printf '%sscaffolded%s %s%s%s  (project-standard v%s, %d parts, port base %s)\n'
 if [[ -e "$DEST/.gitlab-ci.yml" ]]; then
   warn ".gitlab-ci.yml is left over from GitLab CI and is not used any more; once .github/workflows/ is committed, you run: git rm .gitlab-ci.yml"
 fi
-note "next: git init -b main && make setup && make secrets-init && make doctor"
+# An existing git repository (adopt, update: --force into a checkout or a worktree, whose .git is a file) is not
+# initialised again; a new folder is.
+if [[ -e "$DEST/.git" ]]; then
+  note "next: git diff to review, then make setup && make doctor"
+else
+  note "next: git init -b main && make setup && make secrets-init && make doctor"
+fi

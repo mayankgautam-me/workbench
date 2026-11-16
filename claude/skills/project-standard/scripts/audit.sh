@@ -323,6 +323,25 @@ elif ((STANDARD == 1)); then
   add error project make/project.mk "missing" "write PROJECT, PORT_BASE and PARTS into make/project.mk"
 fi
 
+# A make assignment, commented out or not, with a `# comment` after its value: make keeps the spaces before the `#` in
+# the value, so `X := a   # note` sets X to "a   " (once uncommented, for a commented-out one). The same check as the
+# skill's own lint (tests/lint.bats, trailing_comments) since 1.2.
+for mk in make/project.mk make/local.mk; do
+  [[ -f "$DIR/$mk" ]] || continue
+  awk '
+    {
+      line = $0
+      sub(/^[[:space:]]*#?[[:space:]]*/, "", line)
+      if (line !~ /^[A-Za-z0-9_.$(){}-]+[[:space:]]*(:|\?|\+)?=/) next
+      sub(/^[^=]*=/, "", line)
+      if (index(line, "#")) printf "%d\t%s\n", FNR, $0
+    }
+  ' "$DIR/$mk" | while IFS=$'\t' read -r ln text; do
+    add warn make "$mk" "line $ln has a comment after its value: $text (make keeps the spaces before the # in the value)" \
+      "put the comment on its own line above"
+  done
+done
+
 # ---------------------------------------------------------------------------------------------
 # 2b. hardware build outputs in git: outputs/ (make <part>-build) and production/ (make <part>-release, which
 # attaches the fab zip to the GitHub Release) are generated. The hardware folders are the hardware parts'
@@ -608,11 +627,15 @@ list_targets() {
 }
 
 # An arm-gcc part builds through its own Makefile (templates/make/kinds/arm-gcc.mk), so the Makefile at the root
-# of its dir is not a sub-Makefile to move; any other Makefile under it still is.
-armgcc_makefiles=" "
+# of its dir is not a sub-Makefile to move; any other Makefile under it still is. A silabs part's make <part>-test
+# runs the Makefile in <dir>/test/ or <dir>/tests/ (1.3), so those two are the kind's too.
+kind_makefiles=" "
 i=0
 while ((i < ${#PART_NAMES[@]})); do
-  [[ ${PART_KINDS[$i]} != arm-gcc ]] || armgcc_makefiles+="${PART_DIRS[$i]%/}/Makefile "
+  case ${PART_KINDS[$i]} in
+    arm-gcc) kind_makefiles+="${PART_DIRS[$i]%/}/Makefile " ;;
+    silabs) kind_makefiles+="${PART_DIRS[$i]%/}/test/Makefile ${PART_DIRS[$i]%/}/tests/Makefile " ;;
+  esac
   i=$((i + 1))
 done
 
@@ -622,7 +645,7 @@ while IFS= read -r mf; do
     Makefile | make/*) is_sub=0 ;;
     *) is_sub=1 ;;
   esac
-  [[ $armgcc_makefiles != *" $mf "* ]] || is_sub=0
+  [[ $kind_makefiles != *" $mf "* ]] || is_sub=0
   targets=$(list_targets "$DIR/$mf")
   if ((is_sub == 1)) && [[ -n $targets ]]; then
     add warn layout "$mf" "sub-Makefile, adopt moves its targets" \

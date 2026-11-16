@@ -43,14 +43,21 @@ fake_installs() {
   printf 'id: simplicity_sdk\nlabel: Simplicity SDK\nsdk_version: 2025.12.2\n' >"$INST/conan/p/sdk-new/simplicity_sdk.slcs"
   printf 'id: wiseconnect3_sdk\nversion: 3.5.0\n' >"$INST/conan/p/wc-old/wiseconnect.slce"
   printf 'id: wiseconnect3_sdk\nversion: 4.0.1\n' >"$INST/conan/p/wc-new/wiseconnect.slce"
-  # slc generate SLCP ... -d DIR ...: a makefile project in DIR whose make writes the image files and the CC it got
-  cat >"$INST/archive/slc-cli-6.0.1/slc_cli/slc" <<EOF
+  # slc generate SLCP ... -d DIR ...: a makefile project in DIR whose make writes the image files and the CC it got.
+  # With a post_build in the .slcp the makefile also has slc's post-build rule: it refuses an empty POST_BUILD_EXE,
+  # runs "$(POST_BUILD_EXE)" postbuild ./app.slpb --parameter build_dir:build/debug, and (standing in for what
+  # Commander's create_rps does) writes the .rps unless POST_BUILD_EXE is true (a skipped post-build).
+  sl="$INST/archive/slc-cli-6.0.1/slc_cli"
+  printf 'all:\n\tmkdir -p build/debug\n\tfor x in hex out map; do echo $$x > build/debug/app.$$x; done\n\techo "CC=$(CC)" > cc.txt\n' >"$sl/plain.Makefile"
+  cp "$sl/plain.Makefile" "$sl/pb.Makefile"
+  printf '\t@[ -n "$(POST_BUILD_EXE)" ] || { echo "POST_BUILD_EXE is not defined. Post-Build cannot run."; exit 1; }\n\t"$(POST_BUILD_EXE)" postbuild "./app.slpb" --parameter build_dir:"build/debug"\n\t[ "$(POST_BUILD_EXE)" = true ] || echo rps > build/debug/app.rps\n' >>"$sl/pb.Makefile"
+  cat >"$sl/slc" <<EOF
 #!/bin/bash
 printf '%s\n' "\$@" >>"$STUB_LOG/slc.argv"; printf -- '--\n' >>"$STUB_LOG/slc.argv"
 [ "\$1" = generate ] || exit 0
 d=''; prev=''; for a in "\$@"; do [ "\$prev" = -d ] && d="\$a"; prev="\$a"; done
 mkdir -p "\$d"
-printf 'all:\n\tmkdir -p build/debug\n\tfor x in hex out rps map; do echo \$\$x > build/debug/app.\$\$x; done\n\techo "CC=\$(CC)" > cc.txt\n' >"\$d/app.Makefile"
+if grep -q '^post_build:' "\$2"; then cp "$sl/pb.Makefile" "\$d/app.Makefile"; else cp "$sl/plain.Makefile" "\$d/app.Makefile"; fi
 EOF
   chmod +x "$INST/archive/slc-cli-6.0.1/slc_cli/slc"
 }
@@ -83,6 +90,7 @@ EOF
   mkdir -p firmware
   if [ "${SL_EMPTY:-}" != 1 ]; then
     printf 'project_name: app\nsdk:\n  id: simplicity_sdk\n  version: "2025.12.2"\nsdk_extension:\n- id: wiseconnect3_sdk\n  version: 4.0.1\n' >firmware/app.slcp
+    [ "${SL_NO_POSTBUILD:-}" = 1 ] || printf 'post_build:\n  profile: wiseconnect_soc\n' >>firmware/app.slcp
     echo 1.2.0 >firmware/VERSION
   fi
 }
@@ -105,13 +113,13 @@ OUT() { printf '%s\n' "$P/firmware/build/brd4338a/build/debug"; }
   run make firmware-build
   [ "$status" -eq 0 ]
   a="$(argv slc)"
-  [[ "$a" == $'generate\n'"$P/firmware/app.slcp"$'\n-np\n-cp\n--overwrite-all\n-d\n'"$P/firmware/build/brd4338a"$'\n-o\nmakefile\n--with\nbrd4338a\n--toolchain\ngcc\n'* ]]
+  [[ "$a" == $'generate\n'"$P/firmware/app.slcp"$'\n-np\n-cp\n--overwrite-all\n-d\n'"$P/firmware/build/brd4338a"$'\n-o\nmakefile\n--with\nbrd4338a\n--sdk-package-path\n'* ]]
   [[ "$a" == *$'--sdk-package-path\n'"$INST/conan/p/sdk-new,$INST/conan/p/wc-new"$'\n--force'* ]]
   [ -f "$(OUT)/app.hex" ] && [ -f "$(OUT)/app.rps" ]
-  # no -Werror and no signing on a plain build (SIGN=0)
+  # no -Werror and no signing on a plain build (SIGN=0); Commander only as the post-build
   [ "$(cat firmware/build/brd4338a/cc.txt)" = "CC=cc" ]
   [ ! -f "$STUB_LOG/secrets.calls" ]
-  [ ! -f "$STUB_LOG/commander.argv" ]
+  [ "$(argv commander)" = $'postbuild\n./app.slpb\n--parameter\nbuild_dir:build/debug\n--' ]
 }
 
 @test "silabs BOARD= on the command line wins and builds into its own folder" {
@@ -196,7 +204,7 @@ OUT() { printf '%s\n' "$P/firmware/build/brd4338a/build/debug"; }
 firmware_PROBE_ID := 440123456'
   run make firmware-flash
   [ "$status" -eq 0 ]
-  [[ "$(argv commander)" == $'flash\n'"$(OUT)/app.hex"$'\n--device\nSiWG917M111MGTBA\n--serialno\n440123456'* ]]
+  [[ "$(argv commander)" == *$'flash\n'"$(OUT)/app.hex"$'\n--device\nSiWG917M111MGTBA\n--serialno\n440123456'* ]]
 }
 
 @test "silabs flash PROBE=jlink needs the J-Link device name, then loads the hex" {
@@ -229,7 +237,7 @@ firmware_PROBE_ID := 440123456'
   run make firmware-build
   [ "$status" -eq 0 ]
   key="$(cat "$STUB_LOG/keyfile")"
-  [[ "$(argv commander)" == $'rps\nconvert\n'"$(OUT)/app-signed.rps"$'\n--app\n'"$(OUT)/app.rps"$'\n--sign\n'"$key"* ]]
+  [[ "$(argv commander)" == *$'rps\nconvert\n'"$(OUT)/app-signed.rps"$'\n--app\n'"$(OUT)/app.rps"$'\n--sign\n'"$key"* ]]
   [ ! -e "$key" ]
   grep -q '^with-file silabs-m4 -- ' "$STUB_LOG/secrets.calls"
 }
@@ -362,7 +370,7 @@ firmware_PROBE_ID := 440123456'
   slproject 'firmware_BOARD := brd4338a   '
   run make firmware-check
   [ "$status" -eq 0 ]
-  [[ "$(argv slc)" == *$'--with\nbrd4338a\n--toolchain'* ]] || false
+  [[ "$(argv slc)" == *$'--with\nbrd4338a\n--sdk-package-path'* ]] || false
   [ -d "$P/firmware/build/check-brd4338a" ]
   [ -z "$(find "$P/firmware/build" -maxdepth 1 -name '* *')" ]
   run make firmware-build BOARD=' brd4325b '
@@ -421,20 +429,103 @@ firmware_PROBE_ID := 440123456'
   [[ "$output" == *"firmware-test"* ]] || false
 }
 
-@test "silabs 1.2: without Simplicity Commander the build warns about the post-build, and release refuses with no .rps" {
+@test "silabs 1.3: no --toolchain on slc generate (WiseConnect's own toolchain_gcc would clash with the SDK's)" {
+  slproject
+  run make firmware-check
+  [ "$status" -eq 0 ]
+  run make firmware-build
+  [ "$status" -eq 0 ]
+  [ "$(argv slc | grep -c -- '^--toolchain$')" -eq 0 ]
+  # a project that needs one passes it through SLC_ARGS
+  rm -f "$STUB_LOG/slc.argv"
+  run make firmware-build 'firmware_SLC_ARGS=--toolchain gcc'
+  [ "$status" -eq 0 ]
+  [[ "$(argv slc)" == *$'--force\n--toolchain\ngcc'* ]] || false
+}
+
+@test "silabs 1.3: with a post_build the generated makefile gets POST_BUILD_EXE=<commander> and the build checks the .rps" {
+  slproject
+  run make firmware-build
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"post_build wiseconnect_soc with $STUBS/commander"* ]] || false
+  [[ "$output" == *"ok    $(OUT)/app.rps"* ]] || false
+  # SILABS_COMMANDER wins over the one on PATH
+  stub_recorder mycmdr
+  rm -f "$STUB_LOG/commander.argv"
+  run make firmware-build SILABS_COMMANDER="$STUBS/mycmdr"
+  [ "$status" -eq 0 ]
+  [ "$(argv mycmdr)" = $'postbuild\n./app.slpb\n--parameter\nbuild_dir:build/debug\n--' ]
+  [ ! -f "$STUB_LOG/commander.argv" ]
+  # a post-build that makes no .rps fails the build
+  stub_cmd commander 'exit 0'
+  sed -i.bak 's|echo rps > build/debug/app.rps|true|' "$INST/archive/slc-cli-6.0.1/slc_cli/pb.Makefile"
+  rm -rf firmware/build
+  run make firmware-build
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the post_build wiseconnect_soc ran but made no app.rps"* ]] || false
+}
+
+@test "silabs 1.3: with a post_build and no Simplicity Commander, build refuses before slc, check skips the post-build" {
   slproject
   rm -f "$STUBS/commander"
-  # the stub slc's makefile still writes an .rps; drop it to be what a failed POST_BUILD_EXE leaves
+  run make firmware-build SILABS_COMMANDER_PATHS=
+  echo "$output"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Simplicity Commander not found: the .slcp's post_build wiseconnect_soc runs it (commander postbuild) to make the .rps"* ]] || false
+  [ ! -f "$STUB_LOG/slc.argv" ]
+  run make firmware-check SILABS_COMMANDER_PATHS=
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the post_build wiseconnect_soc (the .rps) is skipped in this check build"* ]] || false
+  [ ! -f "$P/firmware/build/check-brd4338a/build/debug/app.rps" ]
+  [ -f "$P/firmware/build/check-brd4338a/build/debug/app.hex" ]
+  run make firmware-doctor SILABS_COMMANDER_PATHS=
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"ok    post_build wiseconnect_soc in app.slcp"* ]] || false
+  [[ "$output" == *"miss  Simplicity Commander missing: the build needs it (the .slcp's post_build wiseconnect_soc runs commander postbuild to make the .rps)"* ]] || false
+}
+
+@test "silabs 1.3: without a post_build the build makes no .rps and needs no Commander; release says the .slcp lines" {
+  SL_NO_POSTBUILD=1 slproject
+  rm -f "$STUBS/commander"
   run make firmware-build SILABS_COMMANDER_PATHS=
   echo "$output"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"Simplicity Commander not found: the wiseconnect_soc post-build (POST_BUILD_EXE) that makes the .rps will fail"* ]] || false
-  rm -f "$(OUT)/app.rps"
+  [[ "$output" == *"no post_build in app.slcp: no .rps"* ]] || false
+  [ -f "$(OUT)/app.hex" ] && [ ! -f "$(OUT)/app.rps" ]
+  # the generated makefile gets no POST_BUILD_EXE (it has no post-build rule to give it to)
   run make firmware-release ENV=staging NOBUILD=1 SILABS_COMMANDER_PATHS=
   echo "$output"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"no app.rps in $(OUT): the wiseconnect_soc post-build (POST_BUILD_EXE) makes it with Simplicity Commander"*"Nothing was uploaded"* ]] || false
+  [[ "$output" == *"no app.rps in $(OUT): app.slcp has no post_build, so the build makes none. add post_build: with profile: wiseconnect_soc under it (two lines at the top level) to app.slcp"*"Nothing was uploaded"* ]] || false
   [ ! -f "$STUB_LOG/npx.argv" ]
+  # doctor: with an OTA bucket a warning, Commander only a warning (no post-build needs it)
   run make firmware-doctor SILABS_COMMANDER_PATHS=
-  [[ "$output" == *"Simplicity Commander missing: the build needs it (the wiseconnect_soc post-build, POST_BUILD_EXE, makes the .rps with it)"* ]] || false
+  echo "$output"
+  [[ "$output" == *"warn  no post_build in app.slcp: the build makes no .rps and make firmware-release refuses"* ]] || false
+  [[ "$output" == *"warn  Simplicity Commander missing, needed by flash, erase and power"* ]] || false
+  # without one, no warning about the .rps
+  run make firmware-doctor SILABS_COMMANDER_PATHS= OTA_BUCKET=
+  [[ "$output" == *"ok    no post_build in app.slcp"* ]] || false
+}
+
+@test "silabs 1.3: the post_build profile is read from the .slcp's top level only" {
+  SL_NO_POSTBUILD=1 slproject
+  # a nested key or a comment is not the top-level post_build
+  printf '# post_build:
+other:
+  post_build: x
+' >>firmware/app.slcp
+  run make firmware-build SILABS_COMMANDER_PATHS=
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no post_build in app.slcp"* ]] || false
+  printf 'post_build:
+  # the WiseConnect SoC profile
+  profile: "wiseconnect_soc"
+later: 1
+' >>firmware/app.slcp
+  run make firmware-build
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"post_build wiseconnect_soc with"* ]] || false
 }

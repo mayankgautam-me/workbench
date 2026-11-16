@@ -1,5 +1,5 @@
-# project-standard ci-templates v1.2: circuitpython (CircuitPython image; the build runs on the runner's Docker, no DinD).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/circuitpython.yml@v1.2.
+# project-standard ci-templates v1.3: circuitpython (CircuitPython image; the build runs on the runner's Docker, no DinD).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/circuitpython.yml@v1.3.
 
 on:
   workflow_call:

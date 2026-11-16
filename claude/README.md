@@ -138,7 +138,7 @@ The `project-standard` skill gives every project the same layout and the same `m
 
 - `new` scaffolds a project from the parts you pick, `adopt` moves an existing project over (only when asked), `update` refreshes a project's managed files, and `audit` reports how a project differs.
 - Secrets live in one private, SOPS + age encrypted repository for all projects (`~/.secrets`), unlocked on each Mac by a key in the Secure Enclave (Touch ID). Make commands decrypt them into the environment of the one command that needs them, and CI reads the same files with a per-project key.
-- The CI jobs are reusable GitHub Actions workflows kept in `skills/project-standard/ci-templates/`, published as the public `mayankgautam-me/ci-templates` (one tag per version, `v1.2` now) that each project's workflows call.
+- The CI jobs are reusable GitHub Actions workflows kept in `skills/project-standard/ci-templates/`, published as the public `mayankgautam-me/ci-templates` (one tag per version, `v1.3` now) that each project's workflows call.
 - The session-start hook says whether the folder is on the standard.
 
 The full spec is [skills/project-standard/reference/standard.md](skills/project-standard/reference/standard.md). Its tests:

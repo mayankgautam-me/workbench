@@ -1,4 +1,4 @@
-# project-standard v1.2: internal contract
+# project-standard v1.3: internal contract
 
 How the pieces of the skill fit together. `standard.md` is the user-facing spec; this file is for
 whoever writes or changes `common.mk`, a kind, a script, the CI templates, `scaffold.sh` or `audit.sh`.
@@ -31,7 +31,7 @@ make/bin/toolchain.sh    managed: usage record, installed ledger, make teardown 
 make/bin/ghcr.sh         managed: the docker kind's ghcr.io login, write:packages check and prune-images (1.1)
 make/bin/secret-patterns.sh, sign-windows.sh   managed: the secret file patterns; the Tauri Windows signing helper
 make/local.mk            the project's own targets, documented with `## ` comments
-make/VERSION             the standard version the managed files came from: `1.2`
+make/VERSION             the standard version the managed files came from: `1.3`
 ```
 
 Besides these, `scaffold.sh` writes the project-owned files once (kept with `--force`): `README.md`, `CLAUDE.md`,
@@ -59,7 +59,7 @@ and in no `.gitattributes` LFS line.
 Every managed file's first line is exactly:
 
 ```
-# project-standard v1.2 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.3 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 ```
 
 (`#!/usr/bin/env bash` first, then that line, for scripts.) `audit.sh` and the hook look for
@@ -68,7 +68,7 @@ Every managed file's first line is exactly:
 Root `Makefile`:
 
 ```make
-# project-standard v1.2 (managed: ...)
+# project-standard v1.3 (managed: ...)
 include make/project.mk
 include make/common.mk
 ```
@@ -98,7 +98,9 @@ firmware_NCS   := v3.2.1
 Every comment is a line of its own, above the assignment it describes: make keeps the spaces before a trailing `#` in
 the value (`X := a   # note` sets X to `a   `), and a commented-out `# X := a   # note` gets the same bug once it is
 uncommented. `kind_settings` in `scaffold.sh` writes no `:=` line with a trailing comment, commented or not (1.2;
-`tests/lint.bats` checks every line the scaffold writes into `make/project.mk` and `make/local.mk`).
+`tests/lint.bats` checks every line the scaffold writes into `make/project.mk` and `make/local.mk`). `audit.sh` runs the
+same check on a project's own `make/project.mk` and `make/local.mk` (1.3, area `make`, fix "put the comment on its own
+line above"): keep the two awk programs alike.
 
 ## Part evaluation (common.mk)
 
@@ -448,7 +450,7 @@ from the environment, never from a command line. On a Mac gh uses its own login 
 ## CI workflows (`ci-templates/`)
 
 - `ci-templates/.github/workflows/<kind>.yml`: one reusable workflow per kind (`on: workflow_call`), in `CI_TEMPLATES_REPO`
-  (default `mayankgautam-me/ci-templates`, public, shared by every project owner), tagged `v1.2` (`v1.1` and `v1.0` are kept: a
+  (default `mayankgautam-me/ci-templates`, public, shared by every project owner), tagged `v1.3` (`v1.2`, `v1.1` and `v1.0` are kept: a
   published tag never moves). `scaffold.sh` and
   `audit.sh` resolve it the same way (`ci_project`: `make/project.mk`, else the environment or the user config, else
   the default); the audit warns on a `uses:` line on any other repository. Inputs: `part`, `part_dir`, `run_check`, `run_build`, `run_release`, `confirm`, `source_run_id`,

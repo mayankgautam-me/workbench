@@ -1,12 +1,14 @@
-# project-standard ci-templates v1.2: silabs (Silicon Labs slc projects on the Simplicity SDK and WiseConnect 3, SiWx917).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/silabs.yml@v1.2.
+# project-standard ci-templates v1.3: silabs (Silicon Labs slc projects on the Simplicity SDK and WiseConnect 3, SiWx917).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/silabs.yml@v1.3.
 #
 # check and build run on the Linux runner itself (slt has a linux-x64 build, no image is needed). <part>-setup installs the
 # pinned slt into STD_TOOLCHAINS and, through it, slc, its Java, the GNU Arm toolchain, the Simplicity SDK and WiseConnect
 # into slt's own folder (about 2 GB): both are kept in the Actions cache per slt, SDK and WiseConnect version, saved right
 # after setup, so a failing check still keeps them.
-# check: -Werror, no secrets. build: SIGN=1 parts sign with the key from the secrets repo, which needs Simplicity Commander
-# on the runner (STD_APT_PACKAGES cannot install it: put it on the runner, or keep SIGN=0 in CI).
+# check: -Werror, no secrets; without Simplicity Commander on the runner it skips the .slcp's post-build (the .rps).
+# build: a .slcp with a post_build (profile: wiseconnect_soc, which makes the .rps) needs Commander on the runner, and
+# SIGN=1 parts sign with the key from the secrets repo through it too (STD_APT_PACKAGES cannot install it: put it on
+# the runner, or build the .rps and sign on a Mac).
 # release (run_release, tags): the build's files, NOBUILD=1. publish (confirm == 'production'): the .rps to the OTA bucket.
 
 on:

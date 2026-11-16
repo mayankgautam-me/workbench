@@ -1,6 +1,6 @@
 # ci-templates
 
-The source of the reusable GitHub Actions workflows in `mayankgautam-me/ci-templates`, tagged `v1.2` (`v1.1` and `v1.0` stay,
+The source of the reusable GitHub Actions workflows in `mayankgautam-me/ci-templates`, tagged `v1.3` (`v1.2`, `v1.1` and `v1.0` stay,
 for the projects not updated yet). Each file here is one part kind, at `.github/workflows/<kind>.yml`, and it has
 only `on: workflow_call`. A project's `.github/workflows/checks.yml` (pushes and pull requests) and `release.yml`
 (tags) call them with `uses:`. Every script line calls `make`, so CI runs what a developer runs locally. The v8
@@ -17,7 +17,7 @@ on:
   pull_request:
 jobs:
   cloud-api:
-    uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.2
+    uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.3
     with:
       part: cloud-api
       part_dir: cloud/api
@@ -39,7 +39,7 @@ jobs:
   firmware:
     needs: tag
     if: needs.tag.outputs.part == 'firmware'
-    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.2
+    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.3
     with:
       part: firmware
       part_dir: firmware
@@ -66,7 +66,7 @@ permissions:
   contents: write
 jobs:
   firmware:
-    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.2
+    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.3
     with:
       part: firmware
       part_dir: firmware

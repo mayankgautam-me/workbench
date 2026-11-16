@@ -1,6 +1,6 @@
-# project-standard ci-templates v1.2: docker (an image built with buildx and pushed to ghcr.io with GITHUB_TOKEN, labelled
+# project-standard ci-templates v1.3: docker (an image built with buildx and pushed to ghcr.io with GITHUB_TOKEN, labelled
 # org.opencontainers.image.source so the package is linked to the repository and inherits its access).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/docker.yml@v1.2.
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/docker.yml@v1.3.
 
 on:
   workflow_call:

@@ -1,6 +1,6 @@
-# project-standard ci-templates v1.2: cloud-worker (a Cloudflare Worker part; a push to main deploys staging, the part's tag
+# project-standard ci-templates v1.3: cloud-worker (a Cloudflare Worker part; a push to main deploys staging, the part's tag
 # deploys production, then makes its GitHub Release with the CHANGELOG notes only).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.2.
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.3.
 
 on:
   workflow_call:

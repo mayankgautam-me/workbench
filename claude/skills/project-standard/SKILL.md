@@ -241,6 +241,16 @@ Read-only until the user says yes.
    repository the audit names (`CI_TEMPLATES_REPO`, default `mayankgautam-me/ci-templates`, independent of
    `GITHUB_OWNER`; a line on the pre-1.7 `<owner>/ci-templates` is reported outdated) and the current version tag
    (`v` + `make/VERSION`); and add jobs for kinds that were added.
+   From v1.2 to v1.3: re-copy the managed files and set every `uses:` line to `@v1.3`. A silabs part gets the 1.3
+   kind: `slc generate` without `--toolchain gcc` (it made WiseConnect's and the SDK's `toolchain_gcc` clash), and
+   `POST_BUILD_EXE=<commander>` for the `.slcp`'s post-build. If the part publishes the `.rps` (an OTA bucket, or the
+   release attaches it), add the two top-level lines `post_build:` and `  profile: wiseconnect_soc` to its `.slcp`
+   (WiseConnect's own `.rps` step; it is not a component), with Simplicity Commander on the Macs and runners that
+   build it; ask before adding them to a project that does not publish one, since the build then needs Commander.
+   Remove a `<part>_SLC_ARGS := --toolchain gcc`, or a `POST_BUILD_EXE` in `make/local.mk`, that only worked around
+   1.2. A `<dir>/tests/Makefile` (or `test/`) of a silabs part is no longer a sub-Makefile finding. Then run the audit:
+   every `make` finding is a `make/project.mk` or `make/local.mk` assignment with a trailing `# comment`; list them and,
+   with the user's go-ahead (both files are the project's, step 3), move each comment onto its own line above.
    From v1.1 to v1.2: re-copy the managed files, delete `make/bin/refs.sh` (a managed file 1.2 removed; `make
    refs-fetch` and `refs-check` are gone) and set every `uses:` line to `@v1.2`. Convert a `docs/references.md` table
    to links: one line per row, `- [Title (MPN) — Vendor](URL)`, under `##` headings (datasheets by category, then per
@@ -256,8 +266,8 @@ Read-only until the user says yes.
    (both are now the defaults; keep any other SLC_ARGS), and pin `<part>_GCC` only when the SDK brings another GNU Arm
    toolchain than `12.2.rel1`. A `<part>-test` target in `make/local.mk` now clashes with the kind's: move its compile
    and run lines into `<dir>/tests/Makefile` (CC and BUILD_DIR come from the kind; outputs under `$(BUILD_DIR)` so
-   `make <part>-clean` removes them), then delete the local target. Simplicity Commander must be on the Mac (and the CI
-   runner) that builds: the `.rps` comes from the post-build that runs it.
+   `make <part>-clean` removes them), then delete the local target. (1.2 said Simplicity Commander was needed to build;
+   1.3 corrects it: only a `.slcp` with a `post_build` needs it.)
    From v1.0 to v1.1: re-copy the managed files (the bin folder gains `refs.sh`, removed again in 1.2, and `ghcr.sh`) and set every `uses:`
    line to `@v1.1`. `scaffold.sh <worktree> --force` with the project's parts adds what 1.1 needs and changes nothing
    else (the 1.2 scaffold no longer adds `references/` to `.gitignore`): `docs/references.md`, `*.FCStd` (with a mechanical part) and Altium's LFS lines

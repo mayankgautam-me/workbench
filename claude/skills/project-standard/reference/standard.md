@@ -1,4 +1,4 @@
-# The project standard, v1.2
+# The project standard, v1.3
 
 One set of commands for every stage of work, the same in every project: firmware, boards, enclosures,
 Cloudflare services, apps and containers alike. The tools stay what they are (west, idf.py, pio, slc,
@@ -92,7 +92,7 @@ hardware/
 ```
 
 "Managed" files start with the line
-`# project-standard v1.2 (managed: ...)` and are refreshed by the skill's update mode; never edit
+`# project-standard v1.3 (managed: ...)` and are refreshed by the skill's update mode; never edit
 them in a project. Your own targets go in `make/local.mk`, written like this, and show under
 "project" in `make help`:
 
@@ -472,8 +472,24 @@ it installs slc, a Java runtime, the GNU Arm toolchain, the Simplicity SDK (`<pa
 (`<part>_WISECONNECT`) into its own folder (`slt install wiseconnect/<version>`: a bare `wiseconnect` would install the
 latest and a newer SDK). A build is `slc generate --overwrite-all` (a makefile project) into `<dir>/build/<board>`, then
 the generated makefile with the pinned GNU Arm toolchain (`<part>_GCC`, `12.2.rel1`); `<part>_BOARD` is the slc board
-(`brd4338a`, spaces stripped). Simplicity Commander is needed to build too: the `wiseconnect_soc` post-build
-(`POST_BUILD_EXE`) makes the `.rps` image with it, and without one release refuses. `make <part>-test` runs the host
+(`brd4338a`, spaces stripped). slc generate gets no `--toolchain`: on a SiWx917 the device brings WiseConnect's
+`wiseconnect_toolchain_gcc_standard`, which provides `toolchain_gcc`, and `--toolchain gcc` added the Simplicity SDK's
+`toolchain_gcc` as well ("Project is invalid even after autoselecting dependencies": the two are exclusive); the `.slcp`
+needs no toolchain line. The `.rps` image (what the SiWx917 boots and OTA delivers) comes from the `.slcp`'s post-build
+profile, two top-level lines:
+
+```yaml
+post_build:
+  profile: wiseconnect_soc
+```
+
+It is a key of the `.slcp`, not a component: WiseConnect's `utilities/postbuild_profile/wiseconnect_soc.slpb` turns
+`<name>.out` into `<name>.rps` (`create_rps`) and the `.rps` into the `.hex`, `.s37` and `_isp.bin`. slc then writes
+`<name>.slpb` and a post-build rule `"$(POST_BUILD_EXE)" postbuild "./<name>.slpb" --parameter build_dir:"$(OUTPUT_DIR)"`
+with `POST_BUILD_EXE` empty, and the kind passes `POST_BUILD_EXE=<Simplicity Commander>` to the generated makefile. With
+a post-build, `build` needs Commander and refuses without it (`check` skips the post-build with a warning, so a runner
+without Commander still compiles); without one, the build makes no `.rps` and release refuses, naming the two lines.
+`make <part>-test` runs the host
 unit tests, the Makefile in `<dir>/test/` (else `<dir>/tests/`), with the Mac's `cc` and `BUILD_DIR=<dir>/build/test`
 (no Makefile: nothing to run); `clean` removes `<dir>/build`, so a test build is cleaned only when it is under it. Flash,
 erase and the energy monitor go through Simplicity Commander (`PROBE=commander`, the default; `PROBE=jlink` flashes with J-Link),
@@ -926,10 +942,10 @@ of the project's repository (from stdin, never on a command line), adds the publ
 ## 6. CI/CD
 
 The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/name`, default
-`mayankgautam-me/ci-templates`), tagged `v1.2` (`v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
+`mayankgautam-me/ci-templates`), tagged `v1.3` (`v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
 own, independent of the project's `GITHUB_OWNER`: projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.2`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.3`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -975,8 +991,8 @@ that work for the tag.
 
 **The 1.1 kinds.** `silabs.yml` runs check, build, release and the OTA publish like the other firmware kinds, on the
 runner itself (no image): `<part>-setup` installs the pinned slt, slc, the Simplicity SDK and WiseConnect (about 2
-GB), kept in the Actions cache per version and saved right after setup; Simplicity Commander on the runner is needed for
-the `.rps` (the `wiseconnect_soc` post-build makes it with Commander, 1.2) and for `SIGN=1`. `mechanical.yml` runs check, build (STEP and STL, kept 7 days) and release,
+GB), kept in the Actions cache per version and saved right after setup; Simplicity Commander on the runner is needed to
+build a `.slcp` with a `post_build` (it makes the `.rps`, 4.9; check skips the post-build without it) and for `SIGN=1`. `mechanical.yml` runs check, build (STEP and STL, kept 7 days) and release,
 with Ubuntu 24.04's FreeCAD. `altium.yml` runs the check only, on the LFS pointers: `checks.yml` has a job for an
 altium part and `release.yml` none, and its `run_build` and `run_release` do nothing (4.10, Altium). `hardware.yml`
 takes `library: shared` (default) or `local`: with `local` it checks out no KiCad library (4.10). A project whose only
@@ -1235,6 +1251,26 @@ Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) an
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
 
+- **1.3** (2026-11-16): the silabs `.rps` and toolchain, found building real WiseConnect 4.0.1 firmware, and audit
+  fixes. `make/VERSION`, the managed headers and the workflows' `@v1.3` say 1.3; `mayankgautam-me/ci-templates` gets
+  the tag `v1.3` and keeps `v1.2`, `v1.1` and `v1.0`.
+  - silabs: the `.rps` comes from the `.slcp`'s `post_build:` / `profile: wiseconnect_soc` (a top-level key, not a
+    component), and slc leaves the generated makefile's `POST_BUILD_EXE` empty, so a 1.2 build made no `.rps` even with
+    Commander installed. The kind now passes `POST_BUILD_EXE=<commander>`; with a post-build, build refuses without
+    Commander and check skips the post-build; without one, doctor (with an OTA bucket) and release name the two `.slcp`
+    lines (4.9). 1.2 said Commander was required to build: only a `.slcp` with a post-build needs it.
+  - silabs: `slc generate` gets no `--toolchain gcc`; on a SiWx917 it added the Simplicity SDK's `toolchain_gcc` next to
+    WiseConnect's `wiseconnect_toolchain_gcc_standard` ("Project is invalid even after autoselecting dependencies").
+    The generated makefile is the same without it.
+  - The audit counts a silabs part's `<dir>/test/Makefile` and `<dir>/tests/Makefile` as the kind's (its
+    `make <part>-test`), not as sub-Makefiles, and warns (area `make`) about a `make/project.mk` or `make/local.mk`
+    assignment, commented out or not, with a `# comment` after its value (the 1.2 scaffold lint, now for every project).
+  - `scaffold.sh --force` into a git repository (adopt, update) ends with `next: git diff to review, then make setup &&
+    make doctor`, without the new project's `git init`.
+  Update from 1.2: refresh the managed files and move the `uses:` lines to `@v1.3`. A silabs part that publishes the
+  `.rps` adds `post_build:` / `  profile: wiseconnect_soc` to its `.slcp`, and Simplicity Commander on the Macs and
+  runners that build it; drop a `<part>_SLC_ARGS` or `POST_BUILD_EXE` in `make/local.mk` that worked around either
+  problem. Move any trailing comment the audit reports onto its own line above the setting.
 - **1.2** (2026-11-16): reference documents are links, each kind's `.gitattributes` lines, and the silabs
   fixes from building real WiseConnect firmware. `make/VERSION`, the
   managed headers and the workflows' `@v1.2` say 1.2; `mayankgautam-me/ci-templates` gets the tag `v1.2` and keeps

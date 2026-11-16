@@ -1,4 +1,4 @@
-# project-standard v1.2 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.3 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind silabs: a Silicon Labs firmware part built from an slc project (*.slcp) on the Simplicity SDK and
 # WiseConnect 3, for SiWx917 / SiWG917 (Cortex-M4 SoC mode).
@@ -11,9 +11,23 @@
 # through the J-Link GDB server. The image signing key never touches the project: it is decrypted from the secrets
 # repo into a temporary file for the one commander call that signs (secrets.sh with-file), then removed.
 #
-# Simplicity Commander is required to build, not only to flash: the wiseconnect_soc post-build step of the generated
-# makefile (POST_BUILD_EXE) runs commander to make the .rps image the SiWx917 boots and OTA delivers. Without it the
-# build stops at that step (no .rps), and make <part>-release refuses. make <part>-doctor reports it missing.
+# The .rps image (what the SiWx917 boots from its bootloader and what OTA delivers) comes from the slcp's post-build
+# profile, not from slc or the compiler: the .slcp needs the top-level lines
+#     post_build:
+#       profile: wiseconnect_soc
+# (WiseConnect's utilities/postbuild_profile/wiseconnect_soc.slpb: create_rps from <name>.out and <name>.map, then
+# convert the .rps to <name>.hex, .s37 and _isp.bin). It is a key of the .slcp, not a component. With it, slc writes
+# <name>.slpb into the build folder and a post-build rule `"$(POST_BUILD_EXE)" postbuild "./<name>.slpb" --parameter
+# build_dir:"$(OUTPUT_DIR)"` (slc-cli's arm_gcc exporter template), and leaves POST_BUILD_EXE empty unless told where
+# Simplicity Commander is; the kind passes POST_BUILD_EXE=<commander> to the generated makefile. So a part whose .slcp
+# has a post_build needs Commander to build: make <part>-build refuses without it (make <part>-check, a compile check,
+# skips the post-build then, with a warning). Without a post_build the build makes no .rps (the .hex is the linker's),
+# and make <part>-release refuses, saying the .slcp lines it needs.
+#
+# No --toolchain on slc generate: on a SiWx917 the device brings WiseConnect's wiseconnect_toolchain_gcc_standard, which
+# provides toolchain_gcc, and `--toolchain gcc` adds the Simplicity SDK's toolchain_gcc too ("Project is invalid even
+# after autoselecting dependencies": the two are exclusive). The makefile exporter is GCC either way; the .slcp needs no
+# toolchain line. <part>_SLC_ARGS can still pass one.
 #
 # Host unit tests (make <part>-test): the Makefile in <dir>/test/, else in <dir>/tests/, run with the Mac's cc
 # (CC=<part>_TEST_CC, default cc) and BUILD_DIR=<dir>/build/test passed to it. No such Makefile: "no host tests", exit 0.
@@ -182,6 +196,11 @@ silabs_find = d="$(CURDIR)/$(2)"; slcp="$($(1)_SLCP)"; \
   else case "$$slcp" in /*) ;; *) slcp="$$d/$$slcp";; esac; [ -f "$$slcp" ] || die "$(1)_SLCP=$($(1)_SLCP) not found in $(2)"; fi; \
   name=$$(sed -nE 's/^project_name:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/p' "$$slcp" | head -n 1); [ -n "$$name" ] || name=$$(basename "$$slcp" .slcp);
 
+# $(call silabs_postbuild): after silabs_find, sets pb to the .slcp's post_build profile (the line under post_build:,
+# `profile: <name>`, else `yes` for a post_build without one), empty when the .slcp has no post_build.
+silabs_postbuild = pb=$$(awk '/^post_build:/ { f = 1; p = "yes"; next } /^[^[:space:]]/ { f = 0 } f && /profile:/ { sub(/.*profile:[[:space:]]*"?/, ""); sub(/"?[[:space:]]*$$/, ""); p = $$0 } END { print p }' "$$slcp");
+silabs_pb_lines = add post_build: with profile: wiseconnect_soc under it (two lines at the top level) to $$(basename "$$slcp")
+
 # $(call silabs_cmdr,part): sets cmdr to Simplicity Commander (empty when not found).
 silabs_cmdr = cmdr="$(SILABS_COMMANDER)"; \
   if [ -z "$$cmdr" ]; then cmdr=$$(command -v commander 2>/dev/null || true); fi; \
@@ -266,7 +285,13 @@ silabs_doctor = $(STD_FW_SH) say "$(1): silabs, slt $($(1)_SLT), Simplicity SDK 
     if [ -n "$$slcp_wc" ] && [ "$$slcp_wc" != "$($(1)_WISECONNECT)" ]; then warn "$$(basename "$$slcp") asks for WiseConnect $$slcp_wc, $(1)_WISECONNECT is $($(1)_WISECONNECT)"; fi; \
   fi; \
   if [ -n "$($(1)_B)" ]; then ok "board $($(1)_B)"; else bad "no board: set $(1)_BOARD in make/project.mk (for example brd4338a)"; fi; \
-  $(call silabs_cmdr,$(1)) if [ -n "$$cmdr" ]; then ok "Simplicity Commander $$cmdr"; else bad "Simplicity Commander missing: the build needs it (the wiseconnect_soc post-build, POST_BUILD_EXE, makes the .rps with it), and flash, erase and power: install it from Silicon Labs or set SILABS_COMMANDER"; fi; \
+  pb=; if $(call std_started,$(1),$(2)); then $(call silabs_find,$(1),$(2)) $(silabs_postbuild) \
+    if [ -n "$$pb" ]; then ok "post_build $$pb in $$(basename "$$slcp"): the build makes the .rps with Simplicity Commander"; \
+    elif [ -n "$(strip $($(1)_OTA_BUCKET))" ]; then warn "no post_build in $$(basename "$$slcp"): the build makes no .rps and make $(1)-release refuses; $(silabs_pb_lines)"; \
+    else ok "no post_build in $$(basename "$$slcp") (no .rps; release needs one: $(silabs_pb_lines))"; fi; fi; \
+  $(call silabs_cmdr,$(1)) if [ -n "$$cmdr" ]; then ok "Simplicity Commander $$cmdr"; \
+  elif [ -n "$$pb" ]; then bad "Simplicity Commander missing: the build needs it (the .slcp's post_build $$pb runs commander postbuild to make the .rps), and flash, erase and power: install it from Silicon Labs or set SILABS_COMMANDER"; \
+  else warn "Simplicity Commander missing, needed by flash, erase and power (and to build once the .slcp has a post_build): install it from Silicon Labs or set SILABS_COMMANDER"; fi; \
   case "$($(1)_P)" in \
     commander) ;; \
     jlink) if have JLinkExe; then ok "J-Link"; else bad "J-Link: brew install --cask segger-jlink"; fi; \
@@ -287,20 +312,30 @@ silabs_update = $(STD_FW_SH) \
 
 # $(call silabs_build,part,dir,build-dir,sign,check): slc generate from the .slcp into build-dir (a makefile project;
 # --overwrite-all with <part>_SLC_OVERWRITE := 1, the default: -cp copies the sources into it, and without it slc keeps
-# the old copies, so a later source edit was silently not rebuilt), then the generated <name>.Makefile. check: the compiler runs with -Werror (CC overridden on the make line, which
-# assumes the generated makefile compiles through $(CC), as slc's gcc makefiles do). sign: the .rps image is signed
-# with the key KEY from the secrets repo into <name>-signed.rps (see silabs_sign).
-silabs_build = $(STD_FW_SH) $(call silabs_find,$(1),$(2)) $(call silabs_tools,$(1)) $(call silabs_need_tools,$(1)) \
+# the old copies, so a later source edit was silently not rebuilt; no --toolchain, see the header), then the generated
+# <name>.Makefile with POST_BUILD_EXE=<Simplicity Commander>, which the .slcp's post_build profile runs to make the .rps
+# (no post_build: no .rps). check: the compiler runs with -Werror (CC overridden on the make line, which assumes the
+# generated makefile compiles through $(CC), as slc's gcc makefiles do), and without Commander the post-build is skipped
+# (POST_BUILD_EXE=true). sign: the .rps image is signed with the key KEY from the secrets repo into <name>-signed.rps
+# (see silabs_sign).
+silabs_build = $(STD_FW_SH) $(call silabs_find,$(1),$(2)) $(silabs_postbuild) $(call silabs_tools,$(1)) $(call silabs_need_tools,$(1)) \
   board="$($(1)_B)"; [ -n "$$board" ] || die "no board: set $(1)_BOARD in make/project.mk or pass BOARD=... (for example brd4338a)"; \
   b="$(3)"; mkdir -p "$$b"; ARM_GCC_DIR=$$(dirname "$$gccdir"); export PATH="$${java:+$$java:}$$gccdir:$$PATH" ARM_GCC_DIR; \
-  $(call silabs_cmdr,$(1)) [ -n "$$cmdr" ] || warn "Simplicity Commander not found: the wiseconnect_soc post-build (POST_BUILD_EXE) that makes the .rps will fail (install it, or set SILABS_COMMANDER)"; \
+  $(call silabs_cmdr,$(1)) pbexe=; \
+  if [ -z "$$pb" ]; then say "no post_build in $$(basename "$$slcp"): no .rps (release needs one: $(silabs_pb_lines))"; \
+  elif [ -n "$$cmdr" ]; then pbexe="$$cmdr"; say "post_build $$pb with $$cmdr"; \
+  else \
+    $(if $(5),pbexe=true; warn "Simplicity Commander not found: the post_build $$pb (the .rps) is skipped in this check build";,die "Simplicity Commander not found: the .slcp's post_build $$pb runs it (commander postbuild) to make the .rps. Install it from Silicon Labs, put commander on PATH or set SILABS_COMMANDER";) \
+  fi; \
   say "slc generate $$(basename "$$slcp") for $$board into $$b"; \
-  "$$slc" generate "$$slcp" -np -cp $(if $(filter 1,$(strip $($(1)_SLC_OVERWRITE))),--overwrite-all )-d "$$b" -o makefile --with "$$board" --toolchain gcc --sdk-package-path "$$sdk,$$wc" --force $(filter-out --overwrite-all,$($(1)_SLC_ARGS)); \
+  "$$slc" generate "$$slcp" -np -cp $(if $(filter 1,$(strip $($(1)_SLC_OVERWRITE))),--overwrite-all )-d "$$b" -o makefile --with "$$board" --sdk-package-path "$$sdk,$$wc" --force $(filter-out --overwrite-all,$($(1)_SLC_ARGS)); \
   [ -f "$$b/$$name.Makefile" ] || die "slc made no $$name.Makefile in $$b"; \
   jobs=$$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4); \
+  set --; [ -z "$$pbexe" ] || set -- POST_BUILD_EXE="$$pbexe"; \
   say "make -f $$name.Makefile$(if $(5), with -Werror)"; \
-  env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL make -C "$$b" -f "$$name.Makefile" -j "$$jobs" $(if $(5),CC="$$gccdir/arm-none-eabi-gcc -Werror") $($(1)_MAKE_ARGS); \
+  env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL make -C "$$b" -f "$$name.Makefile" -j "$$jobs" $(if $(5),CC="$$gccdir/arm-none-eabi-gcc -Werror") "$$@" $($(1)_MAKE_ARGS); \
   o="$$b/$($(1)_OUT)"; [ -f "$$o/$$name.hex" ] || [ -f "$$o/$$name.out" ] || die "the build made no $$name.hex or $$name.out in $$o"; \
+  if [ -n "$$pb" ] && [ "$$pbexe" != true ]; then [ -f "$$o/$$name.rps" ] || die "the post_build $$pb ran but made no $$name.rps in $$o"; ok "$$o/$$name.rps"; fi; \
   $(if $(4),$(if $(filter 1,$($(1)_SIGN)),$(call silabs_sign,$(1)))) \
   ok "built $$o"
 
@@ -310,7 +345,7 @@ silabs_build = $(STD_FW_SH) $(call silabs_find,$(1),$(2)) $(call silabs_tools,$(
 # TODO(verify): the commander syntax below (rps convert OUT --app IN --sign KEY) is from Silicon Labs' SiWx917
 # secure boot application note as remembered, not checked against `commander rps convert --help` of the installed
 # Simplicity Commander. Check it, and the image format the OTA path expects, before setting <part>_SIGN := 1.
-silabs_sign = rps="$$o/$$name.rps"; [ -f "$$rps" ] || die "no $$name.rps to sign in $$o: the SiWx917 post-build makes it with Simplicity Commander"; \
+silabs_sign = rps="$$o/$$name.rps"; [ -f "$$rps" ] || die "no $$name.rps to sign in $$o: the .slcp's post_build makes it ($(silabs_pb_lines))"; \
   $(call silabs_need_cmdr,$(1)) say "signing $$name.rps with $(if $(SIGNING_KEY),$(SIGNING_KEY),$($(1)_KEY))"; \
   $(call std_fw_with_key,$($(1)_KEY)) "$$cmdr" rps convert "$$o/$$name-signed.rps" --app "$$rps" --sign "$(std_fw_keyarg)"; \
   ok "signed $$o/$$name-signed.rps";
@@ -377,8 +412,11 @@ silabs_power_avg = $(STD_FW_SH) $(call silabs_need_cmdr,$(1)) \
   say "AEM average over $($(1)_AEM_WINDOW) ms"; "$$cmdr" aem measure --windowlength "$($(1)_AEM_WINDOW)" $(if $($(1)_PROBE_ID),--serialno "$($(1)_PROBE_ID)")
 
 # OTA: the .rps image (signed with SIGN=1) to the OTA bucket as <part>.rps.
-silabs_release = $(STD_FW_SH) $(call silabs_need_build,$(1),$(2)) \
-  [ -f "$$o/$$name.rps" ] || die "no $$name.rps in $$o: the wiseconnect_soc post-build (POST_BUILD_EXE) makes it with Simplicity Commander, which make $(1)-doctor checks; install Commander, then make $(1)-build. Nothing was uploaded"; \
+silabs_release = $(STD_FW_SH) $(call silabs_need_build,$(1),$(2)) $(silabs_postbuild) \
+  if [ ! -f "$$o/$$name.rps" ]; then \
+    if [ -z "$$pb" ]; then die "no $$name.rps in $$o: $$(basename "$$slcp") has no post_build, so the build makes none. $(silabs_pb_lines) (WiseConnect's .rps step, run by Simplicity Commander), then make $(1)-build. Nothing was uploaded"; \
+    else die "no $$name.rps in $$o: the post_build $$pb of $$(basename "$$slcp") makes it with Simplicity Commander (make $(1)-doctor checks it); make $(1)-build. Nothing was uploaded"; fi; \
+  fi; \
   if [ "$($(1)_SIGN)" = 1 ]; then f="$$o/$$name-signed.rps"; else f="$$o/$$name.rps"; warn "$(1)_SIGN is not 1: publishing an unsigned image"; fi; \
   $(call std_fw_release,$(1),$(2),$(1).rps)
 
