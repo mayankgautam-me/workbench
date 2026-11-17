@@ -982,10 +982,10 @@ of the project's repository (from stdin, never on a command line), adds the publ
 ## 6. CI/CD
 
 The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/name`, default
-`mayankgautam-me/ci-templates`), tagged `v1.5` (`v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
+`mayankgautam-me/ci-templates`), tagged `v1.6` (`v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
 own, independent of the project's `GITHUB_OWNER`: projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.5`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.6`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -1302,6 +1302,16 @@ Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) an
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
 
+- **1.6** (2026-11-17): a smoke check through Cloudflare Access. `make/VERSION`, the managed headers and the workflows'
+  `@v1.6` say 1.6; `mayankgautam-me/ci-templates` gets the tag `v1.6` (its workflows are 1.5's but for the version) and
+  keeps `v1.5` to `v1.0`.
+  - `smoke_get` (`lib.sh`) sends `CF-Access-Client-Id` and `CF-Access-Client-Secret` when `CF_ACCESS_CLIENT_ID` and
+    `CF_ACCESS_CLIENT_SECRET` are in the environment, through a curl config on stdin (`-K -`), never in argv. A value
+    with a quote, a backslash or a line break is refused.
+  - A cloud-worker or web-pages part's smoke for `ENV=staging|production` runs under `secrets.sh exec --env <ENV>` when
+    `secrets.schema` declares `CF_ACCESS_CLIENT_ID` (`std_smoke_access` in `common.mk`), so a deploy behind Access ends
+    in a passing smoke instead of a 403 (myndrya-voice's core at voice.myndrya.com/core). Without it, as before.
+  Update from 1.5: refresh the managed files and move the `uses:` lines to `@v1.6`. Nothing else changes.
 - **1.5** (2026-11-17): an altium part's BOM is the one its OutJob writes. `make/VERSION`, the managed headers and the
   workflows' `@v1.5` say 1.5; `mayankgautam-me/ci-templates` gets the tag `v1.5` and keeps `v1.4`, `v1.3`, `v1.2`, `v1.1`
   and `v1.0`.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.5 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.6 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # The one list of secret-like file names, and the one content check (.npmrc). Sourced by secrets.sh (`check`)
 # and by the skill's scripts/audit.sh, so the two cannot disagree. Globs are matched against the file name and against the whole relative path.

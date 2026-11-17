@@ -251,6 +251,8 @@ Read-only until the user says yes.
    repository the audit names (`CI_TEMPLATES_REPO`, default `mayankgautam-me/ci-templates`, independent of
    `GITHUB_OWNER`; a line on the pre-1.7 `<owner>/ci-templates` is reported outdated) and the current version tag
    (`v` + `make/VERSION`); and add jobs for kinds that were added.
+   From v1.5 to v1.6: re-copy the managed files and set every `uses:` line to `@v1.6`. A cloud-worker or web-pages
+   part behind Cloudflare Access whose `secrets.schema` declares `CF_ACCESS_CLIENT_ID` now passes its smoke with it.
    From v1.4 to v1.5: re-copy the managed files and set every `uses:` line to `@v1.5`. An altium part's BOM is now
    the one its OutJob writes (`<dir>/outputs/**/*BOM*.csv`, plus `.xlsx`), not `bom/<Board>_BOM.csv`: check that the
    OutJob has a CSV Bill of Materials output (`BOM` in its name) and `make <part>-build` passes after it ran, then,

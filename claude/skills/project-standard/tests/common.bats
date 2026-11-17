@@ -1159,3 +1159,22 @@ EOF
   [ ! -e references ]
   [ ! -e make/bin/refs.sh ]
 }
+
+@test "smoke_get passes Cloudflare Access with the service token on stdin, never in argv, and plainly without one" {
+  stub_recorder curl stdin
+  CF_ACCESS_CLIENT_ID=abc.access CF_ACCESS_CLIENT_SECRET=s3cret run bash -c '. make/bin/lib.sh; smoke_get https://core.example/health'
+  [ "$status" -eq 0 ]
+  grep -q '^header = "CF-Access-Client-Id: abc.access"$' "$STUB_LOG/curl.stdin" || false
+  grep -q '^header = "CF-Access-Client-Secret: s3cret"$' "$STUB_LOG/curl.stdin" || false
+  if grep -q 's3cret' "$STUB_LOG/curl.argv"; then false; fi
+  grep -qx -- '-K' "$STUB_LOG/curl.argv" || false
+
+  rm -f "$STUB_LOG/curl.stdin" "$STUB_LOG/curl.argv"
+  run bash -c 'unset CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET; . make/bin/lib.sh; smoke_get https://core.example/health'
+  [ "$status" -eq 0 ]
+  if grep -q 'CF-Access' "$STUB_LOG/curl.stdin"; then false; fi
+
+  CF_ACCESS_CLIENT_ID='a"b' CF_ACCESS_CLIENT_SECRET=s run bash -c '. make/bin/lib.sh; smoke_get https://core.example/health'
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"holds a quote"* ]] || false
+}

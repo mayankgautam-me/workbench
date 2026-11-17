@@ -2,7 +2,7 @@
 
 Reusable GitHub Actions workflows of the project standard, one per part kind, at
 `.github/workflows/<kind>.yml`, each with only `on: workflow_call`. Projects call them from their own
-`checks.yml` and `release.yml` with `uses: mayankgautam-me/ci-templates/.github/workflows/<kind>.yml@v1.5`.
+`checks.yml` and `release.yml` with `uses: mayankgautam-me/ci-templates/.github/workflows/<kind>.yml@v1.6`.
 README.md shows the calls.
 
 ## Where to change things

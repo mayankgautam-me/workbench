@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.5 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.6 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Shared shell helpers for secrets.sh, cf.sh and the recipes in common.mk.
 # Source it:   . "$STD_BIN/lib.sh"
@@ -74,13 +74,29 @@ public_dns_a() {
   return 0
 }
 
-# smoke_get URL   GET URL for a smoke check (curl -fsS, retried). When this machine cannot resolve the host (curl exit
+# smoke_access   the curl config lines that pass Cloudflare Access with a service token, when CF_ACCESS_CLIENT_ID and
+# CF_ACCESS_CLIENT_SECRET are in the environment (the part's smoke runs under secrets.sh exec, so a deploy behind Access
+# has them when secrets.schema declares them for ENV); nothing otherwise. Read by curl from stdin (-K -), never put in
+# argv where ps shows it. A value with a quote, a backslash or a line break is refused rather than written into the config.
+smoke_access() {
+  local id="${CF_ACCESS_CLIENT_ID:-}" secret="${CF_ACCESS_CLIENT_SECRET:-}" v
+  [ -n "$id" ] && [ -n "$secret" ] || return 0
+  for v in "$id" "$secret"; do
+    case "$v" in *'"'* | *\\* | *$'\n'* | *$'\r'*) log_err "CF_ACCESS_CLIENT_ID or CF_ACCESS_CLIENT_SECRET holds a quote, a backslash or a line break"; return 1 ;; esac
+  done
+  printf 'header = "CF-Access-Client-Id: %s"\nheader = "CF-Access-Client-Secret: %s"\n' "$id" "$secret"
+}
+
+# smoke_get URL   GET URL for a smoke check (curl -fsS, retried), through Cloudflare Access when smoke_access has a
+# token (a core behind Access answered the plain request 403, so every deploy behind it ended in a failed smoke).
+# When this machine cannot resolve the host (curl exit
 # 6), as right after a first deploy attaches a custom domain while the local DNS cache still holds the miss from
 # before, the host is looked up in public DNS and the check repeated pinned to that address (v40). Any other failure,
 # an HTTP error included, fails as before.
 smoke_get() {
-  local url="$1" rc=0 rest host port ip
-  curl -fsS --retry 3 --retry-delay 5 --max-time 20 "$url" >/dev/null || rc=$?
+  local url="$1" rc=0 rest host port ip access
+  access="$(smoke_access)" || return 1
+  printf '%s' "$access" | curl -K - -fsS --retry 3 --retry-delay 5 --max-time 20 "$url" >/dev/null || rc=$?
   [ "$rc" = 6 ] || return "$rc"
   rest="${url#*://}"
   rest="${rest%%/*}"
@@ -96,7 +112,7 @@ smoke_get() {
   fi
   log_warn "this machine cannot resolve $host yet (its DNS cache still holds the miss from before the domain existed); checking it at $ip from public DNS"
   log_warn "the cache clears by itself; on a Mac at once with: sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder"
-  curl -fsS --retry 3 --retry-delay 5 --max-time 20 --resolve "$host:$port:$ip" "$url" >/dev/null
+  printf '%s' "$access" | curl -K - -fsS --retry 3 --retry-delay 5 --max-time 20 --resolve "$host:$port:$ip" "$url" >/dev/null
 }
 log_err() { printf '%s %s\n' "$(paint 2 red 'error')" "$*" >&2; }
 
@@ -257,7 +273,7 @@ STD_HOOK_MARK='# project-standard v[0-9][0-9.]* pre-commit hook'
 install_hook_body() {
   cat <<'HOOK'
 #!/usr/bin/env bash
-# project-standard v1.5 pre-commit hook (installed by `make hooks`; fast checks only)
+# project-standard v1.6 pre-commit hook (installed by `make hooks`; fast checks only)
 set -euo pipefail
 max_mb="${STD_MAX_FILE_MB:-5}"
 limit=$((max_mb * 1024 * 1024))

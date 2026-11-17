@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.5 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.6 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # The GitHub container registry (ghcr.io) for the docker kind. gh does the work; its token reaches docker on stdin only.
 #

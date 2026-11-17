@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.5 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.6 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # cf.sh: the Cloudflare engine. Everything that talks to Cloudflare runs under
 # `secrets.sh exec --env E`, so wrangler sees CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID from

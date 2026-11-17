@@ -16,6 +16,7 @@ $(error ENV must be local, staging or production)
 endif
 STD_BIN ?= make/bin
 STD_LIB := . $(STD_BIN)/lib.sh
+std_smoke_access = $(and $(filter staging production,$(ENV)),$(shell grep -qE '^CF_ACCESS_CLIENT_ID[[:space:]]' secrets.schema 2>/dev/null && echo yes))
 std_verb = $(eval STD_VERB_$(2) += $(1)-$(2))$(eval STD_HELP += $(3)|$(1)-$(2)|$(4))
 std_extra = $(eval STD_HELP += $(3)|$(1)-$(2)|$(4))
 std_confirm = if [ "$(origin CONFIRM)" != "command line" ] || [ "$(CONFIRM)" != "$(1)" ]; then echo "refused: CONFIRM=$(1) is needed on the make command line" >&2; exit 1; fi
@@ -149,6 +150,22 @@ MK
   grep -q 'wrangler deploy --env production' "$STUB_LOG"
   grep -q 'curl .*https://api.example.test/health' "$STUB_LOG"
   [ ! -e "$P/cloud/api/.wrangler/project-standard-staging-version" ]
+}
+
+@test "smoke: behind Cloudflare Access the health check runs under secrets exec for ENV and sends the token on stdin" {
+  run make -C "$P" cloud-api-smoke ENV=production
+  [ "$status" -eq 0 ]
+  if grep -q 'secrets exec' "$STUB_LOG"; then false; fi
+  : >"$STUB_LOG"
+  printf 'CF_ACCESS_CLIENT_ID   production   auth   no   the Access service token id\n' > "$P/secrets.schema"
+  run env CF_ACCESS_CLIENT_ID=abc.access CF_ACCESS_CLIENT_SECRET=s3cret make -C "$P" cloud-api-smoke ENV=production
+  [ "$status" -eq 0 ]
+  grep -q 'secrets exec --env production' "$STUB_LOG" || false
+  grep -q 'curl -K - .*https://api.example.test/health' "$STUB_LOG" || false
+  if grep -q 's3cret' "$STUB_LOG"; then false; fi
+  : >"$STUB_LOG"
+  run make -C "$P" cloud-api-smoke ENV=local SMOKE_BASE=http://127.0.0.1:8787
+  if grep -q 'secrets exec' "$STUB_LOG"; then false; fi
 }
 
 @test "smoke: a host this machine cannot resolve is checked at its public DNS address, and said (v40)" {

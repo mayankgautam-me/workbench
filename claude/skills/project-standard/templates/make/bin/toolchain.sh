@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.5 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.6 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # What this project uses from the shared machine, what the standard installed there, and the commands that undo it:
 # `make teardown` (this project) and `make prune` (the whole machine). make runs it from the project root; STD_PROJECT_DIR

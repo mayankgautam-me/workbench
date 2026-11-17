@@ -1,4 +1,4 @@
-# project-standard v1.5 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.6 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind web-pages: a static site, an Astro site, a Vite app or a Next.js static export, served by Cloudflare Pages.
 #
@@ -110,7 +110,7 @@ $(1)-smoke:
 	@set -euo pipefail; \
 	base="$(or $(SMOKE_BASE),$($(1)_URL_$(ENV)))"; \
 	test -n "$$$$base" || { echo "$(1): no URL for $(ENV), set $(1)_URL_$(ENV) in make/project.mk"; exit 1; }; \
-	$(STD_LIB); smoke_get "$$$$base$$($(1)_HEALTH)"; \
+	$(if $(std_smoke_access),$$($(1)_SEC) exec --env $(ENV) -- bash -c '. $(STD_BIN)/lib.sh; smoke_get "$$$$0"' "$$$$base$$($(1)_HEALTH)",$(STD_LIB); smoke_get "$$$$base$$($(1)_HEALTH)"); \
 	echo "$(1): health ok at $$$$base$$($(1)_HEALTH)"; \
 	if [ -d $(2)/tests/smoke ]; then cd $(2) && BASE_URL="$$$$base" $$($(1)_EXEC) vitest run --passWithNoTests tests/smoke; fi
 

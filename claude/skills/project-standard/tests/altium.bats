@@ -324,6 +324,8 @@ outputs() {
 @test "altium layout on a real flat project, read only (when it is on this machine)" {
   real="${STD_ALTIUM_SAMPLE:-$REAL_HOME/Projects/I2Sage/airnode/hardware}"
   [ -f "$real/AirNode.PrjPcb" ] || skip "no sample Altium project at $real"
+  # The sample must still be flat: a project already laid out (sheets/) has nothing to move. Point STD_ALTIUM_SAMPLE at a flat one.
+  [ ! -d "$real/sheets" ] || skip "the sample at $real is already in the standard layout"
   alproject
   cp -R "$real/." hardware/
   git add -A >/dev/null 2>&1 && git commit -q -m sample

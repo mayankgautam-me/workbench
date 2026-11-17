@@ -1,4 +1,4 @@
-# project-standard v1.5 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.6 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind altium: an Altium Designer board (one *.PrjPcb per part dir). Altium is Windows only and licensed, so
 # nothing here runs Altium: the outputs come from the project's OutJob, run in Altium, into <dir>/outputs/ (never

@@ -1,4 +1,4 @@
-# project-standard v1.5 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.6 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # The stage commands, the same in every project. GNU make 3.81 compatible (macOS /usr/bin/make):
 # no .ONESHELL, .SHELLFLAGS, $(file), .RECIPEPREFIX, undefine, != or ::=.
@@ -183,6 +183,9 @@ export ALTIUM_LIBRARY_PROJECT STD_ALTIUM_LIBRARY_PROJECT_FROM
 export CI_TEMPLATES_REPO STD_TOOLCHAINS SECRETS_SCHEMA
 
 STD_LIB := . $(STD_BIN)/lib.sh
+# Whether a smoke check of ENV goes through Cloudflare Access: staging or production, with the Access service token declared in
+# secrets.schema (CF_ACCESS_CLIENT_ID). Then the smoke runs under secrets.sh exec so smoke_get can send it; otherwise as before.
+std_smoke_access = $(and $(filter staging production,$(ENV)),$(shell grep -qE '^CF_ACCESS_CLIENT_ID[[:space:]]' secrets.schema 2>/dev/null && echo yes))
 STD_SECRETS := bash $(STD_BIN)/secrets.sh
 STD_CF := bash $(STD_BIN)/cf.sh
 # toolchain.sh: the usage record, the installed ledger, make teardown and make prune. Absolute, with the project root named,

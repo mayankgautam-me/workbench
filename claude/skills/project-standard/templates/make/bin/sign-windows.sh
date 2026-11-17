@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.5 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.6 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Signs one Windows file with the project's code-signing certificate. The app-tauri release helper passes it to Tauri as
 # bundle.windows.signCommand (`bash <this> %1`, only when the secrets hold keys/windows-codesign), so Tauri calls it once
