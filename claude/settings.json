@@ -101,6 +101,12 @@
         "source": "git",
         "url": "https://github.com/latent-spaces/brag.git"
       }
+    },
+    "linkedin-skills": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/sergebulaev/linkedin-skills.git"
+      }
     }
   },
   "modelSettings": {
