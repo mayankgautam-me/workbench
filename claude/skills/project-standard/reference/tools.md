@@ -238,7 +238,7 @@ the variable whenever the project has an altium part.
 
 | Target | What it does |
 |---|---|
-| setup / doctor | `npm ci` or `pnpm install`; checks the packages and the pinned wrangler |
+| setup / doctor | `npm ci` or `pnpm install`; checks the packages and the pinned wrangler, and for a part with Access settings `CF_TOKEN_PERMS` and the `CF_ACCESS_CLIENT_*` rows of `secrets.schema` |
 | dev | Applies local D1 migrations, then `wrangler dev` on the part's port with the local secrets in its environment |
 | stop | Stops that `wrangler dev` |
 | logs | `wrangler tail` of the deployed Worker in `ENV` |
@@ -258,6 +258,8 @@ the variable whenever the project has an altium part.
 | backup *extra* | D1 export and every KV value into an encrypted archive in `~/Backups/<project>/`; R2 bucket info only. **Durable Object storage is not backed up** |
 | wipe *extra* | Backs up, then deletes the data and keeps the resources (`CONFIRM=<env>`) |
 | destroy *extra* | Backs up, then deletes the Worker and resources of `ENV` (`CONFIRM=<env>`; production also asks you to type the project name). Deleting the Worker deletes its Durable Object storage too |
+| access *extra* | Finds or makes the part's Cloudflare Access for `ENV` (1.7): the self-hosted application `<project>-<env>-<part>` on `<part>_ACCESS_HOST` (default: the env's custom domain) and `<part>_ACCESS_PATH`, its Allow policy (`<part>_ACCESS_EMAIL_DOMAINS`, `<part>_ACCESS_EMAILS`, synced every run) and Service Auth policy, the service token (a new one's id and secret into the env's secrets, never shown; `ROTATE=1` a new secret), and `ACCESS_AUD` / `ACCESS_TEAM_DOMAIN` in `env.<ENV>.vars` of `wrangler.jsonc`. `DRY=1` prints the plan. Needs `CF_TOKEN_PERMS := access`; production needs `CONFIRM=production` |
+| access-check *extra* | Read only: the health path of `ENV` without the service token is stopped by Access (redirect to `*.cloudflareaccess.com`, 401 or 403), with it gets through |
 | reset | Wipes the local D1 and KV state, then migrates and seeds again (`CONFIRM=local`) |
 | version | From `VERSION` (bump creates it). The tag `<part>-v<version>` deploys production in CI, then makes the GitHub Release with the CHANGELOG notes only (no files) |
 | clean / distclean | Build output / plus installed packages |
@@ -292,6 +294,8 @@ Vite, `<dir>/out` for Next, `<dir>` for a static site. Package binaries run thro
 | deploy | check, build, `wrangler pages deploy` to the staging preview branch or to production, then smoke. With a `wrangler.jsonc` without `pages_build_output_dir` in the part dir the site is a static-assets Worker instead: `wrangler deploy --env $ENV` from the part dir (its custom domain the only address with `workers_dev` and `preview_urls` off), and provision has nothing to create. In CI: staging on a push to main, production on the part's tag. A production-only site (`scaffold.sh --production-only`) has no staging CI job |
 | smoke / test-remote | Health path and `tests/smoke` / `tests/remote` against `ENV` |
 | provision *extra* | Creates the Pages project for `ENV` when missing |
+| access / access-check *extra* | As for cloud-worker: the site's Cloudflare Access for `ENV` (`<part>_ACCESS_*`; a Pages site gets no `ACCESS_AUD` vars), and the read-only check that Access guards it |
+| doctor | For a site with Access settings: `CF_TOKEN_PERMS` and the `CF_ACCESS_CLIENT_*` rows of `secrets.schema` (1.7) |
 | status / versions / logs | The Pages project / recent deployments / Pages Functions logs |
 | version | From `VERSION` (bump creates it). The tag deploys production in CI, then makes the GitHub Release with the CHANGELOG notes only (no files) |
 | clean / distclean | Build output / plus packages |

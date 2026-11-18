@@ -913,3 +913,279 @@ OTA_PUBLIC := yes'
   [ "$status" -eq 0 ]
   ! grep -q 'demo-ota' "$STUB_LOG/npx.calls"
 }
+
+# --- Cloudflare Access (1.7): cf.sh access, access-check, access-doctor against a fake Access API ---
+
+# access_setup: make/project.mk with CF_TOKEN_PERMS := access, the service token rows in secrets.schema, and a curl that
+# is a fake Cloudflare API keeping its state (apps, policies, service tokens) as JSON under $STUB_LOG/cfa. Every call is
+# one line in $STUB_LOG/cfa.calls ("METHOD path body"); every secret it hands out is also in $STUB_LOG/cfa/secrets.
+# A URL outside the API is a health check: STUB_ACCESS=guarded (Access in front: 302 to the team without the service
+# token headers, 200 with them), open (200 either way) or refused (403 either way).
+access_setup() {
+  mkdir -p make "$STUB_LOG/cfa"
+  printf 'PROJECT := demo\nPARTS := \\\n  api:cloud-worker:cloud/api\nCF_TOKEN_PERMS := access\n' >make/project.mk
+  cat >>secrets.schema <<'EOF'
+CF_ACCESS_CLIENT_ID      staging,production  auth,ci  no  the Access service token id
+CF_ACCESS_CLIENT_SECRET  staging,production  auth,ci  no  the Access service token secret
+EOF
+  cat >"$STUBS/curl" <<'EOF'
+#!/bin/bash
+cfg="$(cat)"
+st="$STUB_LOG/cfa"
+for f in apps policies tokens; do [ -f "$st/$f.json" ] || echo '[]' >"$st/$f.json"; done
+url="$(printf '%s\n' "$cfg" | sed -n 's/^url = "\(.*\)"/\1/p')"
+method="$(printf '%s\n' "$cfg" | sed -n 's/^request = "\(.*\)"/\1/p')"
+method="${method:-GET}"
+body=""; w=""; prev=""
+for a in "$@"; do
+  [ "$prev" = --data-binary ] && body="$a"
+  [ "$prev" = -w ] && w="$a"
+  prev="$a"
+done
+out() { # CODE LOCATION BODY
+  local fmt="${w//\\n/$'\n'}"
+  fmt="${fmt//%\{http_code\}/$1}"
+  fmt="${fmt//%\{redirect_url\}/$2}"
+  printf '%s%s' "$3" "$fmt"
+}
+case "$url" in
+  */client/v4/*) ;;
+  *)
+    printf 'HEALTH %s %s\n' "$url" "$(printf '%s' "$cfg" | grep -c 'CF-Access-Client')" >>"$STUB_LOG/cfa.calls"
+    hdrs="$(printf '%s' "$cfg" | grep -c 'CF-Access-Client')"
+    case "${STUB_ACCESS:-guarded}" in
+      guarded) if [ "$hdrs" = 2 ]; then out 200 '' ''; else out 302 'https://demo-team.cloudflareaccess.com/cdn-cgi/access/login/x' ''; fi ;;
+      open) out 200 '' '' ;;
+      refused) out 403 '' '' ;;
+    esac
+    exit 0 ;;
+esac
+path="${url#*/client/v4}"
+path="${path%%\?*}"
+printf '%s %s %s\n' "$method" "$path" "$body" >>"$STUB_LOG/cfa.calls"
+ok() { out 200 '' "$(jq -c --argjson r "$1" '{success: true, errors: [], result: $r, result_info: {total_pages: 1}}' <<<'{}')"; }
+n_of() { jq length "$st/$1.json"; }
+put() { jq -c "$2" "$st/$1.json" >"$st/$1.new" && mv "$st/$1.new" "$st/$1.json"; }
+case "$method $path" in
+  "GET "*/access/organizations)
+    if [ -f "$st/noorg" ]; then ok 'null'; else ok '{"auth_domain":"demo-team.cloudflareaccess.com"}'; fi ;;
+  "GET "*/access/service_tokens) ok "$(cat "$st/tokens.json")" ;;
+  "POST "*/access/service_tokens)
+    n=$(( $(n_of tokens) + 1 )); sec="SECRET-$n-QQ$RANDOM"; echo "$sec" >>"$st/secrets"
+    tok="$(jq -nc --arg n "$(jq -r .name <<<"$body")" --arg i "tok-$n" --arg c "cid-$n.access" '{id: $i, name: $n, client_id: $c}')"
+    put tokens ". + [$tok]"
+    ok "$(jq -c --arg s "$sec" '. + {client_secret: $s}' <<<"$tok")" ;;
+  "POST "*/access/service_tokens/*/rotate)
+    id="${path%/rotate}"; id="${id##*/}"; sec="ROTATED-QQ$RANDOM"; echo "$sec" >>"$st/secrets"
+    ok "$(jq -c --arg i "$id" --arg s "$sec" '.[] | select(.id == $i) | . + {client_secret: $s}' "$st/tokens.json")" ;;
+  "GET "*/access/policies) ok "$(cat "$st/policies.json")" ;;
+  "POST "*/access/policies)
+    n=$(( $(n_of policies) + 1 ))
+    pol="$(jq -c --arg i "pol-$n" '. + {id: $i}' <<<"$body")"
+    put policies ". + [$pol]"; ok "$pol" ;;
+  "GET "*/access/policies/*) ok "$(jq -c --arg i "${path##*/}" '.[] | select(.id == $i)' "$st/policies.json")" ;;
+  "PUT "*/access/policies/*)
+    put policies "map(if .id == \"${path##*/}\" then $body else . end)"; ok "$body" ;;
+  "GET "*/access/apps) ok "$(cat "$st/apps.json")" ;;
+  "POST "*/access/apps)
+    n=$(( $(n_of apps) + 1 ))
+    app="$(jq -c --arg i "app-$n" --arg a "aud${n}f00d" '. + {id: $i, aud: $a}' <<<"$body")"
+    put apps ". + [$app]"; ok "$app" ;;
+  "GET "*/access/apps/*) ok "$(jq -c --arg i "${path##*/}" '.[] | select(.id == $i)' "$st/apps.json")" ;;
+  "PUT "*/access/apps/*)
+    put apps "map(if .id == \"${path##*/}\" then $body else . end)"; ok "$body" ;;
+  *) out 404 '' '{"success":false,"errors":[{"code":7003,"message":"no route"}]}' ;;
+esac
+EOF
+  chmod +x "$STUBS/curl"
+}
+
+# writes: the API calls that change something
+access_writes() { grep -E '^(POST|PUT|DELETE) ' "$STUB_LOG/cfa.calls" 2>/dev/null || true; }
+
+ACCESS_ARGS=(--part api --dir cloud/api --host api.example.test --email-domains "fabrolabs.com" --emails "Ann@Example.org bob@example.org")
+
+@test "access from nothing: token, Allow and Service Auth policies, application, secrets and wrangler vars" {
+  access_setup
+  run cf access --env staging "${ACCESS_ARGS[@]}"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  first="$output"
+  grep -q '^POST /accounts/0123456789abcdef0123456789abcdef/access/service_tokens {"name":"demo-staging-api","duration":"forever"}' "$STUB_LOG/cfa.calls"
+  grep -q '^POST /accounts/.*/access/policies {"name":"demo-staging-api-allow","decision":"allow","include":\[{"email_domain":{"domain":"fabrolabs.com"}},{"email":{"email":"ann@example.org"}},{"email":{"email":"bob@example.org"}}\]}' "$STUB_LOG/cfa.calls"
+  grep -q '^POST /accounts/.*/access/policies {"name":"demo-staging-api-service","decision":"non_identity","include":\[{"service_token":{"token_id":"tok-1"}}\]}' "$STUB_LOG/cfa.calls"
+  run jq -c '.[0] | {name, type, domain, destinations, session_duration, policies}' "$STUB_LOG/cfa/apps.json"
+  [ "$output" = '{"name":"demo-staging-api","type":"self_hosted","domain":"api.example.test","destinations":[{"type":"public","uri":"api.example.test"}],"session_duration":"24h","policies":[{"id":"pol-1","precedence":1},{"id":"pol-2","precedence":2}]}' ]
+  # the token's id and secret are in the staging secrets, from stdin: never in the output, a call, argv or a plain file
+  [ "$(sec get CF_ACCESS_CLIENT_ID --env staging)" = cid-1.access ]
+  secret="$(head -n1 "$STUB_LOG/cfa/secrets")"
+  [ "$(sec get CF_ACCESS_CLIENT_SECRET --env staging)" = "$secret" ]
+  [[ "$first" != *"$secret"* ]]
+  [[ "$first" == *"stored CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET in the staging secrets (not shown)"* ]]
+  if grep -q "$secret" "$STUB_LOG/cfa.calls"; then false; fi
+  assert_no_plain "$secret" "$W" "$TMPDIR"
+  # ACCESS_AUD and ACCESS_TEAM_DOMAIN in env.staging.vars (added as a vars object), every comment kept
+  run bash -c ". '$STD_TEMPLATES/bin/lib.sh'; $(sed -n '/^strip_jsonc()/,/^}/p' "$STD_TEMPLATES/bin/cf.sh"); strip_jsonc cloud/api/wrangler.jsonc | jq -c '.env.staging.vars'"
+  [ "$output" = '{"ACCESS_AUD":"aud1f00d","ACCESS_TEAM_DOMAIN":"demo-team.cloudflareaccess.com"}' ]
+  run diff "$BATS_TEST_TMPDIR/wrangler.orig" cloud/api/wrangler.jsonc
+  [ "${#lines[@]}" -eq 2 ]
+  [[ "${lines[1]}" == '>       "vars": { "ACCESS_AUD": "aud1f00d", "ACCESS_TEAM_DOMAIN": "demo-team.cloudflareaccess.com" },' ]]
+  grep -q '"database_name": "demo-staging-db", // staging database' cloud/api/wrangler.jsonc
+  grep -q '/\* filled in by cf-provision \*/' cloud/api/wrangler.jsonc
+}
+
+@test "access run again changes nothing: every piece is found, no write call" {
+  access_setup
+  cf access --env staging "${ACCESS_ARGS[@]}" >/dev/null 2>&1
+  cp cloud/api/wrangler.jsonc "$BATS_TEST_TMPDIR/after1"
+  : >"$STUB_LOG/cfa.calls"
+  run cf access --env staging "${ACCESS_ARGS[@]}"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ -z "$(access_writes)" ]
+  [[ "$output" == *"found service token demo-staging-api (the one in the staging secrets)"* ]]
+  [[ "$output" == *"found Allow policy demo-staging-api-allow (@fabrolabs.com, ann@example.org, bob@example.org)"* ]]
+  [[ "$output" == *"found Service Auth policy demo-staging-api-service"* ]]
+  [[ "$output" == *"found Access application demo-staging-api on api.example.test"* ]]
+  [[ "$output" == *"found ACCESS_AUD and ACCESS_TEAM_DOMAIN"* ]]
+  cmp cloud/api/wrangler.jsonc "$BATS_TEST_TMPDIR/after1"
+}
+
+@test "access syncs the Allow policy's include list to the settings, removals too" {
+  access_setup
+  cf access --env staging "${ACCESS_ARGS[@]}" >/dev/null 2>&1
+  : >"$STUB_LOG/cfa.calls"
+  run cf access --env staging --part api --dir cloud/api --host api.example.test --email-domains "" --emails "bob@example.org carol@example.org"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"updated Allow policy demo-staging-api-allow: now bob@example.org, carol@example.org (was domain fabrolabs.com, email ann@example.org, email bob@example.org)"* ]]
+  [ "$(access_writes | wc -l | tr -d ' ')" = 1 ]
+  run jq -c '.[] | select(.name == "demo-staging-api-allow") | .include' "$STUB_LOG/cfa/policies.json"
+  [ "$output" = '[{"email":{"email":"bob@example.org"}},{"email":{"email":"carol@example.org"}}]' ]
+}
+
+@test "access DRY=1 reads and prints the plan: no write call, no secret, wrangler.jsonc untouched" {
+  access_setup
+  run cf access --env staging "${ACCESS_ARGS[@]}" --dry
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ -z "$(access_writes)" ]
+  [[ "$output" == *"would create service token demo-staging-api"* ]]
+  [[ "$output" == *"would create Allow policy demo-staging-api-allow"* ]]
+  [[ "$output" == *"would create Service Auth policy demo-staging-api-service"* ]]
+  [[ "$output" == *"would create self-hosted Access application demo-staging-api on api.example.test"* ]]
+  [[ "$output" == *"would write ACCESS_AUD"* ]]
+  cmp cloud/api/wrangler.jsonc "$BATS_TEST_TMPDIR/wrangler.orig"
+  run sec get CF_ACCESS_CLIENT_ID --env staging
+  [ -z "$output" ] || [ "$status" -ne 0 ]
+}
+
+@test "access refuses without CF_TOKEN_PERMS := access, says the one-line fix, calls nothing" {
+  access_setup
+  printf 'PROJECT := demo\nPARTS := \\\n  api:cloud-worker:cloud/api\n' >make/project.mk
+  run cf access --env staging "${ACCESS_ARGS[@]}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"CF_TOKEN_PERMS := access"* ]]
+  [[ "$output" == *"make cf-login again"* ]]
+  [ ! -s "$STUB_LOG/cfa.calls" ]
+}
+
+@test "access refuses when secrets.schema lacks the service token rows, and prints them" {
+  access_setup
+  grep -v '^CF_ACCESS_CLIENT' secrets.schema >s.new && mv s.new secrets.schema
+  run cf access --env production "${ACCESS_ARGS[@]}"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not declare CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET for production"* ]]
+  [[ "$output" == *"CF_ACCESS_CLIENT_SECRET   "*"staging,production"* ]]
+  [ ! -s "$STUB_LOG/cfa.calls" ]
+}
+
+@test "access: a token whose secret is not stored needs ROTATE=1, which stores a new secret" {
+  access_setup
+  cf access --env staging "${ACCESS_ARGS[@]}" >/dev/null 2>&1
+  sec unset CF_ACCESS_CLIENT_SECRET --env staging >/dev/null 2>&1
+  sec unset CF_ACCESS_CLIENT_ID --env staging >/dev/null 2>&1
+  : >"$STUB_LOG/cfa.calls"
+  run cf access --env staging "${ACCESS_ARGS[@]}"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"its secret is not in the staging secrets"*"ROTATE=1"* ]]
+  [ -z "$(access_writes)" ]
+  run cf access --env staging "${ACCESS_ARGS[@]}" --rotate-token
+  echo "$output"
+  [ "$status" -eq 0 ]
+  grep -q '^POST /accounts/.*/access/service_tokens/tok-1/rotate' "$STUB_LOG/cfa.calls"
+  if grep -q '^POST /accounts/.*/access/service_tokens {' "$STUB_LOG/cfa.calls"; then false; fi
+  secret="$(tail -n1 "$STUB_LOG/cfa/secrets")"
+  [[ $secret == ROTATED-* ]]
+  [ "$(sec get CF_ACCESS_CLIENT_SECRET --env staging)" = "$secret" ]
+  [ "$(sec get CF_ACCESS_CLIENT_ID --env staging)" = cid-1.access ]
+  [[ "$output" != *"$secret"* ]]
+}
+
+@test "access: the host defaults to env.ENV's custom domain, a one-line vars object grows in place" {
+  access_setup
+  cat >cloud/api/wrangler.jsonc <<'EOF'
+{
+  "name": "demo-api",
+  "env": {
+    "production": {
+      "name": "demo-production-api",
+      "routes": [{ "pattern": "core.example.test", "custom_domain": true }], // the API
+      "vars": { "ENVIRONMENT": "production" }
+    }
+  }
+}
+EOF
+  run cf access --env production --part api --dir cloud/api --emails "ann@example.org"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"application demo-production-api on core.example.test"* ]]
+  grep -Fq '"vars": { "ENVIRONMENT": "production", "ACCESS_AUD": "aud1f00d", "ACCESS_TEAM_DOMAIN": "demo-team.cloudflareaccess.com" }' cloud/api/wrangler.jsonc
+  grep -Fq '// the API' cloud/api/wrangler.jsonc
+  # no custom domain for staging: said, nothing called
+  : >"$STUB_LOG/cfa.calls"
+  run cf access --env staging --part api --dir cloud/api
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"set api_ACCESS_HOST"* ]]
+  [ ! -s "$STUB_LOG/cfa.calls" ]
+}
+
+@test "access-check: Access stops the plain request and lets the service token through; open or refused fail" {
+  access_setup
+  cf access --env staging "${ACCESS_ARGS[@]}" >/dev/null 2>&1
+  run cf access-check --env staging --part api --dir cloud/api --host api.example.test --health /health
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok without the service token: Access sends it to sign in at demo-team.cloudflareaccess.com (302)"* ]]
+  [[ "$output" == *"ok with the service token: it gets through (200)"* ]]
+  grep -q '^HEALTH https://api.example.test/health 0$' "$STUB_LOG/cfa.calls"
+  grep -q '^HEALTH https://api.example.test/health 2$' "$STUB_LOG/cfa.calls"
+  STUB_ACCESS=open run cf access-check --env staging --part api --dir cloud/api --host api.example.test --health /health
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"fail without the service token: 200"* ]]
+  STUB_ACCESS=refused run cf access-check --env staging --part api --dir cloud/api --host api.example.test --health /health
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"ok without the service token: Access refuses it (403)"* ]]
+  [[ "$output" == *"fail with the service token: refused (403)"* ]]
+  # no token in the secrets of production
+  run cf access-check --env production --part api --dir cloud/api --host api.example.test --health /health
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"fail with the service token: CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET are not in the production secrets"* ]]
+}
+
+@test "access-doctor: silent without Access settings, says what is missing with them" {
+  access_setup
+  run cf access-doctor --part api --dir cloud/api
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  run cf access-doctor --part api --dir cloud/api --emails a@example.org
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"ok api: CF_TOKEN_PERMS names access"* ]]
+  printf 'PROJECT := demo\n' >make/project.mk
+  grep -v '^CF_ACCESS_CLIENT_SECRET' secrets.schema >s.new && mv s.new secrets.schema
+  run cf access-doctor --part api --dir cloud/api --emails a@example.org
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"fail api: has Access settings, but CF_TOKEN_PERMS"* ]]
+  [[ "$output" == *"secrets.schema lacks CF_ACCESS_CLIENT_SECRET"* ]]
+}

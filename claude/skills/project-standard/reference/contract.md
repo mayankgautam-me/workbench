@@ -357,6 +357,19 @@ cf.sh token-check --env E    verify the token, probe each API the bindings of E 
                              CI also fail when the other env's copy differs or is missing; a project with no
                              Cloudflare part and no OTA bucket says so and exits 0
 cf.sh envs --dir D           the env names in D/wrangler.jsonc (scaffold finds production-only parts with it)
+cf.sh access --env E --part P --dir D [--host H] [--path X] [--email-domains "a b"] [--emails "a b"] [--session 24h]
+             [--dry] [--rotate-token]      (1.7) find or create the part's Access: the self-hosted application, the
+                             reusable policies <name>-allow (email_domain and email rules, set to the settings) and
+                             <name>-service (the service token), the service token (CF_ACCESS_CLIENT_ID's, else by
+                             name, else new), names <project>-<env>-<part>; the API through api_call (token in a curl
+                             config on stdin, body in argv: no secret in it). A new or rotated token's id and secret go
+                             to secrets.sh set on stdin (STD_TTY emptied), never printed. ACCESS_AUD and
+                             ACCESS_TEAM_DOMAIN into env.E.vars by set_vars, a textual edit that keeps comments (exit 7:
+                             prints the lines to add). Refuses before any unlock without access in CF_TOKEN_PERMS or the
+                             CF_ACCESS_CLIENT_* schema rows for E. The kinds pass the settings as <part>_ACCESS_ARGS
+cf.sh access-check --env E --part P [--host H] [--url-base U] [--health /x]   read only: without the token Access stops
+                             the GET (302 to *.cloudflareaccess.com, 401, 403), with it (smoke_access) it gets through
+cf.sh access-doctor --part P [settings]   nothing without Access settings; else CF_TOKEN_PERMS and the schema rows
 cf.sh provision --env E --dir D     read D/wrangler.jsonc (env.E bindings), create missing D1/KV/R2/
                              Queues (producers, consumer queues, dead_letter_queue; each name once) (wrangler)
                              and write ids back (jq on the JSON with comments removed

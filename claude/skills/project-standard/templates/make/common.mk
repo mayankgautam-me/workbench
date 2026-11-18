@@ -1,4 +1,4 @@
-# project-standard v1.6 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # The stage commands, the same in every project. GNU make 3.81 compatible (macOS /usr/bin/make):
 # no .ONESHELL, .SHELLFLAGS, $(file), .RECIPEPREFIX, undefine, != or ::=.

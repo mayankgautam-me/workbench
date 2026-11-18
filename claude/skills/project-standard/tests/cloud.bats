@@ -904,3 +904,52 @@ esac'
   [ "$status" -ne 0 ]
   [[ "$output" == *"needs CONFIRM=prune"* ]] || false
 }
+
+@test "access: production needs CONFIRM, DRY=1 does not; the part's Access settings reach cf.sh access (1.7)" {
+  cat >> "$P/make/project.mk" <<'MK'
+cloud-api_ACCESS_EMAIL_DOMAINS := fabrolabs.com
+cloud-api_ACCESS_EMAILS := ann@example.org bob@example.org
+cloud-api_ACCESS_PATH := /admin
+cloud-api_ACCESS_HOST_production := core.example.test
+MK
+  run make -C "$P" cloud-api-access ENV=production
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"CONFIRM=production"* ]]
+  if grep -q '^cf access' "$STUB_LOG"; then false; fi
+  run make -C "$P" cloud-api-access ENV=production CONFIRM=production
+  [ "$status" -eq 0 ]
+  grep -q '^cf access --env production --part cloud-api --dir cloud/api --host core.example.test --path /admin --email-domains fabrolabs.com --emails ann@example.org bob@example.org --session 24h$' "$STUB_LOG" || { cat "$STUB_LOG"; false; }
+  : > "$STUB_LOG"
+  run make -C "$P" cloud-api-access ENV=production DRY=1
+  [ "$status" -eq 0 ]
+  grep -q '^cf access --env production .* --session 24h --dry$' "$STUB_LOG"
+  : > "$STUB_LOG"
+  run make -C "$P" cloud-api-access ENV=staging ROTATE=1
+  [ "$status" -eq 0 ]
+  grep -q '^cf access --env staging --part cloud-api --dir cloud/api --host  --path /admin .* --rotate-token$' "$STUB_LOG"
+}
+
+@test "access-check passes the part's URL and health path; doctor asks cf.sh access-doctor (1.7)" {
+  run make -C "$P" cloud-api-access-check ENV=production
+  [ "$status" -eq 0 ]
+  grep -q '^cf access-check --env production --part cloud-api --dir cloud/api .* --url-base https://api.example.test --health /health$' "$STUB_LOG"
+  mkdir -p "$P/cloud/api/node_modules"
+  printf '{"devDependencies":{"wrangler":"4"}}\n' > "$P/cloud/api/package.json"
+  run make -C "$P" cloud-api-doctor
+  [ "$status" -eq 0 ]
+  grep -q '^cf access-doctor --part cloud-api --dir cloud/api' "$STUB_LOG"
+}
+
+@test "a web-pages part has access, access-check and a doctor that asks cf.sh access-doctor (1.7)" {
+  cp "$KINDS_SRC/web-pages.mk" "$P/make/kinds/"
+  printf 'PARTS += site:web-pages:cloud/site\nsite_URL_staging := https://site-staging.example.test\nsite_ACCESS_EMAILS := ann@example.org\n' >> "$P/make/project.mk"
+  mkdir -p "$P/cloud/site"
+  run make -C "$P" site-access ENV=staging
+  [ "$status" -eq 0 ]
+  grep -q '^cf access --env staging --part site --dir cloud/site .* --emails ann@example.org --session 24h$' "$STUB_LOG"
+  run make -C "$P" site-access-check ENV=staging
+  grep -q '^cf access-check --env staging --part site .* --url-base https://site-staging.example.test --health /$' "$STUB_LOG"
+  run make -C "$P" site-doctor
+  [ "$status" -eq 0 ]
+  grep -q '^cf access-doctor --part site --dir cloud/site' "$STUB_LOG"
+}

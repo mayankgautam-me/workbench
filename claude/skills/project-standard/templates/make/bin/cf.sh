@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.6 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # cf.sh: the Cloudflare engine. Everything that talks to Cloudflare runs under
 # `secrets.sh exec --env E`, so wrangler sees CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID from
@@ -10,6 +10,8 @@
 #   login | logout | whoami | token-check | token-url | provision | status | migrate [--list]
 #   provision-ota | status-ota   the OTA bucket(s) of make/project.mk (OTA_PUBLIC := r2dev turns the r2.dev URL on)
 #   seed | secrets [--rotate NAME] | backup | wipe [--r2-unbacked] | destroy [--r2-unbacked] | envs
+#   access --part P [--host H] [--path X] [--email-domains "a b"] [--emails "a b"] [--session 24h] [--dry] [--rotate-token]
+#   access-check --part P [--host H] [--url-base U] [--health /x] | access-doctor --part P [settings]   (1.7)
 # One API token per project: login opens the dashboard's token form pre-filled with the permissions the project's
 # wrangler files and its OTA bucket need (token-url prints that URL only), stores the token for staging and production,
 # logout removes both.
@@ -42,6 +44,16 @@ OPT_DIR="."
 OPT_ROTATE=""
 OPT_LIST=0
 OPT_R2_UNBACKED=0
+OPT_PART=""
+OPT_HOST=""
+OPT_PATH=""
+OPT_EMAIL_DOMAINS=""
+OPT_EMAILS=""
+OPT_SESSION=""
+OPT_URL_BASE=""
+OPT_HEALTH=""
+OPT_DRY=0
+OPT_ROTATE_TOKEN=0
 POS=()
 CUR_SUB=""
 ORIG_ARGS=()
@@ -56,6 +68,16 @@ parse_args() {
       --rotate) [ $# -ge 2 ] || die "--rotate needs a value"; OPT_ROTATE="$2"; shift 2 ;;
       --list) OPT_LIST=1; shift ;;
       --r2-unbacked) OPT_R2_UNBACKED=1; shift ;;
+      --part) [ $# -ge 2 ] || die "--part needs a value"; OPT_PART="$2"; shift 2 ;;
+      --host) [ $# -ge 2 ] || die "--host needs a value"; OPT_HOST="$2"; shift 2 ;;
+      --path) [ $# -ge 2 ] || die "--path needs a value"; OPT_PATH="$2"; shift 2 ;;
+      --email-domains) [ $# -ge 2 ] || die "--email-domains needs a value"; OPT_EMAIL_DOMAINS="$2"; shift 2 ;;
+      --emails) [ $# -ge 2 ] || die "--emails needs a value"; OPT_EMAILS="$2"; shift 2 ;;
+      --session) [ $# -ge 2 ] || die "--session needs a value"; OPT_SESSION="$2"; shift 2 ;;
+      --url-base) [ $# -ge 2 ] || die "--url-base needs a value"; OPT_URL_BASE="$2"; shift 2 ;;
+      --health) [ $# -ge 2 ] || die "--health needs a value"; OPT_HEALTH="$2"; shift 2 ;;
+      --dry) OPT_DRY=1; shift ;;
+      --rotate-token) OPT_ROTATE_TOKEN=1; shift ;;
       --) shift; POS+=("$@"); return 0 ;;
       -*) die "unknown option: $1" ;;
       *) POS+=("$1"); shift ;;
@@ -1244,6 +1266,634 @@ EOF
   log_ok "destroyed the $OPT_ENV resources of $PROJECT (backup kept)"
 }
 
+# --- Cloudflare Access (1.7): make <part>-access, <part>-access-check, and the part's doctor line ---
+#
+# One self-hosted Access application per part and remote env, found or made by name: <project>-<env>-<part> on the
+# part's host[/path] (the custom domain of env.<env> in its wrangler.jsonc unless --host names one). It has two reusable
+# policies: <name>-allow (Allow; include: the email domains and the single addresses, synced to the settings on every
+# run) and <name>-service (Service Auth; include: the service token). The service token is the one whose client id is
+# CF_ACCESS_CLIENT_ID in the env's secrets, else the one named <name>, else a new one named <name>; a new or rotated
+# token's id and secret go straight into the secrets (secrets.sh set, on stdin), never printed. The application's aud
+# and the team domain go into env.<env>.vars of the wrangler file as ACCESS_AUD and ACCESS_TEAM_DOMAIN (a textual edit
+# that keeps comments). API (developers.cloudflare.com/api/resources/zero_trust/subresources/access/, read 2026-11-18):
+#   GET  /accounts/A/access/organizations                 auth_domain, the team domain <team>.cloudflareaccess.com
+#   GET  /accounts/A/access/service_tokens                POST {name, duration}; POST .../service_tokens/ID/rotate
+#   GET  /accounts/A/access/policies                      POST {name, decision, include}; GET and PUT .../policies/ID
+#   GET  /accounts/A/access/apps                          POST {name, type, domain, destinations, policies, ...}; PUT .../apps/ID
+# The token needs CF_TOKEN_PERMS := access (Access: Apps and Policies: Edit, Service Tokens: Edit, Organizations: Read).
+
+ACCESS_NAME=""
+ACCESS_HOST=""
+ACCESS_PATH=""
+ACCESS_DOMAIN=""
+ACCESS_SESSION=""
+ACCESS_DOMAINS=""
+ACCESS_EMAILS=""
+TOK_ID=""
+TOK_NAME=""
+POL_ID=""
+APP_AUD=""
+ACCESS_STORED=0
+ACCESS_VARS_CHANGED=0
+
+valid_host() { printf '%s' "$1" | grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'; }
+valid_email() { printf '%s' "$1" | grep -Eq '^[a-z0-9._%+-]+@[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'; }
+
+# words LIST   the space or comma separated items of LIST, lowercased, each once, one per line.
+words() { printf '%s\n' "$1" | tr '[:upper:]' '[:lower:]' | tr ',' ' ' | tr -s ' \t' '\n' | awk 'NF && !seen[$0]++'; }
+
+# a_found TEXT / a_did VERB TEXT   one line of what access found or did (with --dry: what it would do), on stdout.
+a_found() { printf '%s %s\n' "$(paint 1 blue found)" "$*"; }
+a_did() {
+  local now
+  if [ "$OPT_DRY" = 1 ]; then
+    case "$1" in wrote) now="write" ;; *) now="${1%d}" ;; esac
+    printf '%s %s %s\n' "$(paint 1 yellow would)" "$now" "$2"
+  else
+    printf '%s %s\n' "$(paint 1 green "$1")" "$2"
+  fi
+}
+
+# access_default_host   the custom domain of env.<ENV> in the part's wrangler file: its one route with "custom_domain": true.
+access_default_host() {
+  local file hosts n
+  file=""
+  for n in wrangler.jsonc wrangler.json; do
+    if [ -f "$OPT_DIR/$n" ]; then file="$OPT_DIR/$n"; break; fi
+  done
+  [ -n "$file" ] || die "no wrangler.jsonc in $OPT_DIR to read the custom domain from: set ${OPT_PART}_ACCESS_HOST in make/project.mk"
+  hosts="$(strip_jsonc "$file" | jq -r --arg e "$OPT_ENV" '
+    (.env[$e] // {}) | ([.route] + (.routes // []))[]
+    | select(type == "object" and .custom_domain == true) | .pattern // empty
+    | sub("^[a-z]+://"; "") | sub("/.*$"; "")' 2>/dev/null | awk 'NF && !seen[$0]++')" || die "could not read $file"
+  n="$(printf '%s\n' "$hosts" | awk 'NF' | wc -l | tr -d ' ')"
+  [ "$n" != 0 ] || die "no custom domain for $OPT_ENV in $file (a route with \"custom_domain\": true under env.$OPT_ENV): set ${OPT_PART}_ACCESS_HOST in make/project.mk"
+  [ "$n" = 1 ] || die "env.$OPT_ENV of $file has $n custom domains ($(printf '%s' "$hosts" | tr '\n' ' ')): set ${OPT_PART}_ACCESS_HOST to the one Access protects"
+  printf '%s' "$hosts"
+}
+
+# access_settings   check and normalise the part's settings: ACCESS_NAME, ACCESS_HOST, ACCESS_PATH, ACCESS_DOMAIN
+# (host[/path], what the application covers), ACCESS_DOMAINS, ACCESS_EMAILS (one per line), ACCESS_SESSION.
+access_settings() {
+  local w
+  if [ -z "$OPT_PART" ] || ! valid_name "$OPT_PART"; then die "this command needs --part P (a part name)"; fi
+  ACCESS_NAME="$PROJECT-$OPT_ENV-$OPT_PART"
+  ACCESS_HOST="$(printf '%s' "$OPT_HOST" | tr '[:upper:]' '[:lower:]')"
+  [ -n "$ACCESS_HOST" ] || ACCESS_HOST="$(access_default_host)"
+  valid_host "$ACCESS_HOST" || die "invalid Access host: $ACCESS_HOST (${OPT_PART}_ACCESS_HOST is a host name only, no scheme or path)"
+  ACCESS_PATH="$OPT_PATH"
+  case "$ACCESS_PATH" in "" | /*) ;; *) ACCESS_PATH="/$ACCESS_PATH" ;; esac
+  [ "$ACCESS_PATH" != / ] || ACCESS_PATH=""
+  if [ -n "$ACCESS_PATH" ]; then
+    printf '%s' "$ACCESS_PATH" | grep -Eq '^(/[A-Za-z0-9._~%*-]+)+/?$' ||
+      die "invalid ${OPT_PART}_ACCESS_PATH: $ACCESS_PATH (a URL path such as /admin; empty means the whole host)"
+  fi
+  ACCESS_DOMAIN="$ACCESS_HOST$ACCESS_PATH"
+  ACCESS_SESSION="${OPT_SESSION:-24h}"
+  printf '%s' "$ACCESS_SESSION" | grep -Eq '^[0-9]+(h|m|s)$' ||
+    die "invalid ${OPT_PART}_ACCESS_SESSION: $ACCESS_SESSION (a duration such as 24h, 30m)"
+  ACCESS_DOMAINS="$(words "$OPT_EMAIL_DOMAINS")"
+  ACCESS_EMAILS="$(words "$OPT_EMAILS")"
+  for w in $ACCESS_DOMAINS; do
+    case "$w" in *@*) die "${OPT_PART}_ACCESS_EMAIL_DOMAINS holds an address ($w): single addresses go in ${OPT_PART}_ACCESS_EMAILS" ;; esac
+    valid_host "$w" || die "invalid email domain in ${OPT_PART}_ACCESS_EMAIL_DOMAINS: $w"
+  done
+  for w in $ACCESS_EMAILS; do
+    valid_email "$w" || die "invalid address in ${OPT_PART}_ACCESS_EMAILS: $w"
+  done
+}
+
+# access_need_perms   the project token is made with the Access permissions only when CF_TOKEN_PERMS names access.
+access_need_perms() {
+  case " $(project_setting CF_TOKEN_PERMS) " in *" access "*) return 0 ;; esac
+  log_err "the project's Cloudflare token is not made for Access: CF_TOKEN_PERMS in make/project.mk does not name access"
+  printf '  add access to make/project.mk, on its CF_TOKEN_PERMS line or as a new one:\n    CF_TOKEN_PERMS := access\n' >&2
+  printf '  then run make cf-login again: it names the Access permissions to add to the token, and make cf-token-check probes them\n' >&2
+  exit 1
+}
+
+# schema_declares NAME ENV   secrets.schema has a row for NAME whose envs name ENV.
+schema_declares() {
+  [ -f "$SCHEMA" ] || return 1
+  awk -v n="$1" -v e="$2" '$1 == n && index("," $2 ",", "," e ",") { f = 1 } END { exit !f }' "$SCHEMA"
+}
+
+# access_schema_rows   the two secrets.schema rows of the service token (scaffold.sh writes the same).
+access_schema_rows() {
+  printf '%-22s %-26s %-14s %-5s %s\n' CF_ACCESS_CLIENT_ID staging,production auth,ci no \
+    "the Cloudflare Access service token's client id (make <part>-access stores it; the smoke sends it)"
+  printf '%-22s %-26s %-14s %-5s %s\n' CF_ACCESS_CLIENT_SECRET staging,production auth,ci no \
+    "the Cloudflare Access service token's secret (make <part>-access stores it)"
+}
+
+access_need_schema() {
+  local n miss=""
+  for n in CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET; do
+    schema_declares "$n" "$OPT_ENV" || miss="$miss $n"
+  done
+  [ -n "$miss" ] || return 0
+  log_err "$SCHEMA does not declare$miss for $OPT_ENV: the service token's id and secret are kept under those names"
+  printf '  add these rows to %s (scaffold.sh --force adds them to a project that sets <part>_ACCESS_* settings):\n' "$SCHEMA" >&2
+  access_schema_rows | sed 's/^/    /' >&2
+  exit 1
+}
+
+# api_call METHOD PATH [BODY]   one Cloudflare API call with the project token, which goes in a curl config on stdin and
+# never in argv; the body (no secret: names, addresses, ids) is an argument. The response JSON on stdout. On failure it
+# says the status and Cloudflare's own error codes and messages, never the response (a token's secret can be in one),
+# and returns 2 when the token itself was refused (401, 403, codes 10000 and 9109), else 1.
+api_call() {
+  local method="$1" url="$CF_API$2" body="${3:-}" out code resp msg
+  cfg_safe "$url" "${CLOUDFLARE_API_TOKEN:-}" || die "refused: the URL or token holds a quote, backslash or line break"
+  if [ -n "$body" ]; then
+    out="$(printf 'header = "Authorization: Bearer %s"\nheader = "Content-Type: application/json"\nurl = "%s"\nrequest = "%s"\n' \
+      "$CLOUDFLARE_API_TOKEN" "$url" "$method" | curl -sS --max-time 30 -w '\n%{http_code}' -K - --data-binary "$body")" || out=""
+  else
+    out="$(printf 'header = "Authorization: Bearer %s"\nurl = "%s"\nrequest = "%s"\n' \
+      "$CLOUDFLARE_API_TOKEN" "$url" "$method" | curl -sS --max-time 30 -w '\n%{http_code}' -K -)" || out=""
+  fi
+  [ -n "$out" ] || { log_err "could not reach the Cloudflare API ($method ${2%%\?*})"; return 1; }
+  code="${out##*$'\n'}"
+  resp="${out%$'\n'*}"
+  if printf '%s' "$resp" | jq -e '.success == true' >/dev/null 2>&1; then
+    printf '%s' "$resp"
+    return 0
+  fi
+  msg="$(printf '%s' "$resp" | jq -r '[.errors[]? | "\(.code // "") \(.message // "")"] | join("; ")' 2>/dev/null || true)"
+  log_err "$method ${2%%\?*} answered ${code:-?}${msg:+: $msg}"
+  case "$code" in 401 | 403) return 2 ;; esac
+  if printf '%s' "$resp" | jq -e '[.errors[]?.code] | any(. == 10000 or . == 9109)' >/dev/null 2>&1; then return 2; fi
+  return 1
+}
+
+# access_api METHOD PATH [BODY]   api_call, stopping with what to do when it fails. Call as x="$(access_api ...)" || exit 1.
+access_api() {
+  local rc=0 out
+  out="$(api_call "$@")" || rc=$?
+  if [ "$rc" = 2 ]; then
+    die "the Cloudflare API refused the project token for $1 ${2%%\?*}: it needs Access: Apps and Policies: Edit, Access: Service Tokens: Edit and Access: Organizations, Identity Providers, and Groups: Read (make cf-login names them, make cf-token-check probes them)"
+  fi
+  [ "$rc" = 0 ] || die "stopped at $1 ${2%%\?*}: what was made before is kept, and running the command again reuses it"
+  printf '%s' "$out"
+}
+
+# access_list PATH   every item of a paged list, as one JSON array.
+access_list() {
+  local page=1 all='[]' resp items n total
+  while :; do
+    resp="$(access_api GET "$1?page=$page&per_page=50")" || exit 1
+    items="$(printf '%s' "$resp" | jq -c '.result // []')"
+    all="$(printf '%s\n%s' "$all" "$items" | jq -cs '.[0] + .[1]')"
+    n="$(printf '%s' "$items" | jq 'length')"
+    total="$(printf '%s' "$resp" | jq -r '.result_info.total_pages // empty')"
+    if [ -n "$total" ]; then [ "$page" -lt "$total" ] || break; else [ "$n" -ge 50 ] || break; fi
+    [ "$n" -gt 0 ] || break
+    page=$((page + 1))
+    [ "$page" -le 100 ] || break
+  done
+  printf '%s' "$all"
+}
+
+# access_store NAME VALUE   one value into the env's secrets, on stdin (STD_TTY emptied so set reads stdin, not a terminal).
+access_store() {
+  printf '%s' "$2" | STD_TTY='' "$SECRETS_SH" set "$1" --project "$PROJECT" --env "$OPT_ENV"
+}
+
+# access_store_token RESPONSE [CLIENT_ID]   the client id and secret of a token Cloudflare just made or rotated, into the
+# secrets at once: the API shows a secret only in that answer.
+access_store_token() {
+  local cid sec
+  cid="$(printf '%s' "$1" | jq -r '.result.client_id // empty')"
+  [ -n "$cid" ] || cid="${2:-}"
+  sec="$(printf '%s' "$1" | jq -r '.result.client_secret // empty')"
+  if [ -z "$cid" ] || [ -z "$sec" ]; then
+    die "the Cloudflare API answered without the service token's client id or secret: run make $OPT_PART-access ENV=$OPT_ENV ROTATE=1"
+  fi
+  if ! access_store CF_ACCESS_CLIENT_ID "$cid" || ! access_store CF_ACCESS_CLIENT_SECRET "$sec"; then
+    sec=""
+    die "could not store the service token in the $OPT_ENV secrets, and Cloudflare will not show its secret again: fix the secrets (make secrets-doctor), then make $OPT_PART-access ENV=$OPT_ENV ROTATE=1 gives it a new one"
+  fi
+  sec=""
+  ACCESS_STORED=1
+  a_did stored "CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET in the $OPT_ENV secrets (not shown)"
+}
+
+# access_service_token A   TOK_ID, TOK_NAME: the env's service token (the secrets' one, else the one named ACCESS_NAME,
+# else a new one), made or rotated as needed.
+access_service_token() {
+  local A="$1" list stored="${CF_ACCESS_CLIENT_ID:-}" have_secret=0 tok="" n resp cid=""
+  [ -z "${CF_ACCESS_CLIENT_SECRET:-}" ] || have_secret=1
+  list="$(access_list "$A/access/service_tokens")" || exit 1
+  if [ -n "$stored" ]; then
+    tok="$(printf '%s' "$list" | jq -c --arg c "$stored" '[.[] | select(.client_id == $c)][0] // empty')"
+  fi
+  TOK_NAME="$ACCESS_NAME"
+  if [ -n "$tok" ]; then
+    TOK_ID="$(printf '%s' "$tok" | jq -r '.id')"
+    TOK_NAME="$(printf '%s' "$tok" | jq -r '.name // empty')"
+    if [ "$have_secret" = 1 ] && [ "$OPT_ROTATE_TOKEN" != 1 ]; then
+      a_found "service token $TOK_NAME (the one in the $OPT_ENV secrets)"
+      return 0
+    fi
+  else
+    n="$(printf '%s' "$list" | jq --arg n "$ACCESS_NAME" '[.[] | select(.name == $n)] | length')"
+    [ "$n" -le 1 ] || die "$n service tokens are named $ACCESS_NAME: remove the extra ones in the dashboard (Zero Trust, Access controls, Service credentials), then run this again"
+    tok="$(printf '%s' "$list" | jq -c --arg n "$ACCESS_NAME" '[.[] | select(.name == $n)][0] // empty')"
+    [ -z "$tok" ] || TOK_ID="$(printf '%s' "$tok" | jq -r '.id')"
+  fi
+  [ -z "$tok" ] || cid="$(printf '%s' "$tok" | jq -r '.client_id // empty')"
+  if [ -z "$TOK_ID" ]; then
+    a_did created "service token $ACCESS_NAME (it does not expire; its id and secret go into the $OPT_ENV secrets, never shown)"
+    if [ "$OPT_DRY" = 1 ]; then TOK_ID="(new)"; return 0; fi
+    resp="$(access_api POST "$A/access/service_tokens" "$(jq -nc --arg n "$ACCESS_NAME" '{name: $n, duration: "forever"}')")" || exit 1
+    TOK_ID="$(printf '%s' "$resp" | jq -r '.result.id // empty')"
+    [ -n "$TOK_ID" ] || die "the Cloudflare API made the service token $ACCESS_NAME but answered without its id: remove it in the dashboard and run this again"
+    access_store_token "$resp"
+    resp=""
+    return 0
+  fi
+  if [ "$OPT_ROTATE_TOKEN" != 1 ]; then
+    local why="the service token $TOK_NAME exists, but its secret is not in the $OPT_ENV secrets, and Cloudflare shows a secret only when it makes one: make $OPT_PART-access ENV=$OPT_ENV ROTATE=1 gives it a new secret and stores it (the old one stops working at once)"
+    if [ "$OPT_DRY" = 1 ]; then log_warn "would stop here: $why"; return 0; fi
+    die "$why. Nothing was changed."
+  fi
+  a_did rotated "service token $TOK_NAME: a new secret into the $OPT_ENV secrets (the old one stops working at once)"
+  [ "$OPT_DRY" != 1 ] || return 0
+  resp="$(access_api POST "$A/access/service_tokens/$TOK_ID/rotate" '{}')" || exit 1
+  access_store_token "$resp" "$cid"
+  resp=""
+}
+
+# The rules of a policy's include list, comparable: sorted "domain d", "email e", "token id", or the rule as JSON.
+JQ_RULES='def rules: [ .[]? | if .email_domain then "domain " + (.email_domain.domain | ascii_downcase)
+  elif .email then "email " + (.email.email | ascii_downcase)
+  elif .service_token then "token " + .service_token.token_id
+  else "rule " + tojson end ] | sort;'
+
+# access_policy A NAME DECISION INCLUDE TEXT   POL_ID: the reusable policy NAME, made when missing, its include list set to
+# INCLUDE (JSON) when it differs. TEXT says what INCLUDE is.
+access_policy() {
+  local A="$1" name="$2" decision="$3" include="$4" text="$5" label=Allow list n pol full resp have want
+  [ "$decision" != non_identity ] || label="Service Auth"
+  list="$(access_list "$A/access/policies")" || exit 1
+  n="$(printf '%s' "$list" | jq --arg n "$name" '[.[] | select(.name == $n)] | length')"
+  [ "$n" -le 1 ] || die "$n Access policies are named $name: remove the extra ones in the dashboard (Zero Trust, Access controls, Policies), then run this again"
+  pol="$(printf '%s' "$list" | jq -c --arg n "$name" '[.[] | select(.name == $n)][0] // empty')"
+  if [ -z "$pol" ]; then
+    a_did created "$label policy $name ($text)"
+    if [ "$OPT_DRY" = 1 ]; then POL_ID="(new)"; return 0; fi
+    resp="$(access_api POST "$A/access/policies" "$(jq -nc --arg n "$name" --arg d "$decision" --argjson i "$include" '{name: $n, decision: $d, include: $i}')")" || exit 1
+    POL_ID="$(printf '%s' "$resp" | jq -r '.result.id // empty')"
+    [ -n "$POL_ID" ] || die "the Cloudflare API made the policy $name but answered without its id: run this again (it finds it)"
+    return 0
+  fi
+  POL_ID="$(printf '%s' "$pol" | jq -r '.id')"
+  [ "$(printf '%s' "$pol" | jq -r '.decision // empty')" = "$decision" ] ||
+    die "the Access policy $name exists with the action $(printf '%s' "$pol" | jq -r '.decision // "?"'), not $label: rename or fix it in the dashboard, then run this again"
+  full="$(access_api GET "$A/access/policies/$POL_ID")" || exit 1
+  full="$(printf '%s' "$full" | jq -c '.result')"
+  have="$(printf '%s' "$full" | jq -c "$JQ_RULES .include | rules")"
+  want="$(printf '%s' "$include" | jq -c "$JQ_RULES rules")"
+  if [ "$have" = "$want" ]; then
+    a_found "$label policy $name ($text)"
+    return 0
+  fi
+  a_did updated "$label policy $name: now $text (was $(printf '%s' "$have" | jq -r 'if length == 0 then "empty" else join(", ") end'))"
+  [ "$OPT_DRY" != 1 ] || return 0
+  access_api PUT "$A/access/policies/$POL_ID" "$(printf '%s' "$full" | jq -c --argjson i "$include" '.include = $i')" >/dev/null || exit 1
+}
+
+# access_app A POLICY_IDS   APP_AUD: the self-hosted application ACCESS_NAME (else the self-hosted one already on
+# ACCESS_DOMAIN), made when missing; its domain, session duration and the two policies set when they differ.
+access_app() {
+  local A="$1" pols="$2" list n app id full resp changes="" missing body other
+  list="$(access_list "$A/access/apps")" || exit 1
+  n="$(printf '%s' "$list" | jq --arg n "$ACCESS_NAME" '[.[] | select(.name == $n)] | length')"
+  [ "$n" -le 1 ] || die "$n Access applications are named $ACCESS_NAME: remove the extra ones in the dashboard (Zero Trust, Access controls, Applications), then run this again"
+  app="$(printf '%s' "$list" | jq -c --arg n "$ACCESS_NAME" '[.[] | select(.name == $n)][0] // empty')"
+  if [ -z "$app" ]; then
+    app="$(printf '%s' "$list" | jq -c --arg d "$ACCESS_DOMAIN" '[.[] | select(.type == "self_hosted" and ((.domain // "") | ascii_downcase) == $d)][0] // empty')"
+    if [ -n "$app" ]; then
+      other="$(printf '%s' "$app" | jq -r '.name // "(no name)"')"
+      log_info "no application named $ACCESS_NAME, but $other is already on $ACCESS_DOMAIN: using it (its name stays)"
+    fi
+  fi
+  if [ -z "$app" ]; then
+    a_did created "self-hosted Access application $ACCESS_NAME on $ACCESS_DOMAIN (session $ACCESS_SESSION, its policies attached)"
+    if [ "$OPT_DRY" = 1 ]; then APP_AUD=""; return 0; fi
+    body="$(jq -nc --arg n "$ACCESS_NAME" --arg d "$ACCESS_DOMAIN" --arg s "$ACCESS_SESSION" --argjson p "$pols" '{
+      name: $n, type: "self_hosted", domain: $d, destinations: [{type: "public", uri: $d}],
+      session_duration: $s, app_launcher_visible: false,
+      policies: ($p | to_entries | map({id: .value, precedence: (.key + 1)}))}')"
+    resp="$(access_api POST "$A/access/apps" "$body")" || exit 1
+    APP_AUD="$(printf '%s' "$resp" | jq -r '.result.aud // empty')"
+    [ -n "$APP_AUD" ] || die "the Cloudflare API made the application but answered without its aud: run this again (it finds it)"
+    return 0
+  fi
+  id="$(printf '%s' "$app" | jq -r '.id')"
+  full="$(access_api GET "$A/access/apps/$id")" || exit 1
+  full="$(printf '%s' "$full" | jq -c '.result')"
+  [ "$(printf '%s' "$full" | jq -r '.type // empty')" = self_hosted ] ||
+    die "the Access application $(printf '%s' "$full" | jq -r '.name // "?"') is of type $(printf '%s' "$full" | jq -r '.type // "?"'), not self-hosted: nothing was changed"
+  APP_AUD="$(printf '%s' "$full" | jq -r '.aud // empty')"
+  if [ "$(printf '%s' "$full" | jq -r '(.domain // "") | ascii_downcase')" != "$ACCESS_DOMAIN" ]; then
+    changes="$changes, domain $ACCESS_DOMAIN (was $(printf '%s' "$full" | jq -r '.domain // "none"'))"
+  fi
+  if [ "$(printf '%s' "$full" | jq -r '.session_duration // empty')" != "$ACCESS_SESSION" ]; then
+    changes="$changes, session $ACCESS_SESSION (was $(printf '%s' "$full" | jq -r '.session_duration // "none"'))"
+  fi
+  missing="$(printf '%s' "$full" | jq -c --argjson p "$pols" '$p - [(.policies // [])[].id]')"
+  [ "$missing" = '[]' ] || changes="$changes, attach $(printf '%s' "$missing" | jq 'length') policy(ies)"
+  if [ -z "$changes" ]; then
+    a_found "Access application $(printf '%s' "$full" | jq -r '.name') on $ACCESS_DOMAIN (session $ACCESS_SESSION, its policies attached)"
+    return 0
+  fi
+  a_did updated "Access application $(printf '%s' "$full" | jq -r '.name'): ${changes#, }"
+  [ "$OPT_DRY" != 1 ] || return 0
+  body="$(printf '%s' "$full" | jq -c --arg d "$ACCESS_DOMAIN" --arg s "$ACCESS_SESSION" --argjson m "$missing" '
+    ([(.policies // [])[] | {id, precedence}]) as $old
+    | ([$old[].precedence // 0] | max // 0) as $top
+    | .domain = $d
+    | .destinations = ([{type: "public", uri: $d}] + [(.destinations // [])[] | select((.type // "public") != "public")])
+    | (if has("self_hosted_domains") then .self_hosted_domains = [$d] else . end)
+    | .session_duration = $s
+    | .policies = ($old + ($m | to_entries | map({id: .value, precedence: ($top + .key + 1)})))')"
+  access_api PUT "$A/access/apps/$id" "$body" >/dev/null || exit 1
+}
+
+# set_vars FILE ENV KEY=VALUE...   Targeted textual edit of env.ENV.vars: a key that is there gets the new value, the
+# others are added inside the object (a one-line object stays one line), a missing "vars" is added as the env block's
+# first key. Comments and layout stay. Values are plain (checked by the caller: no quote, backslash or line break).
+# Exit 3: no ENV block; 7: the edit cannot place them (the caller prints what to add).
+set_vars() {
+  local file="$1" env="$2" kv tmp
+  shift 2
+  kv="$(printf '%s;' "$@")"
+  tmp="$file.tmp.$$"
+  awk -v env="$env" -v kv="$kv" '
+    function depthdelta(s,   t, o, c) {
+      t = s
+      gsub(/"([^"\\]|\\.)*"/, "", t); sub(/\/\/.*$/, "", t)
+      o = gsub(/\{/, "", t); c = gsub(/\}/, "", t)
+      return o - c
+    }
+    function lead(s) { match(s, /^[ \t]*/); return substr(s, 1, RLENGTH) }
+    function ent(i) { return "\"" K[i] "\": \"" V[i] "\"" }
+    { L[NR] = $0 }
+    END {
+      m = split(kv, P, ";"); nk = 0
+      for (i = 1; i <= m; i++) if (P[i] != "") { nk++; p = index(P[i], "="); K[nk] = substr(P[i], 1, p - 1); V[nk] = substr(P[i], p + 1) }
+      s = 0; e = 0; d = 0
+      for (i = 1; i <= NR; i++) {
+        if (!s && L[i] ~ "^[ \t]*\"" env "\"[ \t]*:[ \t]*\\{") { s = i; d = 0 }
+        if (s) { d += depthdelta(L[i]); if (d <= 0) { e = i; break } }
+      }
+      if (!s) exit 3
+      if (e <= s) exit 7
+      v = 0
+      for (i = s + 1; i < e; i++) if (L[i] ~ /"vars"[ \t]*:[ \t]*\{/) { v = i; break }
+      ins = 0
+      if (!v) {
+        # no vars: a one-line "vars" object as the first key of the env block
+        ind = lead(L[s + 1]); if (s + 1 == e) ind = lead(L[s]) "  "
+        line = ind "\"vars\": { "
+        for (i = 1; i <= nk; i++) line = line (i > 1 ? ", " : "") ent(i)
+        line = line " }" (s + 1 < e ? "," : "")
+        ins = s; NEW[1] = line; nn = 1
+      } else {
+        match(L[v], /"vars"[ \t]*:[ \t]*\{/); col = RSTART + RLENGTH - 1
+        depth = 1; instr = 0; blk = 0; nonempty = 0; done = 0
+        for (i = v; i <= e && !done; i++) {
+          line = L[i]; n = length(line); j = (i == v) ? col + 1 : 1
+          for (; j <= n; j++) {
+            c = substr(line, j, 1)
+            if (blk) { if (c == "*" && substr(line, j + 1, 1) == "/") { blk = 0; j++ } continue }
+            if (instr) { if (c == "\\") j++; else if (c == "\"") instr = 0; continue }
+            if (c == "\"") { instr = 1; nonempty = 1; continue }
+            if (c == "/" && substr(line, j + 1, 1) == "/") break
+            if (c == "/" && substr(line, j + 1, 1) == "*") { blk = 1; j++; continue }
+            if (c == "{") { depth++; nonempty = 1; continue }
+            if (c == "}") { depth--; if (depth == 0) { cl = i; cc = j; done = 1; break } continue }
+            if (c != " " && c != "\t" && c != ",") nonempty = 1
+          }
+        }
+        if (!done) exit 7
+        # which keys are there
+        for (k = 1; k <= nk; k++) {
+          F[k] = 0
+          for (i = v; i <= cl; i++) if (index(L[i], "\"" K[k] "\"")) {
+            if (L[i] !~ "\"" K[k] "\"[ \t]*:[ \t]*\"[^\"]*\"") exit 7
+            F[k] = i; break
+          }
+        }
+        nn = 0
+        if (cl == v) {
+          add = ""
+          for (k = 1; k <= nk; k++) if (!F[k]) add = add (add != "" ? ", " : "") ent(k)
+          if (add != "") {
+            before = substr(L[v], 1, cc - 1); after = substr(L[v], cc)
+            sub(/[ \t]+$/, "", before)
+            sep = (nonempty && before !~ /,$/) ? ", " : " "
+            L[v] = before sep add " " after
+          }
+        } else {
+          ind = lead(L[v + 1]); if (v + 1 == cl) ind = lead(L[v]) "  "
+          miss = 0; for (k = 1; k <= nk; k++) if (!F[k]) miss++
+          t = 0
+          for (k = 1; k <= nk; k++) if (!F[k]) { t++; NEW[++nn] = ind ent(k) ((t < miss || nonempty) ? "," : "") }
+          ins = v
+        }
+        # replace the values of the keys that are there
+        for (k = 1; k <= nk; k++) if (F[k]) {
+          i = F[k]; line = L[i]
+          match(line, "\"" K[k] "\"[ \t]*:[ \t]*\"[^\"]*\"")
+          seg = substr(line, RSTART, RLENGTH); p = index(seg, ":")
+          rest = substr(seg, p + 1); sub(/^[ \t]*/, "", rest)
+          lsp = substr(seg, p + 1, length(seg) - p - length(rest))
+          L[i] = substr(line, 1, RSTART - 1) substr(seg, 1, p) lsp "\"" V[k] "\"" substr(line, RSTART + RLENGTH)
+        }
+      }
+      for (i = 1; i <= NR; i++) {
+        print L[i]
+        if (i == ins) for (k = 1; k <= nn; k++) print NEW[k]
+      }
+    }
+  ' "$file" >"$tmp" || {
+    local rc=$?
+    rm -f "$tmp"
+    return "$rc"
+  }
+  chmod --reference="$file" "$tmp" 2>/dev/null || chmod "$(stat -f '%Lp' "$file" 2>/dev/null || echo 644)" "$tmp"
+  mv "$tmp" "$file"
+}
+
+# access_vars AUD TEAM   ACCESS_AUD and ACCESS_TEAM_DOMAIN in env.ENV.vars of the part's wrangler file, so the Worker can
+# check the Cf-Access-Jwt-Assertion it gets (aud and the team's certs). A Pages site has no Worker vars: said, skipped.
+access_vars() {
+  local aud="$1" team="$2" file="" f cur shown=""
+  for f in wrangler.jsonc wrangler.json; do
+    if [ -f "$OPT_DIR/$f" ]; then file="$OPT_DIR/$f"; break; fi
+  done
+  if [ -n "$file" ]; then
+    shown="${file#"$(pwd -P)"/}"
+  fi
+  if [ -z "$file" ] || grep -q pages_build_output_dir "$file"; then
+    log_info "no Worker config in $OPT_DIR (a Pages site): ACCESS_AUD and ACCESS_TEAM_DOMAIN are not written anywhere"
+    return 0
+  fi
+  if [ -z "$aud" ]; then
+    a_did wrote "ACCESS_AUD (the new application's aud) and ACCESS_TEAM_DOMAIN $team into env.$OPT_ENV.vars of $shown"
+    return 0
+  fi
+  printf '%s' "$aud" | grep -Eq '^[A-Za-z0-9]+$' || die "the application's aud is not a plain tag: $aud"
+  cur="$(strip_jsonc "$file" | jq -r --arg e "$OPT_ENV" '(.env[$e].vars // {}) | "\(.ACCESS_AUD // "")|\(.ACCESS_TEAM_DOMAIN // "")"' 2>/dev/null || true)"
+  if [ "$cur" = "$aud|$team" ]; then
+    a_found "ACCESS_AUD and ACCESS_TEAM_DOMAIN in env.$OPT_ENV.vars of $shown"
+    return 0
+  fi
+  a_did wrote "ACCESS_AUD $aud and ACCESS_TEAM_DOMAIN $team into env.$OPT_ENV.vars of $shown"
+  [ "$OPT_DRY" != 1 ] || return 0
+  if ! set_vars "$file" "$OPT_ENV" "ACCESS_AUD=$aud" "ACCESS_TEAM_DOMAIN=$team"; then
+    log_err "could not place them in $shown (no env.$OPT_ENV block, or a vars object this edit cannot read); add them by hand under env.$OPT_ENV:"
+    printf '  "vars": {\n    "ACCESS_AUD": "%s",\n    "ACCESS_TEAM_DOMAIN": "%s"\n  }\n' "$aud" "$team" >&2
+    exit 1
+  fi
+  ACCESS_VARS_CHANGED=1
+}
+
+# cf.sh access: find or create the part's Access application, its two policies and its service token for ENV, store a
+# new token in the secrets, write ACCESS_AUD and ACCESS_TEAM_DOMAIN into wrangler.jsonc. --dry reads only.
+cmd_access() {
+  parse_args "$@"
+  need_remote_env
+  need_project
+  need_cmd jq
+  need_cmd curl
+  access_settings
+  access_need_perms
+  access_need_schema
+  ensure_creds
+  [ -n "${CLOUDFLARE_API_TOKEN:-}" ] || die "no Cloudflare token stored for $OPT_ENV: make cf-login"
+  need_account_id "${CLOUDFLARE_ACCOUNT_ID:-}"
+  local A="/accounts/$CLOUDFLARE_ACCOUNT_ID" resp team include text allow_id="" pols
+  hdr "Access for $OPT_PART in $OPT_ENV: $ACCESS_DOMAIN"
+  [ "$OPT_DRY" != 1 ] || log_info "DRY=1: reading only, nothing is changed"
+
+  resp="$(access_api GET "$A/access/organizations")" || exit 1
+  team="$(printf '%s' "$resp" | jq -r '.result.auth_domain // empty' | sed -e 's|^https*://||' -e 's|/*$||' | tr '[:upper:]' '[:lower:]')"
+  [ -n "$team" ] || die "this account has no Zero Trust organization, so Access has no team to sign people in: set Zero Trust up once in the dashboard (Zero Trust: a team name and a plan), then run this again. Nothing was made."
+  valid_host "$team" || die "the Zero Trust organization's team domain is not a host name: $team"
+  a_found "team domain $team"
+
+  access_service_token "$A"
+
+  if [ -n "$ACCESS_DOMAINS$ACCESS_EMAILS" ]; then
+    include="$(jq -nc --arg d "$ACCESS_DOMAINS" --arg e "$ACCESS_EMAILS" '
+      [($d | split("\n")[] | select(. != "") | {email_domain: {domain: .}}),
+       ($e | split("\n")[] | select(. != "") | {email: {email: .}})]')"
+    text="$(printf '%s\n%s' "$(printf '%s' "$ACCESS_DOMAINS" | sed 's/^/@/')" "$ACCESS_EMAILS" | awk 'NF' | paste -sd ' ' - | sed 's/ /, /g')"
+    access_policy "$A" "$ACCESS_NAME-allow" allow "$include" "$text"
+    allow_id="$POL_ID"
+  else
+    log_info "no ${OPT_PART}_ACCESS_EMAIL_DOMAINS or ${OPT_PART}_ACCESS_EMAILS: only the service token passes Access (no Allow policy)"
+  fi
+  include="$(jq -nc --arg t "$TOK_ID" '[{service_token: {token_id: $t}}]')"
+  access_policy "$A" "$ACCESS_NAME-service" non_identity "$include" "the service token $TOK_NAME"
+  pols="$(jq -nc --arg a "$allow_id" --arg s "$POL_ID" '[$a, $s] | map(select(. != ""))')"
+
+  access_app "$A" "$pols"
+  access_vars "$APP_AUD" "$team"
+
+  if [ "$OPT_DRY" = 1 ]; then
+    log_info "DRY=1: nothing was changed"
+    return 0
+  fi
+  [ "$ACCESS_STORED" = 0 ] || log_info "the new service token is in the $OPT_ENV secrets: the smoke and make $OPT_PART-access-check send it"
+  [ "$ACCESS_VARS_CHANGED" = 0 ] || log_info "deploy so the Worker gets ACCESS_AUD and ACCESS_TEAM_DOMAIN: make $OPT_PART-deploy ENV=$OPT_ENV, then commit the wrangler file"
+  log_ok "Access for $OPT_PART in $OPT_ENV is set up; make $OPT_PART-access-check ENV=$OPT_ENV checks it"
+}
+
+# cf.sh access-check: read only. A GET of the health path without the service token must be stopped by Access (a
+# redirect to <team>.cloudflareaccess.com, or 401 / 403), and the same GET with it (the smoke's headers) must get through.
+cmd_access_check() {
+  parse_args "$@"
+  need_remote_env
+  need_project
+  need_cmd curl
+  local base url health upath res code loc lhost bad=0 access
+  OPT_EMAIL_DOMAINS="" OPT_EMAILS=""
+  access_settings
+  base="${OPT_URL_BASE:-https://$ACCESS_HOST$ACCESS_PATH}"
+  health="${OPT_HEALTH:-/}"
+  case "$health" in /*) ;; *) health="/$health" ;; esac
+  url="${base%/}$health"
+  cfg_safe "$url" || die "refused: the URL holds a quote, backslash or line break"
+  if [ -n "$ACCESS_PATH" ]; then
+    upath="/${url#*://*/}"
+    case "$upath" in "${ACCESS_PATH%\*}"*) ;; *) log_warn "$url is outside the protected path $ACCESS_PATH: Access may not see it" ;; esac
+  fi
+  ensure_creds
+  hdr "Access check for $OPT_PART in $OPT_ENV: $url"
+  res="$(printf 'url = "%s"\n' "$url" | curl -sS --max-time 20 -o /dev/null -w '%{http_code} %{redirect_url}' -K - 2>/dev/null)" || true
+  code="${res%% *}"
+  loc="${res#* }"
+  [ "$loc" != "$res" ] || loc=""
+  lhost="${loc#*://}"
+  lhost="${lhost%%/*}"
+  case "$code" in
+    401 | 403) printf '%s without the service token: Access refuses it (%s)\n' "$(paint 1 green ok)" "$code" ;;
+    30?)
+      case "$lhost" in
+        *.cloudflareaccess.com) printf '%s without the service token: Access sends it to sign in at %s (%s)\n' "$(paint 1 green ok)" "$lhost" "$code" ;;
+        *) printf '%s without the service token: %s to %s, not to a *.cloudflareaccess.com sign-in\n' "$(paint 1 red fail)" "$code" "${loc:-nowhere}"; bad=1 ;;
+      esac ;;
+    *) printf '%s without the service token: %s (expected a redirect to *.cloudflareaccess.com, or 401 or 403): Access does not guard it\n' "$(paint 1 red fail)" "${code:-no answer}"; bad=1 ;;
+  esac
+  if [ -z "${CF_ACCESS_CLIENT_ID:-}" ] || [ -z "${CF_ACCESS_CLIENT_SECRET:-}" ]; then
+    printf '%s with the service token: CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET are not in the %s secrets (make %s-access ENV=%s)\n' "$(paint 1 red fail)" "$OPT_ENV" "$OPT_PART" "$OPT_ENV"
+    return 1
+  fi
+  access="$(smoke_access)" || exit 1
+  res="$({ printf 'url = "%s"\n' "$url"; printf '%s' "$access"; } | curl -sS --max-time 20 -o /dev/null -w '%{http_code} %{redirect_url}' -K - 2>/dev/null)" || true
+  access=""
+  code="${res%% *}"
+  loc="${res#* }"
+  [ "$loc" != "$res" ] || loc=""
+  case "$code" in
+    2??) printf '%s with the service token: it gets through (%s)\n' "$(paint 1 green ok)" "$code" ;;
+    30?)
+      case "$loc" in
+        *.cloudflareaccess.com/*) printf '%s with the service token: Access still sends it to sign in: the token is not in the application'"'"'s Service Auth policy\n' "$(paint 1 red fail)"; bad=1 ;;
+        *) printf '%s with the service token: it gets through (%s to %s)\n' "$(paint 1 green ok)" "$code" "$loc" ;;
+      esac ;;
+    401 | 403) printf '%s with the service token: refused (%s): the token is not in the application'"'"'s Service Auth policy, or the secrets hold an old secret (make %s-access ENV=%s ROTATE=1)\n' "$(paint 1 red fail)" "$code" "$OPT_PART" "$OPT_ENV"; bad=1 ;;
+    *) printf '%s with the service token: %s\n' "$(paint 1 red fail)" "${code:-no answer}"; bad=1 ;;
+  esac
+  return "$bad"
+}
+
+# cf.sh access-doctor: for a part with Access settings, whether the token is made for Access (CF_TOKEN_PERMS) and
+# secrets.schema has the service token's rows. Nothing for a part without them. Reads files only.
+cmd_access_doctor() {
+  parse_args "$@"
+  [ -n "$OPT_HOST$OPT_PATH$OPT_EMAIL_DOMAINS$OPT_EMAILS" ] || return 0
+  local bad=0 n miss=""
+  case " $(project_setting CF_TOKEN_PERMS) " in
+    *" access "*) printf '%s %s: CF_TOKEN_PERMS names access\n' "$(paint 1 green ok)" "$OPT_PART" ;;
+    *) printf '%s %s: has Access settings, but CF_TOKEN_PERMS in make/project.mk does not name access: add CF_TOKEN_PERMS := access, then make cf-login\n' "$(paint 1 red fail)" "$OPT_PART"; bad=1 ;;
+  esac
+  for n in CF_ACCESS_CLIENT_ID CF_ACCESS_CLIENT_SECRET; do
+    [ -f "$SCHEMA" ] && awk -v n="$n" '$1 == n { f = 1 } END { exit !f }' "$SCHEMA" || miss="$miss $n"
+  done
+  if [ -z "$miss" ]; then
+    printf '%s %s: secrets.schema declares CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET\n' "$(paint 1 green ok)" "$OPT_PART"
+  else
+    printf '%s %s: has Access settings, but secrets.schema lacks%s (scaffold.sh --force adds the rows)\n' "$(paint 1 red fail)" "$OPT_PART" "$miss"
+    bad=1
+  fi
+  return "$bad"
+}
+
 # envs --dir D   the environment names under env in D/wrangler.jsonc, one per line (scaffold reads it to find
 # production-only parts). Reads the file only; no credentials.
 cmd_envs() {
@@ -1252,7 +1902,7 @@ cmd_envs() {
   strip_jsonc "$(config_file)" | jq -r '(.env // {}) | keys[]'
 }
 
-usage() { sed -n '4,23p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '4,25p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 main() {
   local sub="${1:-}"
@@ -1276,6 +1926,9 @@ main() {
     wipe) cmd_wipe "$@" ;;
     destroy) cmd_destroy "$@" ;;
     envs) cmd_envs "$@" ;;
+    access) cmd_access "$@" ;;
+    access-check) cmd_access_check "$@" ;;
+    access-doctor) cmd_access_doctor "$@" ;;
     help | -h | --help | '') usage ;;
     *) die "unknown subcommand: $sub (try: cf.sh help)" ;;
   esac

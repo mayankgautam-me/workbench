@@ -409,6 +409,50 @@ Everything starts with `<project>-<env>`, the Worker too. Workers scaffolded bef
 `<project>-<part>-<env>` (ending with `-<env>`), which wipe and destroy still accept; renaming a deployed Worker
 means a new Worker, so they keep their names.
 
+#### Cloudflare Access for a part (1.7)
+
+`make <part>-access ENV=staging|production` puts a cloud-worker or web-pages part behind Cloudflare Access, from its
+settings in `make/project.mk`, and is safe to run again: it finds each piece by name and makes only what is missing.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `<part>_ACCESS_HOST` | the custom domain of `env.<ENV>` in the part's `wrangler.jsonc` (its route with `"custom_domain": true`; an error when there is none or several) | the host Access guards; `<part>_ACCESS_HOST_<env>` sets it for one env |
+| `<part>_ACCESS_PATH` | empty: the whole host | a path under it, `/admin` |
+| `<part>_ACCESS_EMAIL_DOMAINS` | empty | who may sign in: email domains, space-separated (`fabrolabs.com`) |
+| `<part>_ACCESS_EMAILS` | empty | and single addresses, space-separated |
+| `<part>_ACCESS_SESSION` | `24h` | the application's session duration |
+
+It needs `CF_TOKEN_PERMS := access` in `make/project.mk` (the token's Access permissions, section 7) and the two
+`secrets.schema` rows `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` for the env; without either it says the fix
+and stops before any unlock (`make cf-login` again after adding `access`; `scaffold.sh --force` appends the rows to a
+project whose `make/project.mk` has Access settings). It runs under `secrets.sh exec --env <ENV>` like every `cf-*`
+command (one unlock), and production needs `CONFIRM=production`. What it finds or makes, named `<project>-<env>-<part>`:
+
+| Piece | Name | Made with |
+|---|---|---|
+| the team | the account's Zero Trust organization (none: it stops and says to set Zero Trust up once in the dashboard) | `GET /accounts/<id>/access/organizations` (`auth_domain`) |
+| service token | the one whose client id is `CF_ACCESS_CLIENT_ID` in the env's secrets, else `<name>`, else a new `<name>` (no expiry) | `/access/service_tokens`, `.../<id>/rotate` |
+| Allow policy | `<name>-allow`, reusable: one `email_domain` rule per domain and one `email` rule per address, set to exactly the settings on every run (an address taken out is removed); none when both settings are empty (only the service token passes) | `/access/policies` |
+| Service Auth policy | `<name>-service`, reusable: the service token | `/access/policies` |
+| application | `<name>`, self-hosted on `host[/path]`, the two policies attached, the session duration; an existing self-hosted application on that domain under another name is used as it is | `/access/apps` |
+
+A new token's client id and secret go straight into the env's secrets (`secrets.sh set`, the value on stdin); the
+secret is never printed or logged, and Cloudflare shows it only once. A token that exists while its secret is not in the
+secrets stops the command: `ROTATE=1` gives it a new secret (the old one stops working at once) and stores it. Then
+the application's aud and the team domain go into `env.<ENV>.vars` of the part's `wrangler.jsonc` as `ACCESS_AUD` and
+`ACCESS_TEAM_DOMAIN` (`<team>.cloudflareaccess.com`), for the Worker to check the `Cf-Access-Jwt-Assertion` it gets:
+a textual edit that keeps comments, replacing the values that are there and adding the keys inside `vars` (or a `vars`
+object at the start of the env block); when the file's shape does not allow it, it prints the lines to add and exits 1.
+Deploy afterwards so the Worker has them. A Pages site has no Worker vars: that step is skipped. `DRY=1` reads
+everything and prints the plan (`would create ...`) without changing anything, and needs no `CONFIRM`. Each line says
+what it found, created or updated.
+
+`make <part>-access-check ENV=` is read only: a GET of the part's health path (`<part>_URL_<ENV>` and `<part>_HEALTH`,
+else `https://<host><path>/`) without the service token must be stopped by Access (a redirect to
+`*.cloudflareaccess.com`, or 401 or 403), and the same GET with the token, sent as the smoke sends it, must get through.
+One `ok` or `fail` line each. `make doctor` checks, for every part with Access settings, `CF_TOKEN_PERMS` and the two
+`secrets.schema` rows.
+
 ### 4.6 Secrets
 
 | Command | Does |
@@ -982,10 +1026,10 @@ of the project's repository (from stdin, never on a command line), adds the publ
 ## 6. CI/CD
 
 The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/name`, default
-`mayankgautam-me/ci-templates`), tagged `v1.6` (`v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
+`mayankgautam-me/ci-templates`), tagged `v1.7` (`v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
 own, independent of the project's `GITHUB_OWNER`: projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.6`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.7`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -1193,6 +1237,8 @@ Notes:
   Providers, and Groups, Read, for the team domain).
   `cf-login` lists them with the permissions to pick (neither has a short key the pre-filled form accepts, so they are
   added by hand), and `cf-token-check` probes them. The project keeps one token: never a second token for Access.
+  `make <part>-access` (1.7, section 4.5) is what uses the three Access permissions: it refuses to run until
+  `CF_TOKEN_PERMS` names `access`, and a token without them stops at the first call with the names to add.
 - Binding a resource in a Worker needs only Workers Scripts; the resource's own permission is needed
   to create it (`cf-provision`), migrate or seed it, back it up or read it.
 - Cloudflare is moving Workers permissions to roles ("Editor at the Workers product scope" replaces
@@ -1302,6 +1348,26 @@ Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) an
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
 
+- **1.7** (2026-11-18): a part's Cloudflare Access setup is a standard command. `make/VERSION`, the managed headers and the
+  workflows' `@v1.7` say 1.7; `mayankgautam-me/ci-templates` gets the tag `v1.7` (its workflows are 1.6's but for the
+  version) and keeps `v1.6` to `v1.0`.
+  - `make <part>-access ENV=staging|production` (cloud-worker and web-pages; `cf.sh access`): finds or makes the
+    self-hosted Access application `<project>-<env>-<part>` on `<part>_ACCESS_HOST` (default: the env's custom domain)
+    and `<part>_ACCESS_PATH`, its Allow policy (`<part>_ACCESS_EMAIL_DOMAINS`, `<part>_ACCESS_EMAILS`, synced every run)
+    and its Service Auth policy with the service token; a new token's id and secret go into the env's secrets on stdin,
+    `ROTATE=1` gives an existing token a new secret, `DRY=1` prints the plan. `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN` are
+    written into `env.<ENV>.vars` of `wrangler.jsonc`, keeping comments. Needs `CF_TOKEN_PERMS := access` and the
+    `CF_ACCESS_CLIENT_*` rows of `secrets.schema`; production needs `CONFIRM=production` (section 4.5).
+  - `make <part>-access-check ENV=`: read only, Access stops the health path without the token and lets it through with
+    it. A web-pages part gets a `doctor` target; both kinds' doctor checks a part with Access settings
+    (`cf.sh access-doctor`).
+  - `scaffold.sh` writes the `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET` rows when `make/project.mk` gives a
+    part Access settings or names `access` in `CF_TOKEN_PERMS`, and `--force` appends them to a kept `secrets.schema`;
+    a cloud part's settings in a new `make/project.mk` offer the Access lines commented out.
+  Update from 1.6: refresh the managed files and move the `uses:` lines to `@v1.7`. A project that made its Access by
+  hand can keep it: set the part's `_ACCESS_*` settings and run `make <part>-access ENV=<env> DRY=1` to see what it finds
+  (an application on the same domain is used under its own name; the policies and the token are found by name or by
+  the stored `CF_ACCESS_CLIENT_ID`).
 - **1.6** (2026-11-17): a smoke check through Cloudflare Access. `make/VERSION`, the managed headers and the workflows'
   `@v1.6` say 1.6; `mayankgautam-me/ci-templates` gets the tag `v1.6` (its workflows are 1.5's but for the version) and
   keeps `v1.5` to `v1.0`.

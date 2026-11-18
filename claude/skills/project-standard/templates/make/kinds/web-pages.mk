@@ -1,4 +1,4 @@
-# project-standard v1.6 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind web-pages: a static site, an Astro site, a Vite app or a Next.js static export, served by Cloudflare Pages.
 #
@@ -8,6 +8,11 @@
 #   <name>_PORT_OFFSET   dev port is PORT_BASE + offset (default 0)
 #   <name>_HEALTH        path checked by smoke         (default /)
 #   <name>_URL_<env>     public URL in that env        (staging, production)
+#   <name>_ACCESS_HOST   Cloudflare Access (make <name>-access, 1.7): the host it guards (default: the custom domain
+#                        of env.<ENV> in wrangler.jsonc; <name>_ACCESS_HOST_<env> for one env)
+#   <name>_ACCESS_PATH   the path under it (default: empty, the whole host)
+#   <name>_ACCESS_EMAIL_DOMAINS, <name>_ACCESS_EMAILS   who may sign in: email domains and single addresses (spaces)
+#   <name>_ACCESS_SESSION   the application's session duration (default 24h)
 #
 # The framework comes from the files: astro.config.mjs/.js/.ts/.cjs is astro, next.config.* is next, vite.config.* is
 # vite, anything else is static. astro check runs in <name>-check when @astrojs/check is in the part's package.json.
@@ -37,10 +42,14 @@ $(1)_PORT_OFFSET ?= 0
 $(1)_PORT := $(shell expr $(PORT_BASE) + $(or $($(1)_PORT_OFFSET),0))
 $(1)_HEALTH ?= /
 $(1)_SEC := $(CURDIR)/$(STD_BIN)/secrets.sh
+$(1)_CF := $(CURDIR)/$(STD_BIN)/cf.sh
+$(1)_ACCESS_SESSION ?= 24h
+# the part's Cloudflare Access settings, for cf.sh access, access-check and access-doctor (read when the recipe runs)
+$(1)_ACCESS_ARGS = --part $(1) --dir $(2) --host "$$(or $$($(1)_ACCESS_HOST_$$(ENV)),$$($(1)_ACCESS_HOST))" --path "$$($(1)_ACCESS_PATH)" --email-domains "$$($(1)_ACCESS_EMAIL_DOMAINS)" --emails "$$($(1)_ACCESS_EMAILS)" --session "$$($(1)_ACCESS_SESSION)"
 $(1)_BRANCH := $(if $(filter production,$(ENV)),main,staging)
 $(1)_EXEC ?= $$(if $$(wildcard $(2)/pnpm-lock.yaml),pnpm exec,npx --no-install)
 $(1)_LINT_CMD := $(if $(wildcard $(2)/biome.json),$$($(1)_EXEC) biome check .,$(if $(wildcard $(2)/eslint.config.*),$$($(1)_EXEC) eslint .,echo "lint skipped (no biome.json or eslint config)"))
-.PHONY: $(1)-setup $(1)-dev $(1)-check $(1)-test $(1)-format $(1)-build $(1)-deploy $(1)-test-remote $(1)-smoke $(1)-provision $(1)-logs $(1)-status $(1)-versions $(1)-clean $(1)-distclean
+.PHONY: $(1)-setup $(1)-dev $(1)-check $(1)-test $(1)-format $(1)-build $(1)-deploy $(1)-test-remote $(1)-smoke $(1)-provision $(1)-access $(1)-access-check $(1)-doctor $(1)-logs $(1)-status $(1)-versions $(1)-clean $(1)-distclean
 
 $(call std_verb,$(1),setup,setup,Install the site packages with npm ci when there is a lockfile else pnpm install)
 $(1)-setup:
@@ -144,6 +153,22 @@ $(1)-logs:
 	@test "$(ENV)" != local || { echo "$(1): local logs stream in the make dev terminal, use ENV=staging or ENV=production"; exit 0; }
 	@if [ "$$($(1)_TARGET)" = worker ]; then cd $(2) && $$($(1)_SEC) exec --env $(ENV) -- node_modules/.bin/wrangler tail --env $(ENV) --format pretty; \
 	else $$($(1)_SEC) exec --env $(ENV) -- $(2)/node_modules/.bin/wrangler pages deployment tail --project-name $$($(1)_PAGES); fi
+
+# Cloudflare Access (1.7): the part's self-hosted application, its Allow and Service Auth policies and its service token,
+# found or made by the name <project>-<env>-<part>; a new token's id and secret go into the secrets, the application's aud
+# and the team domain into env.<ENV>.vars of wrangler.jsonc. DRY=1 reads only (no CONFIRM needed), ROTATE=1 gives the
+# token a new secret. Needs CF_TOKEN_PERMS := access in make/project.mk.
+$(call std_extra,$(1),access,cloudflare,Find or create the Access application and policies and service token of ENV (DRY=1 plan only; ROTATE=1 new token secret; CONFIRM=production))
+$(1)-access:
+	@$(if $(filter 1,$(DRY)),true,$$(call std_production_guard)) && $$($(1)_CF) access --env $(ENV) $$($(1)_ACCESS_ARGS)$(if $(filter 1,$(DRY)), --dry)$(if $(filter 1,$(ROTATE)), --rotate-token)
+
+$(call std_extra,$(1),access-check,cloudflare,Read only: Access stops the health path of ENV without the service token and lets it through with it)
+$(1)-access-check:
+	@$$($(1)_CF) access-check --env $(ENV) $$($(1)_ACCESS_ARGS) --url-base "$($(1)_URL_$(ENV))" --health "$$($(1)_HEALTH)"
+
+$(call std_verb,$(1),doctor,setup,Check the Access settings of the site read only (CF_TOKEN_PERMS and secrets.schema))
+$(1)-doctor:
+	@$$($(1)_CF) access-doctor $$($(1)_ACCESS_ARGS)
 
 $(call std_verb,$(1),version,release,Site version from $(2)/VERSION)
 $(1)-version:

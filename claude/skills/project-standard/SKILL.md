@@ -39,6 +39,8 @@ offer adopt; never change it silently.
      For every `web-pages` part ask its custom domain (production; staging is `<label>-staging.<zone>`): the site is a
      static-assets Worker on that domain, its only address (no `*.workers.dev`, no preview URLs). Use Cloudflare Pages
      only when the user asks for it (`--pages <part>`); never offer Pages as the default.
+     Ask whether a cloud part sits behind Cloudflare Access (who may sign in: email domains, addresses); if so, set its
+     `<part>_ACCESS_*` and `CF_TOKEN_PERMS := access`, and after the first deploy run `make <part>-access ENV=<env>`.
 2. Run the scaffold (no network, no git):
    ```sh
    $SKILL/scripts/scaffold.sh <dir> --project <name> --part <name>:<kind>[:<dir>] ...
@@ -151,6 +153,9 @@ Read-only until the user says yes.
      generates: `checks.yml` and `release.yml`); a job with no template becomes a job of its own in `checks.yml`.
    - **Staging**: for every `cloud-worker` and `web-pages` part, ask whether it has a staging environment or is
      production-only, even when the old setup had a preview or dev deploy: never assume either (`--production-only <part>`).
+   - **Cloudflare Access**: an Access application made by hand (a `make/local.mk` target or a script) becomes the part's
+     `<part>_ACCESS_*` settings and `make <part>-access ENV=<env> DRY=1`, then without `DRY` (`reference/standard.md`
+     4.5); the hand-made target goes once it reports everything found.
    - **Web domain**: for every `web-pages` part, ask its custom domain (`--domain <part>=<host>`). An old Pages site
      becomes a static-assets Worker on that domain (the scaffold writes its `wrangler.jsonc` when the part has none;
      a Pages one with `pages_build_output_dir` must be replaced by hand); it stays on Pages only when the user says so
@@ -251,6 +256,9 @@ Read-only until the user says yes.
    repository the audit names (`CI_TEMPLATES_REPO`, default `mayankgautam-me/ci-templates`, independent of
    `GITHUB_OWNER`; a line on the pre-1.7 `<owner>/ci-templates` is reported outdated) and the current version tag
    (`v` + `make/VERSION`); and add jobs for kinds that were added.
+   From v1.6 to v1.7: re-copy the managed files and set every `uses:` line to `@v1.7`. A part behind Cloudflare Access
+   can have it made by `make <part>-access ENV=<env>` (settings `<part>_ACCESS_*`, `CF_TOKEN_PERMS := access`; run with
+   `DRY=1` first when the project made its Access by hand); `scaffold.sh --force` adds the `CF_ACCESS_CLIENT_*` rows.
    From v1.5 to v1.6: re-copy the managed files and set every `uses:` line to `@v1.6`. A cloud-worker or web-pages
    part behind Cloudflare Access whose `secrets.schema` declares `CF_ACCESS_CLIENT_ID` now passes its smoke with it.
    From v1.4 to v1.5: re-copy the managed files and set every `uses:` line to `@v1.5`. An altium part's BOM is now

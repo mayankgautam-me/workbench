@@ -32,7 +32,7 @@
 # the project owns (project.mk, local.mk, README.md, PLAN.md, ...) are kept when they exist.
 set -euo pipefail
 
-readonly STD_VERSION=1.6
+readonly STD_VERSION=1.7
 SKILL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 readonly SKILL_DIR
 readonly TPL_MAKE="$SKILL_DIR/templates/make"
@@ -246,6 +246,16 @@ kind_settings() {
   if is_prod_only "$p"; then
     echo "# $p is production-only (no staging): make $p-deploy ENV=production CONFIRM=production deploys it"
   fi
+  case $k in
+    cloud-worker | web-pages)
+      if [[ $k == cloud-worker ]] || ! is_pages "$p"; then
+        echo "# Cloudflare Access in front of $p (make $p-access ENV=<env>; needs CF_TOKEN_PERMS := access): who may sign in,"
+        echo "# email domains and single addresses, space separated (${p}_ACCESS_HOST and ${p}_ACCESS_PATH: what it guards)"
+        echo "# ${p}_ACCESS_EMAIL_DOMAINS := example.com"
+        echo "# ${p}_ACCESS_EMAILS := someone@example.com"
+      fi
+      ;;
+  esac
   case $k in
     cloud-worker | web-pages | go | python)
       echo "# dev port of $p: PORT_BASE + $PORT_OFFSET"
@@ -2312,8 +2322,30 @@ app_secret_rows() {
   return 0
 }
 
+# access_configured: make/project.mk gives a cloud part Cloudflare Access settings (<part>_ACCESS_HOST, _PATH,
+# _EMAIL_DOMAINS or _EMAILS, uncommented) or names access in CF_TOKEN_PERMS: make <part>-access keeps the service token
+# in the secrets as CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET, and the smoke sends it (1.6, 1.7).
+access_configured() {
+  local f="$DEST/make/project.mk"
+  [[ -f $f ]] || return 1
+  grep -Eq '^[[:space:]]*[A-Za-z0-9_-]+_ACCESS_(HOST|PATH|EMAIL_DOMAINS|EMAILS)(_[a-z]+)?[[:space:]]*[:?]?=[[:space:]]*[^[:space:]#]' "$f" ||
+    grep -Eq '^[[:space:]]*CF_TOKEN_PERMS[[:space:]]*[:?+]?=([^#]*[[:space:]])?access([[:space:]#]|$)' "$f"
+}
+
+# access_rows: the two rows, for staging and production, or production only when every cloud part is production-only.
+access_rows() {
+  local envs=production i=0
+  while ((i < ${#P_NAMES[@]})); do
+    case ${P_KINDS[$i]} in cloud-worker | web-pages) is_prod_only "${P_NAMES[$i]}" || envs=staging,production ;; esac
+    i=$((i + 1))
+  done
+  schema_row CF_ACCESS_CLIENT_ID "$envs" auth,ci no "the Cloudflare Access service token's client id (make <part>-access stores it; the smoke sends it)"
+  schema_row CF_ACCESS_CLIENT_SECRET "$envs" auth,ci no "the Cloudflare Access service token's secret (make <part>-access stores it)"
+}
+
 if [[ ! -e "$DEST/secrets.schema" ]]; then
   render "$TPL_PROJECT/secrets.schema" "$DEST/secrets.schema"
+  if access_configured; then access_rows >>"$DEST/secrets.schema"; fi
   if ((has_cloud == 1)) || fw_publishes; then
     {
       printf '%-22s %-26s %-14s %-5s %s\n' CLOUDFLARE_API_TOKEN staging,production auth,ci no \
@@ -2334,6 +2366,11 @@ else
   # an existing schema is never rewritten: say what the standard would add
   if { ((has_cloud == 1)) || fw_publishes; } && ! grep -Eq '^[[:space:]]*CLOUDFLARE_API_TOKEN[[:space:]]' "$DEST/secrets.schema"; then
     note "secrets.schema has no CLOUDFLARE_API_TOKEN row, and this project uses Cloudflare (a Worker or Pages part, or OTA_BUCKET): add the CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID rows (project-standard reference/standard.md, section 5, secrets.schema)"
+  fi
+  # Cloudflare Access (1.7): the service token rows are appended when missing, as the .gitignore lines are
+  if access_configured && ! grep -Eq '^[[:space:]]*CF_ACCESS_CLIENT_ID[[:space:]]' "$DEST/secrets.schema"; then
+    access_rows >>"$DEST/secrets.schema"
+    note "secrets.schema: added CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET (a part has Cloudflare Access settings; make <part>-access stores them)"
   fi
   if has_kind silabs && ! grep -Eq '^[[:space:]]*silabs-m4[[:space:]]' "$DEST/secrets.schema"; then
     note "secrets.schema has no silabs-m4 row (the silabs image signing key, used with <part>_SIGN := 1): add it as in reference/standard.md, section 5"
