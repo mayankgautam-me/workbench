@@ -603,3 +603,34 @@ STUB
   [[ "$(argv slt)" == *$'install\ncommander/1.25.0\n--non-interactive'* ]] || false
   [[ "$output" == *"warn  Simplicity Commander not found"*"slt did not install commander/1.25.0"* ]] || false
 }
+
+@test "silabs 1.8: ENV's defines are appended to CC and CXX of the generated makefile, quoting intact; the stamp guards flash and release" {
+  SL_NO_POSTBUILD=1 slproject 'firmware_ENV_DEFINES_staging := CLOUD_URL="wss://api-staging.example.com/d/ws" GREETING="hello world"
+firmware_ENV_DEFINES_production := CLOUD_URL="wss://api.example.com/d/ws"'
+  # a generated makefile that compiles through $(CC): the pinned gcc stub records the argv it gets through the shell
+  printf '#!/bin/bash\nprintf "%%s\\n" "$@" >>"%s/g++.argv"\n' "$STUB_LOG" >"$INST/conan/p/gcc12/bin/arm-none-eabi-g++"
+  chmod +x "$INST/conan/p/gcc12/bin/arm-none-eabi-g++"
+  printf 'all:\n\tmkdir -p build/debug\n\tfor x in hex out map rps; do echo $$x > build/debug/app.$$x; done\n\t$(CC) -c main.c\n\t$(CXX) -c extra.cpp\n' \
+    >"$INST/archive/slc-cli-6.0.1/slc_cli/plain.Makefile"
+  run make firmware-build ENV=staging
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_LOG/arm-none-eabi-gcc.argv")" = "$(printf '%s\n' '-DCLOUD_URL="wss://api-staging.example.com/d/ws"' '-DGREETING="hello world"' -c main.c)" ]
+  [ "$(cat "$STUB_LOG/g++.argv")" = "$(printf '%s\n' '-DCLOUD_URL="wss://api-staging.example.com/d/ws"' '-DGREETING="hello world"' -c extra.cpp)" ]
+  [ "$(head -n 1 firmware/build/brd4338a/std-env)" = "env=staging" ]
+  # check: -Werror and the defines together
+  rm -f "$STUB_LOG/arm-none-eabi-gcc.argv"
+  run make firmware-check ENV=production
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_LOG/arm-none-eabi-gcc.argv")" = "$(printf '%s\n' -Werror '-DCLOUD_URL="wss://api.example.com/d/ws"' -c main.c)" ]
+  # the staging build is not flashed or released for production
+  run make firmware-flash ENV=production NOBUILD=1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"was made for ENV=staging"* ]] || false
+  [ ! -f "$STUB_LOG/commander.argv" ]
+  run make firmware-release ENV=production CONFIRM=production NOBUILD=1
+  [ "$status" -ne 0 ]
+  [ ! -f "$STUB_LOG/npx.argv" ]
+  run make firmware-flash ENV=staging NOBUILD=1
+  [ "$status" -eq 0 ]
+  [[ "$(argv commander)" == *"flash"* ]] || false
+}

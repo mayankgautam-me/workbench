@@ -32,7 +32,7 @@
 # the project owns (project.mk, local.mk, README.md, PLAN.md, ...) are kept when they exist.
 set -euo pipefail
 
-readonly STD_VERSION=1.7
+readonly STD_VERSION=1.8
 SKILL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 readonly SKILL_DIR
 readonly TPL_MAKE="$SKILL_DIR/templates/make"
@@ -505,6 +505,39 @@ readme_build() {
   esac
 }
 
+# Per-environment defines (1.8) in a firmware part's README: the setting, and what the part's own build files need.
+readme_env_defines() {
+  local p=$1 k=$2 d=$3
+  case $k in
+    zephyr | espidf | pio | arm-gcc | silabs) ;;
+    *) return 0 ;;
+  esac
+  echo
+  echo "Defines per environment (optional): \`make $p-build ENV=staging\` (and flash and release, which build"
+  echo "first) compiles with the C defines of that env, for example a server URL; with none for the env, the code's"
+  echo "own defaults apply. A flash or release with \`NOBUILD=1\` refuses a build made for another env's defines."
+  echo
+  echo "    ${p}_ENV_DEFINES_staging    := CLOUD_URL=\"wss://api-staging.example.com/d/ws\" LOG_LEVEL=3"
+  echo "    ${p}_ENV_DEFINES_production := CLOUD_URL=\"wss://api.example.com/d/ws\""
+  case $k in
+    espidf)
+      echo
+      echo "ESP-IDF takes them through \`$d/CMakeLists.txt\`: put this after the \`include(...project.cmake)\` line and"
+      echo "before \`project()\` (the build stops without it once a define is set):"
+      echo
+      echo "    # project-standard 1.8: the defines of make $p-build ENV=<env> (${p}_ENV_DEFINES_<env>)"
+      echo "    foreach(std_define IN LISTS STD_ENV_DEFINES)"
+      echo "      idf_build_set_property(COMPILE_DEFINITIONS \"\${std_define}\" APPEND)"
+      echo "    endforeach()"
+      ;;
+    arm-gcc)
+      echo
+      echo "A Makefile project takes them as \`STD_ENV_CFLAGS\`: add \`CFLAGS += \$(STD_ENV_CFLAGS)\` to \`$d/Makefile\`"
+      echo "(the build stops without it once a define is set). A CMake project needs nothing: they come in as CFLAGS."
+      ;;
+  esac
+}
+
 readme_config() {
   local p=$1 k=$2 d=$3
   case $k in
@@ -676,6 +709,7 @@ part_readme() {
     readme_build "$p" "$k"
     printf '\n## Configuration\n\n'
     readme_config "$p" "$k" "$d"
+    readme_env_defines "$p" "$k" "$d"
     printf '\n## Release\n\n'
     readme_release "$p" "$k" "$d"
     printf '\n## Interfaces\n\n'

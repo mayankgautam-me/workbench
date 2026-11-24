@@ -1,5 +1,7 @@
-# project-standard ci-templates v1.7: arm-gcc (bare-metal arm-none-eabi firmware, Debian's packaged GCC on a pinned image).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/arm-gcc.yml@v1.7.
+# project-standard ci-templates v1.8: arm-gcc (bare-metal arm-none-eabi firmware, Debian's packaged GCC on a pinned image).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/arm-gcc.yml@v1.8.
+# build: ENV=production when the run releases (run_release, or confirm production), else local, so the image has that
+# ENV's <part>_ENV_DEFINES (1.8); a release or publish of a build made for other defines (its std-env stamp) refuses.
 
 on:
   workflow_call:
@@ -115,7 +117,7 @@ jobs:
       - name: Install dependencies (no CI key)
         run: env -u SOPS_AGE_KEY make "$PART-setup"
       - name: Build
-        run: make "$PART-build"
+        run: make "$PART-build" ENV=${{ (inputs.run_release || inputs.confirm == 'production') && 'production' || 'local' }}
       - name: Keep build
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

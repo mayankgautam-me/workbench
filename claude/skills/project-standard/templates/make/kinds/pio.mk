@@ -1,4 +1,4 @@
-# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind pio: a PlatformIO firmware part (platformio.ini in the part dir).
 #
@@ -141,12 +141,61 @@ std_fw_hook = $(STD_FW_SH) $(call $(if $($(2)),std_fw_hook_run,std_fw_hook_missi
 std_fw_hook_run = say "running $(2)"; $($(2))
 std_fw_hook_missing = die "$(3): set $(2) in make/project.mk to the command that does it for this board"
 
+# Per-environment defines (1.8). <part>_ENV_DEFINES_<env> := NAME=value NAME2="a string" in make/project.mk, for env
+# local, staging or production: C preprocessor defines that every compile of the part gets for ENV (make <part>-build
+# ENV=staging; flash and release build first). Words split at spaces outside double quotes; a double-quoted value keeps
+# its quotes, so it is a C string literal. No setting for ENV: no defines, the code's own defaults apply. A build
+# records them in <build dir>/std-env (env=<ENV>, then one define per line): a build whose stamp differs from ENV's
+# defines is made again from scratch, and a flash or release of such a build (NOBUILD=1) refuses.
+std_fw_env_defs = $(strip $($(1)_ENV_DEFINES_$(ENV)))
+# $(call std_fw_env_sh,part): sets $$envdefs (one define per line, empty without a setting), $$envflags (each define as
+# a single-quoted shell word '-DNAME=value', for a compiler run through a shell, a CMake UNIX_COMMAND list and
+# PlatformIO's build flags) and $$envlist (the defines as a CMake list, ;-separated). A malformed setting stops.
+std_fw_env_sh = envraw='$(subst ','\'',$(call std_fw_env_defs,$(1)))'; \
+  envdefs=$$(printf '%s\n' "$$envraw" | awk '{ n = length($$0); w = ""; has = 0; q = 0; \
+    for (i = 1; i <= n; i++) { c = substr($$0, i, 1); \
+      if (c == "\\" && q && i < n) { w = w c substr($$0, i + 1, 1); i++; continue } \
+      if (c == "\"") q = !q; \
+      if (!q && (c == " " || c == "\t")) { if (has) print w; w = ""; has = 0; continue } \
+      w = w c; has = 1 } \
+    if (q) exit 3; if (has) print w }') || die "$(1)_ENV_DEFINES_$(ENV): a double quote is not closed"; \
+  bad=$$(printf '%s\n' "$$envdefs" | grep -vE '^([A-Za-z_][A-Za-z0-9_]*(=.*)?)?$$' || true); \
+  [ -z "$$bad" ] || die "$(1)_ENV_DEFINES_$(ENV): not NAME or NAME=value: $$(printf '%s\n' "$$bad" | paste -sd ' ' -)"; \
+  envflags=$$(printf '%s\n' "$$envdefs" | awk 'NF { m = split($$0, p, "\047"); s = p[1]; for (j = 2; j <= m; j++) s = s "\047\\\047\047" p[j]; printf "%s\047-D%s\047", (k++ ? " " : ""), s }'); \
+  envlist=$$(printf '%s\n' "$$envdefs" | paste -sd ';' -);
+# after std_fw_env_sh: names the defines of ENV, when there are any
+std_fw_env_say = [ -z "$$envdefs" ] || say "$(1): defines for ENV=$(ENV): $$(printf '%s\n' "$$envdefs" | paste -sd ' ' -)";
+# $(call std_fw_env_old,build-dir): $$old (the defines its stamp records, empty without one) and $$oldenv (its ENV).
+std_fw_env_old = old=; oldenv=; if [ -f "$(1)/std-env" ]; then old=$$(tail -n +2 "$(1)/std-env"); oldenv=$$(sed -n '1s/^env=//p' "$(1)/std-env"); fi;
+# $(call std_fw_env_fresh,part,build-dir,wipe), after std_fw_env_sh and before a build: when the build in build-dir was
+# made with other defines (or has no stamp while ENV has defines), runs the shell command wipe, so it is made again.
+std_fw_env_fresh = $(call std_fw_env_old,$(2)) \
+  if [ "$$old" != "$$envdefs" ]; then [ ! -e "$(2)" ] || say "$(1): the build in $(2) was made for ENV=$${oldenv:-unknown}, ENV=$(ENV) has other defines: building it again from scratch"; $(3); fi;
+# $(call std_fw_env_stamp,build-dir), after a build: the ENV and the defines it was made with.
+std_fw_env_stamp = mkdir -p "$(1)"; printf 'env=%s\n%s\n' "$(ENV)" "$$envdefs" > "$(1)/std-env";
+# $(call std_fw_env_check,part,build-dir): a flash or release refuses a build made with other defines than ENV's.
+std_fw_env_check = $(call std_fw_env_sh,$(1)) $(call std_fw_env_old,$(2)) \
+  [ "$$old" = "$$envdefs" ] || die "the build in $(2) was made for ENV=$${oldenv:-unknown}, and $(1)_ENV_DEFINES_$(ENV) differs: build it again with ENV=$(ENV) (without NOBUILD=1)";
+
 endif
 
 # --- pio helpers --------------------------------------------------------------------------------
 
-pio_need = have pio || die "pio not found: PlatformIO comes from mise (mise.toml pins platformio; run make setup)";
+# Every pio command runs with the defines of ENV (std_fw_env_sh) added to PLATFORMIO_BUILD_FLAGS, which PlatformIO
+# splits like a shell (shlex), so the single-quoted words of $$envflags reach the compiler as they are. All of them, so
+# an upload, which builds too, builds what build built; PlatformIO rebuilds what changed flags touch.
+pio_need = have pio || die "pio not found: PlatformIO comes from mise (mise.toml pins platformio; run make setup)"; \
+  $(call std_fw_env_sh,$(1)) [ -z "$$envflags" ] || export PLATFORMIO_BUILD_FLAGS="$${PLATFORMIO_BUILD_FLAGS:+$$PLATFORMIO_BUILD_FLAGS }$$envflags";
 pio_e = $(if $($(1)_E),-e $($(1)_E))
+# $(call pio_stamp,part,dir,env...): after a build, the ENV stamp (std-env) in .pio/build/<env> of each env built.
+pio_stamp = for e in $(3); do bd="$(CURDIR)/$(2)/.pio/build/$$e"; if [ -d "$$bd" ]; then $(call std_fw_env_stamp,$$bd) fi; done;
+
+# $(call pio_build_envs,part,dir): sets $$envs to the envs a build makes, one per line: PIO_ENV (or <part>_PIO_ENV),
+# else PLATFORMIO_DEFAULT_ENVS, else the default_envs of platformio.ini, else its [env:*] sections.
+pio_build_envs = ini="$(CURDIR)/$(2)/platformio.ini"; \
+  if [ -n "$($(1)_E)" ]; then envs=$$(printf '%s\n' "$($(1)_E)" | tr ', ' '\n\n' | grep . || true); \
+  elif [ -n "$${PLATFORMIO_DEFAULT_ENVS:-}" ]; then envs=$$(printf '%s\n' "$$PLATFORMIO_DEFAULT_ENVS" | tr ', ' '\n\n' | grep . || true); \
+  else [ -f "$$ini" ] || die "no $(2)/platformio.ini"; envs=$$($(pio_envs_awk) "$$ini"); fi;
 
 # awk program, one env name per line: default_envs of the [platformio] section (commas, spaces,
 # indented continuation lines, ; and \# comments), or every [env:NAME] when there is none or it is empty.
@@ -189,8 +238,9 @@ pio_port = up="$(PORT)"; if [ -z "$$up" ]; then list=$$(ports); n=$$(printf '%s'
 pio_sdkconfig = $(if $($(1)_E),sd="$(CURDIR)/$(2)/sdkconfig.$($(1)_E)"; dflt="$(CURDIR)/$(2)/sdkconfig.defaults"; \
   if [ -f "$$sd" ] && [ -f "$$dflt" ] && [ "$$dflt" -nt "$$sd" ]; then warn "sdkconfig.defaults changed: removing sdkconfig.$($(1)_E) so it is regenerated"; rm -f "$$sd"; fi;)
 
-pio_build = $(STD_FW_SH) $(pio_need) $(call pio_sdkconfig,$(1),$(2)) say "pio run $(1)$(if $($(1)_E), -e $($(1)_E))"; \
-  pio run -d "$(CURDIR)/$(2)" $(call pio_e,$(1)); ok "built $(1)"
+pio_build = $(STD_FW_SH) $(pio_need) $(call pio_sdkconfig,$(1),$(2)) say "pio run $(1)$(if $($(1)_E), -e $($(1)_E))"; $(std_fw_env_say) \
+  pio run -d "$(CURDIR)/$(2)" $(call pio_e,$(1)); \
+  $(call pio_build_envs,$(1),$(2)) $(call pio_stamp,$(1),$(2),$$envs) ok "built $(1)"
 
 pio_has_test_env = grep -q '^\[env:$($(1)_TEST_ENV)\]' "$(CURDIR)/$(2)/platformio.ini" 2>/dev/null
 
@@ -220,7 +270,8 @@ pio_doctor = $(STD_FW_SH) say "$(1): pio$(if $($(1)_E), env $($(1)_E))"; \
 
 pio_flash = $(STD_FW_SH) $(pio_need) $(call pio_one_env,$(1),$(2),$(1)-flash) $(pio_port) \
   case "$($(1)_P)" in pio|esptool) ;; *) die "PROBE=$($(1)_P): pio uploads with the upload_protocol of platformio.ini (PROBE=pio)";; esac; \
-  pio run -d "$(CURDIR)/$(2)" -e "$$pio_env" -t upload $$( [ -z "$$up" ] || printf -- '--upload-port %s' "$$up" ); ok "uploaded $(1)"
+  $(std_fw_env_say) pio run -d "$(CURDIR)/$(2)" -e "$$pio_env" -t upload $$( [ -z "$$up" ] || printf -- '--upload-port %s' "$$up" ); \
+  $(call pio_stamp,$(1),$(2),"$$pio_env") ok "uploaded $(1)"
 
 pio_monitor = $(STD_FW_SH) $(pio_need) $(call pio_one_env,$(1),$(2),$(1)-monitor) $(STD_FW_PORT) $(STD_FW_LOGGED) \
   logged "$(CURDIR)/$(2)/build/monitor.log" pio device monitor -d "$(CURDIR)/$(2)" -e "$$pio_env" -p "$$port"
@@ -228,14 +279,11 @@ pio_monitor = $(STD_FW_SH) $(pio_need) $(call pio_one_env,$(1),$(2),$(1)-monitor
 # Provision runs for one env too: it is exported as PIO_ENV to <part>_PROVISION and to the flash it falls back to.
 pio_provision = $(STD_FW_SH) $(call pio_one_env,$(1),$(2),$(1)-provision) export PIO_ENV="$$pio_env"; $(call std_fw_provision,$(1))
 
-pio_release = $(STD_FW_SH) f="$(CURDIR)/$(2)/.pio/build/$($(1)_E)/$($(1)_IMAGE)"; $(call std_fw_release,$(1),$(2),$(or $($(1)_E),firmware)-$($(1)_IMAGE))
+pio_release = $(STD_FW_SH) $(call std_fw_env_check,$(1),$(CURDIR)/$(2)/.pio/build/$($(1)_E)) f="$(CURDIR)/$(2)/.pio/build/$($(1)_E)/$($(1)_IMAGE)"; $(call std_fw_release,$(1),$(2),$(or $($(1)_E),firmware)-$($(1)_IMAGE))
 
 # GitHub Release assets: one set per env the build makes (PIO_ENV, else default_envs, else every [env:*]), each
 # file prefixed with its env: <env>-firmware.bin / .hex / .uf2 (at least one) and <env>-firmware.elf.
-pio_release_assets = $(STD_FW_SH) ini="$(CURDIR)/$(2)/platformio.ini"; \
-  if [ -n "$($(1)_E)" ]; then envs=$$(printf '%s\n' "$($(1)_E)" | tr ', ' '\n\n' | grep . || true); \
-  elif [ -n "$${PLATFORMIO_DEFAULT_ENVS:-}" ]; then envs=$$(printf '%s\n' "$$PLATFORMIO_DEFAULT_ENVS" | tr ', ' '\n\n' | grep . || true); \
-  else [ -f "$$ini" ] || die "no $(2)/platformio.ini"; envs=$$($(pio_envs_awk) "$$ini"); fi; \
+pio_release_assets = $(STD_FW_SH) $(call pio_build_envs,$(1),$(2)) \
   [ -n "$$envs" ] || die "$(1): no env to release"; \
   $(call std_rel_begin,$(1),pio,$(2)) \
   for e in $$envs; do bd="$(CURDIR)/$(2)/.pio/build/$$e"; [ -d "$$bd" ] || die "no build for env $$e in $$bd: run make $(1)-build"; \
@@ -254,6 +302,8 @@ pio_release_assets = $(STD_FW_SH) ini="$(CURDIR)/$(2)/platformio.ini"; \
 #   TEST_ENV       native         the host env `make <part>-test` runs (pio test -e native)
 #   CHECK_SEVERITY high           pio check --fail-on-defect
 #   PROBE          pio            uploads use upload_protocol from platformio.ini
+#   ENV_DEFINES_<env>             C defines for ENV=<env> (local, staging, production), NAME=value words: every pio
+#                                 command gets them in PLATFORMIO_BUILD_FLAGS (-D...), on top of build_flags
 #   PROVISION, OTA_BUCKET, OTA_PREFIX, WRANGLER, RELEASE_HOOK   as in the zephyr kind
 # PlatformIO itself is pinned in mise.toml ("pipx:platformio" = "6"); its packages live in ~/.platformio.
 

@@ -1,4 +1,4 @@
-# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind app-flutter: a Flutter application (iOS, Android, and desktop or web targets).
 #

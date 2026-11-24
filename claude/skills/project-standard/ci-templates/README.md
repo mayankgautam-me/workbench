@@ -1,6 +1,6 @@
 # ci-templates
 
-The source of the reusable GitHub Actions workflows in `mayankgautam-me/ci-templates`, tagged `v1.7` (`v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay,
+The source of the reusable GitHub Actions workflows in `mayankgautam-me/ci-templates`, tagged `v1.8` (`v1.7`, `v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay,
 for the projects not updated yet). Each file here is one part kind, at `.github/workflows/<kind>.yml`, and it has
 only `on: workflow_call`. A project's `.github/workflows/checks.yml` (pushes and pull requests) and `release.yml`
 (tags) call them with `uses:`. Every script line calls `make`, so CI runs what a developer runs locally. The v8
@@ -17,7 +17,7 @@ on:
   pull_request:
 jobs:
   cloud-api:
-    uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.7
+    uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.8
     with:
       part: cloud-api
       part_dir: cloud/api
@@ -39,7 +39,7 @@ jobs:
   firmware:
     needs: tag
     if: needs.tag.outputs.part == 'firmware'
-    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.7
+    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.8
     with:
       part: firmware
       part_dir: firmware
@@ -66,7 +66,7 @@ permissions:
   contents: write
 jobs:
   firmware:
-    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.7
+    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.8
     with:
       part: firmware
       part_dir: firmware
@@ -179,8 +179,8 @@ as unconfirmed and check the usage report after the first arm64 run.
 | `web-pages` | check, build, deploy-staging, deploy-production, release | as cloud-worker |
 | `docker` | check, build, deploy-staging, release | pushes to `ghcr.io/<owner>` with `GITHUB_TOKEN` (`DOCKER_REGISTRY`, the owner in lowercase), labelled `org.opencontainers.image.source` with the repository so the package inherits its access; `packages: write` |
 | `go`, `python` | check, build, release | python artifact `<part>-dist` |
-| `zephyr`, `espidf`, `pio`, `arm-gcc`, `circuitpython` | check, build, release (NOBUILD=1 from the build artifact), publish (production) | `publish` needs `confirm` and the production key; zephyr also builds a part on upstream Zephyr (`<part>_ZEPHYR`) in the same image |
-| `silabs` | check, build, release (NOBUILD=1), publish (production) | on the runner itself, no image: `<part>-setup` installs the pinned slt, slc, the Simplicity SDK and WiseConnect (about 2 GB), kept in the Actions cache per version; a `SIGN=1` build needs Simplicity Commander on the runner |
+| `zephyr`, `espidf`, `pio`, `arm-gcc`, `circuitpython` | check, build, release (NOBUILD=1 from the build artifact), publish (production) | `publish` needs `confirm` and the production key; zephyr also builds a part on upstream Zephyr (`<part>_ZEPHYR`) in the same image; build runs with `ENV=production` when the run releases (`run_release` or `confirm` `production`), else `ENV=local`, so the image has that env's `<part>_ENV_DEFINES_<env>` (1.8; not circuitpython) and the `NOBUILD=1` publish refuses a build for other defines |
+| `silabs` | check, build, release (NOBUILD=1), publish (production) | on the runner itself, no image: `<part>-setup` installs the pinned slt, slc, the Simplicity SDK and WiseConnect (about 2 GB), kept in the Actions cache per version; a `SIGN=1` build needs Simplicity Commander on the runner; build's `ENV` as for the other firmware kinds |
 | `hardware` | check, build, release | KiCad image, library (none with `library: local`) and InteractiveHtmlBom; release publishes the fab files, BOMs, STEP and WRL |
 | `altium` | check | Altium runs on Windows only, so CI checks the layout, the documents and the Git LFS pointers (no LFS pull); `run_build` and `run_release` do nothing. The Release is made where the OutJob's outputs are: `make <part>-github-release FORCE=1` |
 | `mechanical` | check, build, release | FreeCAD from Ubuntu 24.04 (0.21, not pinned): open and recompute every model, export STEP and STL; release attaches the exports and the models |

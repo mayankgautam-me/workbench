@@ -49,6 +49,15 @@ version source and the release files of each kind):
 
 ## Firmware
 
+Per-environment defines (1.8), every kind that compiles C (zephyr, espidf, pio, arm-gcc, silabs):
+`<part>_ENV_DEFINES_<env> := NAME=value NAME2="a string"` in `make/project.mk` makes `build`, `check`, `flash` and
+`release` for `ENV=<env>` compile with those C defines (a double-quoted value stays a C string; no setting, no
+defines). Each kind's way in: espidf idf.py `-D STD_ENV_DEFINES=<list>` plus the `CMakeLists.txt` block, pio
+`PLATFORMIO_BUILD_FLAGS`, zephyr `<APP>_EXTRA_CPPFLAGS` (`EXTRA_CPPFLAGS` without sysbuild), arm-gcc `CFLAGS` /
+`CXXFLAGS` (CMake) or `STD_ENV_CFLAGS` (its Makefile adds `CFLAGS += $(STD_ENV_CFLAGS)`), silabs appended to `CC` /
+`CXX`. The build writes `std-env` (the env and its defines) into its build folder: a build for other defines is
+made again from scratch, and `flash` / `release` with `NOBUILD=1` refuse one (`standard.md` 4.9).
+
 ### zephyr: Zephyr / nRF Connect SDK (west)
 
 | Target | What it does |
@@ -146,7 +155,7 @@ never what is meant.
 | doctor | Checks Docker, the build image, the board and the `CIRCUITPY` volume |
 | setup | Builds the Docker image that builds the pinned CircuitPython |
 | check | Lints the Python code |
-| build | Builds the CircuitPython firmware image for the board |
+| build | Builds the CircuitPython firmware image for the board (no `ENV_DEFINES`: the code is Python, with no compile step) |
 | flash | Flashes the image with esptool or UF2 |
 | erase | Erases the whole flash, `CIRCUITPY` with it (`CONFIRM=erase`) |
 | deploy *extra* | Copies the code to the `CIRCUITPY` volume |

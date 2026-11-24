@@ -41,6 +41,8 @@ offer adopt; never change it silently.
      only when the user asks for it (`--pages <part>`); never offer Pages as the default.
      Ask whether a cloud part sits behind Cloudflare Access (who may sign in: email domains, addresses); if so, set its
      `<part>_ACCESS_*` and `CF_TOKEN_PERMS := access`, and after the first deploy run `make <part>-access ENV=<env>`.
+     When firmware talks to a cloud part, its per-environment values (server URL, ...) go in
+     `<part>_ENV_DEFINES_<env>` (C defines for `make <part>-build ENV=<env>`; `reference/standard.md` 4.9).
 2. Run the scaffold (no network, no git):
    ```sh
    $SKILL/scripts/scaffold.sh <dir> --project <name> --part <name>:<kind>[:<dir>] ...
@@ -163,6 +165,10 @@ Read-only until the user says yes.
    - **Existing Cloudflare Workers** (most have production only and resource names that do not follow
      `<project>-<env>`): plan the `wrangler.jsonc` conversion below (the default for a Worker with no staging today is
      production-only; staging can be added later).
+   - **Firmware with per-environment values** (a server URL or host chosen by `#ifdef`, a `-D` in a hand-written
+     Makefile, CMake option or `build_flags` per env): they become `<part>_ENV_DEFINES_<env>` in `make/project.mk`
+     (`reference/standard.md` 4.9), with the espidf `CMakeLists.txt` block or `CFLAGS += $(STD_ENV_CFLAGS)` in an
+     arm-gcc Makefile.
    - **Documents**: where each existing doc goes in the layout (`reference/standard.md`, "Documents"), for
      example `docs/HID_PROTOCOL.md` -> `docs/firmware/protocol.md`, a board's bring-up notes ->
      `docs/hardware/bringup.md`, a part's changelog -> `<dir>/CHANGELOG.md` (Keep a Changelog headings). Content
@@ -256,6 +262,9 @@ Read-only until the user says yes.
    repository the audit names (`CI_TEMPLATES_REPO`, default `mayankgautam-me/ci-templates`, independent of
    `GITHUB_OWNER`; a line on the pre-1.7 `<owner>/ci-templates` is reported outdated) and the current version tag
    (`v` + `make/VERSION`); and add jobs for kinds that were added.
+   From v1.7 to v1.8: re-copy the managed files and set every `uses:` line to `@v1.8`. A firmware part whose build
+   should differ per env gets `<part>_ENV_DEFINES_<env>` (and, for espidf, the `CMakeLists.txt` block; for an arm-gcc
+   Makefile, `CFLAGS += $(STD_ENV_CFLAGS)`), then `make <part>-build ENV=staging` to check it.
    From v1.6 to v1.7: re-copy the managed files and set every `uses:` line to `@v1.7`. A part behind Cloudflare Access
    can have it made by `make <part>-access ENV=<env>` (settings `<part>_ACCESS_*`, `CF_TOKEN_PERMS := access`; run with
    `DRY=1` first when the project made its Access by hand); `scaffold.sh --force` adds the `CF_ACCESS_CLIENT_*` rows.

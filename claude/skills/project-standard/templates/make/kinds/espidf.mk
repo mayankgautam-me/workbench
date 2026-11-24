@@ -1,4 +1,4 @@
-# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind espidf: an ESP-IDF firmware part (idf.py, one build per chip target).
 #
@@ -138,6 +138,42 @@ std_fw_hook = $(STD_FW_SH) $(call $(if $($(2)),std_fw_hook_run,std_fw_hook_missi
 std_fw_hook_run = say "running $(2)"; $($(2))
 std_fw_hook_missing = die "$(3): set $(2) in make/project.mk to the command that does it for this board"
 
+# Per-environment defines (1.8). <part>_ENV_DEFINES_<env> := NAME=value NAME2="a string" in make/project.mk, for env
+# local, staging or production: C preprocessor defines that every compile of the part gets for ENV (make <part>-build
+# ENV=staging; flash and release build first). Words split at spaces outside double quotes; a double-quoted value keeps
+# its quotes, so it is a C string literal. No setting for ENV: no defines, the code's own defaults apply. A build
+# records them in <build dir>/std-env (env=<ENV>, then one define per line): a build whose stamp differs from ENV's
+# defines is made again from scratch, and a flash or release of such a build (NOBUILD=1) refuses.
+std_fw_env_defs = $(strip $($(1)_ENV_DEFINES_$(ENV)))
+# $(call std_fw_env_sh,part): sets $$envdefs (one define per line, empty without a setting), $$envflags (each define as
+# a single-quoted shell word '-DNAME=value', for a compiler run through a shell, a CMake UNIX_COMMAND list and
+# PlatformIO's build flags) and $$envlist (the defines as a CMake list, ;-separated). A malformed setting stops.
+std_fw_env_sh = envraw='$(subst ','\'',$(call std_fw_env_defs,$(1)))'; \
+  envdefs=$$(printf '%s\n' "$$envraw" | awk '{ n = length($$0); w = ""; has = 0; q = 0; \
+    for (i = 1; i <= n; i++) { c = substr($$0, i, 1); \
+      if (c == "\\" && q && i < n) { w = w c substr($$0, i + 1, 1); i++; continue } \
+      if (c == "\"") q = !q; \
+      if (!q && (c == " " || c == "\t")) { if (has) print w; w = ""; has = 0; continue } \
+      w = w c; has = 1 } \
+    if (q) exit 3; if (has) print w }') || die "$(1)_ENV_DEFINES_$(ENV): a double quote is not closed"; \
+  bad=$$(printf '%s\n' "$$envdefs" | grep -vE '^([A-Za-z_][A-Za-z0-9_]*(=.*)?)?$$' || true); \
+  [ -z "$$bad" ] || die "$(1)_ENV_DEFINES_$(ENV): not NAME or NAME=value: $$(printf '%s\n' "$$bad" | paste -sd ' ' -)"; \
+  envflags=$$(printf '%s\n' "$$envdefs" | awk 'NF { m = split($$0, p, "\047"); s = p[1]; for (j = 2; j <= m; j++) s = s "\047\\\047\047" p[j]; printf "%s\047-D%s\047", (k++ ? " " : ""), s }'); \
+  envlist=$$(printf '%s\n' "$$envdefs" | paste -sd ';' -);
+# after std_fw_env_sh: names the defines of ENV, when there are any
+std_fw_env_say = [ -z "$$envdefs" ] || say "$(1): defines for ENV=$(ENV): $$(printf '%s\n' "$$envdefs" | paste -sd ' ' -)";
+# $(call std_fw_env_old,build-dir): $$old (the defines its stamp records, empty without one) and $$oldenv (its ENV).
+std_fw_env_old = old=; oldenv=; if [ -f "$(1)/std-env" ]; then old=$$(tail -n +2 "$(1)/std-env"); oldenv=$$(sed -n '1s/^env=//p' "$(1)/std-env"); fi;
+# $(call std_fw_env_fresh,part,build-dir,wipe), after std_fw_env_sh and before a build: when the build in build-dir was
+# made with other defines (or has no stamp while ENV has defines), runs the shell command wipe, so it is made again.
+std_fw_env_fresh = $(call std_fw_env_old,$(2)) \
+  if [ "$$old" != "$$envdefs" ]; then [ ! -e "$(2)" ] || say "$(1): the build in $(2) was made for ENV=$${oldenv:-unknown}, ENV=$(ENV) has other defines: building it again from scratch"; $(3); fi;
+# $(call std_fw_env_stamp,build-dir), after a build: the ENV and the defines it was made with.
+std_fw_env_stamp = mkdir -p "$(1)"; printf 'env=%s\n%s\n' "$(ENV)" "$$envdefs" > "$(1)/std-env";
+# $(call std_fw_env_check,part,build-dir): a flash or release refuses a build made with other defines than ENV's.
+std_fw_env_check = $(call std_fw_env_sh,$(1)) $(call std_fw_env_old,$(2)) \
+  [ "$$old" = "$$envdefs" ] || die "the build in $(2) was made for ENV=$${oldenv:-unknown}, and $(1)_ENV_DEFINES_$(ENV) differs: build it again with ENV=$(ENV) (without NOBUILD=1)";
+
 endif
 
 # --- espidf helpers -----------------------------------------------------------------------------
@@ -168,12 +204,22 @@ espidf_sign = $(call espidf_app_bin,$(1)) set -- "$$b/bootloader/bootloader.bin"
     if python -m espsecure signature_info_v2 "$$f" >/dev/null 2>&1; then echo "  already signed: $$f"; continue; fi; \
     python -m espsecure sign_data --version 2 --keyfile "$$key" --output "$$f.signed" "$$f"; mv "$$f.signed" "$$f"; done' "$(std_fw_keyarg)" "$$@";
 
-espidf_build = $(STD_FW_SH) $(call espidf_env,$(1)) \
-  say "idf.py build $(1) for $($(1)_T) into $($(1)_BUILD)"; \
+# The defines of ENV (std_fw_env_sh) reach idf.py as the CMake list STD_ENV_DEFINES, which the project's top
+# CMakeLists.txt applies before project() (reference/standard.md 4.9): idf.py has no option for a C define.
+espidf_env_cmake = if [ -n "$$envdefs" ]; then \
+    case "$$envdefs" in *';'*) die "$(1)_ENV_DEFINES_$(ENV): ESP-IDF gets the defines as a CMake list, so a value cannot hold a ;";; esac; \
+    grep -q 'STD_ENV_DEFINES' "$(CURDIR)/$(2)/CMakeLists.txt" 2>/dev/null || die "$(1)_ENV_DEFINES_$(ENV) is set but $(2)/CMakeLists.txt does not apply STD_ENV_DEFINES, so the build would leave the defines out: add the project-standard block after include(.../project.cmake) and before project() (reference/standard.md 4.9; make audit prints it)"; \
+  fi;
+
+espidf_build = $(STD_FW_SH) $(call espidf_env,$(1)) $(call std_fw_env_sh,$(1)) $(call espidf_env_cmake,$(1),$(2)) \
+  $(call std_fw_env_fresh,$(1),$($(1)_BUILD),rm -rf "$($(1)_BUILD)") \
+  say "idf.py build $(1) for $($(1)_T) into $($(1)_BUILD)"; $(std_fw_env_say) \
   sd="$(CURDIR)/$(2)/sdkconfig.$($(1)_T)"; dflt="$(CURDIR)/$(2)/sdkconfig.defaults"; \
   if [ -f "$$sd" ] && [ -f "$$dflt" ] && [ "$$dflt" -nt "$$sd" ]; then warn "sdkconfig.defaults is newer than sdkconfig.$($(1)_T): run make $(1)-config or delete sdkconfig.$($(1)_T) to take the new defaults"; fi; \
-  $(call espidf_idf,$(1),$(2)) build; \
+  envargs=(); [ -z "$$envlist" ] || envargs=(-D "STD_ENV_DEFINES=$$envlist"); \
+  $(call espidf_idf,$(1),$(2)) $${envargs[@]+"$${envargs[@]}"} build; \
   $(if $(and $(3),$(filter 1,$($(1)_SECURE_BOOT))),b="$($(1)_BUILD)"; $(call espidf_sign,$(1))) \
+  $(call std_fw_env_stamp,$($(1)_BUILD)) \
   ok "built $($(1)_BUILD)"
 
 espidf_setup = $(STD_FW_SH) idf="$($(1)_IDF_DIR)"; \
@@ -220,7 +266,7 @@ espidf_efuse_state = sum=$$(python -m espefuse --chip $($(1)_T) -p "$$port" summ
   xts=$$(printf '%s\n' "$$sum" | grep -E '^KEY_PURPOSE_[0-9]' | grep -c 'XTS_AES' || true); \
   say "eFuses: SPI_BOOT_CRYPT_CNT=$$cnt, XTS-AES key blocks $$xts";
 
-espidf_flash = $(STD_FW_SH) $(call espidf_env,$(1)) $(call espidf_need_build,$(1)) $(STD_FW_PORT) \
+espidf_flash = $(STD_FW_SH) $(call espidf_env,$(1)) $(call espidf_need_build,$(1)) $(call std_fw_env_check,$(1),$$b) $(STD_FW_PORT) \
   case "$($(1)_P)" in esptool) ;; *) die "PROBE=$($(1)_P): espidf flashes with esptool (idf.py)";; esac; \
   $(call $(if $(filter 1,$($(1)_FLASH_ENCRYPTION)),espidf_flash_encrypted,espidf_flash_plain),$(1),$(2)) \
   ok "flashed $(1) on $$port"
@@ -255,7 +301,7 @@ espidf_monitor = $(STD_FW_SH) $(call espidf_env,$(1)) $(STD_FW_PORT) $(STD_FW_LO
 espidf_debug = $(STD_FW_SH) $(call espidf_env,$(1)) $(call espidf_need_build,$(1)) $(call espidf_idf,$(1),$(2)) openocd gdb
 espidf_action = $(STD_FW_SH) $(call espidf_env,$(1)) $(call espidf_idf,$(1),$(2)) $(3)
 
-espidf_release = $(STD_FW_SH) $(call espidf_need_build,$(1)) $(call espidf_app_bin,$(1)) f="$$b/$$app"; $(call std_fw_release,$(1),$(2),$($(1)_T).bin)
+espidf_release = $(STD_FW_SH) $(call espidf_need_build,$(1)) $(call std_fw_env_check,$(1),$$b) $(call espidf_app_bin,$(1)) f="$$b/$$app"; $(call std_fw_release,$(1),$(2),$($(1)_T).bin)
 
 # GitHub Release assets of the build: the (signed) app image, bootloader.bin, partition-table.bin, flash_args with
 # its paths made flat (so it works in the release folder), the elf and map, and factory-<target>.bin: one image
@@ -286,6 +332,9 @@ espidf_release_assets = $(STD_FW_SH) $(call espidf_need_build,$(1)) $(call espid
 #   LOCKDOWN_EFUSES            eFuses make <part>-fuse-lockdown burns (chip specific)
 #   RECOVER, PROVISION, OTA_BUCKET, OTA_PREFIX, WRANGLER, RELEASE_HOOK   as in the zephyr kind
 #   IDF_ARGS                   extra idf.py arguments
+#   ENV_DEFINES_<env>          C defines for ENV=<env> (local, staging, production), NAME=value words: idf.py gets
+#                              them as -D STD_ENV_DEFINES=<list>, which the top CMakeLists.txt applies before
+#                              project() (the block in reference/standard.md 4.9); without the block the build stops
 # eFuse burns need CONFIRM=fuse; erase and recover need CONFIRM=erase.
 
 define kind_espidf

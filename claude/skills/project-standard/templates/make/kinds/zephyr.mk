@@ -1,4 +1,4 @@
-# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind zephyr: a Zephyr / nRF Connect SDK firmware part (west, sysbuild, MCUboot).
 #
@@ -142,6 +142,42 @@ std_fw_hook = $(STD_FW_SH) $(call $(if $($(2)),std_fw_hook_run,std_fw_hook_missi
 std_fw_hook_run = say "running $(2)"; $($(2))
 std_fw_hook_missing = die "$(3): set $(2) in make/project.mk to the command that does it for this board"
 
+# Per-environment defines (1.8). <part>_ENV_DEFINES_<env> := NAME=value NAME2="a string" in make/project.mk, for env
+# local, staging or production: C preprocessor defines that every compile of the part gets for ENV (make <part>-build
+# ENV=staging; flash and release build first). Words split at spaces outside double quotes; a double-quoted value keeps
+# its quotes, so it is a C string literal. No setting for ENV: no defines, the code's own defaults apply. A build
+# records them in <build dir>/std-env (env=<ENV>, then one define per line): a build whose stamp differs from ENV's
+# defines is made again from scratch, and a flash or release of such a build (NOBUILD=1) refuses.
+std_fw_env_defs = $(strip $($(1)_ENV_DEFINES_$(ENV)))
+# $(call std_fw_env_sh,part): sets $$envdefs (one define per line, empty without a setting), $$envflags (each define as
+# a single-quoted shell word '-DNAME=value', for a compiler run through a shell, a CMake UNIX_COMMAND list and
+# PlatformIO's build flags) and $$envlist (the defines as a CMake list, ;-separated). A malformed setting stops.
+std_fw_env_sh = envraw='$(subst ','\'',$(call std_fw_env_defs,$(1)))'; \
+  envdefs=$$(printf '%s\n' "$$envraw" | awk '{ n = length($$0); w = ""; has = 0; q = 0; \
+    for (i = 1; i <= n; i++) { c = substr($$0, i, 1); \
+      if (c == "\\" && q && i < n) { w = w c substr($$0, i + 1, 1); i++; continue } \
+      if (c == "\"") q = !q; \
+      if (!q && (c == " " || c == "\t")) { if (has) print w; w = ""; has = 0; continue } \
+      w = w c; has = 1 } \
+    if (q) exit 3; if (has) print w }') || die "$(1)_ENV_DEFINES_$(ENV): a double quote is not closed"; \
+  bad=$$(printf '%s\n' "$$envdefs" | grep -vE '^([A-Za-z_][A-Za-z0-9_]*(=.*)?)?$$' || true); \
+  [ -z "$$bad" ] || die "$(1)_ENV_DEFINES_$(ENV): not NAME or NAME=value: $$(printf '%s\n' "$$bad" | paste -sd ' ' -)"; \
+  envflags=$$(printf '%s\n' "$$envdefs" | awk 'NF { m = split($$0, p, "\047"); s = p[1]; for (j = 2; j <= m; j++) s = s "\047\\\047\047" p[j]; printf "%s\047-D%s\047", (k++ ? " " : ""), s }'); \
+  envlist=$$(printf '%s\n' "$$envdefs" | paste -sd ';' -);
+# after std_fw_env_sh: names the defines of ENV, when there are any
+std_fw_env_say = [ -z "$$envdefs" ] || say "$(1): defines for ENV=$(ENV): $$(printf '%s\n' "$$envdefs" | paste -sd ' ' -)";
+# $(call std_fw_env_old,build-dir): $$old (the defines its stamp records, empty without one) and $$oldenv (its ENV).
+std_fw_env_old = old=; oldenv=; if [ -f "$(1)/std-env" ]; then old=$$(tail -n +2 "$(1)/std-env"); oldenv=$$(sed -n '1s/^env=//p' "$(1)/std-env"); fi;
+# $(call std_fw_env_fresh,part,build-dir,wipe), after std_fw_env_sh and before a build: when the build in build-dir was
+# made with other defines (or has no stamp while ENV has defines), runs the shell command wipe, so it is made again.
+std_fw_env_fresh = $(call std_fw_env_old,$(2)) \
+  if [ "$$old" != "$$envdefs" ]; then [ ! -e "$(2)" ] || say "$(1): the build in $(2) was made for ENV=$${oldenv:-unknown}, ENV=$(ENV) has other defines: building it again from scratch"; $(3); fi;
+# $(call std_fw_env_stamp,build-dir), after a build: the ENV and the defines it was made with.
+std_fw_env_stamp = mkdir -p "$(1)"; printf 'env=%s\n%s\n' "$(ENV)" "$$envdefs" > "$(1)/std-env";
+# $(call std_fw_env_check,part,build-dir): a flash or release refuses a build made with other defines than ENV's.
+std_fw_env_check = $(call std_fw_env_sh,$(1)) $(call std_fw_env_old,$(2)) \
+  [ "$$old" = "$$envdefs" ] || die "the build in $(2) was made for ENV=$${oldenv:-unknown}, and $(1)_ENV_DEFINES_$(ENV) differs: build it again with ENV=$(ENV) (without NOBUILD=1)";
+
 endif
 
 # --- zephyr helpers -----------------------------------------------------------------------------
@@ -172,13 +208,21 @@ zephyr_need_chip = [ -n "$($(1)_CHIP)" ] || die "probe-rs needs the chip name: s
 zephyr_need_build = b="$($(1)_BUILD)"; [ -d "$$b" ] || die "no build in $$b: run make $(1)-build";
 zephyr_domain = $(if $(filter 1,$($(1)_SYSBUILD)),--domain $($(1)_APP))
 
+# The defines of ENV (std_fw_env_sh) go in as Zephyr's EXTRA_CPPFLAGS (cmake/extra_flags.cmake splits it as a
+# UNIX_COMMAND list, so the single-quoted words of $$envflags survive), for the app image only: with sysbuild as
+# <APP>_EXTRA_CPPFLAGS (zephyr_get reads the image's own variable first), so MCUboot is built without them.
+zephyr_env_var = $(if $(filter 1,$($(1)_SYSBUILD)),$($(1)_APP)_)EXTRA_CPPFLAGS
+
 # $(call zephyr_west_build,part,dir,build-dir,sign,extra-cmake-args)
 zephyr_west_build = $(STD_FW_SH) $(call zephyr_env,$(1)) \
   board="$($(1)_B)"; [ -n "$$board" ] || die "no board: set $(1)_BOARD in make/project.mk or pass BOARD=..."; \
-  say "west build $(1) for $$board into $(3)$(if $(call zephyr_sign,$(4),$(1)), signed with $(if $(SIGNING_KEY),$(SIGNING_KEY),$($(1)_KEY)))"; \
+  $(call std_fw_env_sh,$(1)) $(call std_fw_env_fresh,$(1),$(3),rm -rf "$(3)") \
+  say "west build $(1) for $$board into $(3)$(if $(call zephyr_sign,$(4),$(1)), signed with $(if $(SIGNING_KEY),$(SIGNING_KEY),$($(1)_KEY)))"; $(std_fw_env_say) \
+  envargs=(); [ -z "$$envflags" ] || envargs=("-D$(call zephyr_env_var,$(1))=$$envflags"); \
   cd "$(CURDIR)/$(2)"; \
   $(call zephyr_signer,$(1),$(4)) west build --pristine $(PRISTINE) $(call zephyr_sysbuild,$(1)) -b "$$board" -d "$(3)" -s . $($(1)_WEST_ARGS) -- \
-    $(call zephyr_mcuboot_args,$(1)) $(call zephyr_key_args,$(1),$(4)) $($(1)_CMAKE_ARGS) $(5); \
+    $(call zephyr_mcuboot_args,$(1)) $(call zephyr_key_args,$(1),$(4)) $($(1)_CMAKE_ARGS) $(5) $${envargs[@]+"$${envargs[@]}"}; \
+  $(call std_fw_env_stamp,$(3)) \
   ok "built $(3)"
 
 zephyr_twister = $(STD_FW_SH) \
@@ -284,7 +328,7 @@ zephyr_update = $(STD_FW_SH) \
     git ls-remote --tags --refs $(if $(call zephyr_up,$(1)),$(zephyr_upstream_repo),$(zephyr_ncs_repo)) 'v*' | sed 's|.*refs/tags/||' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$$' | sort -V | tail -n 5; \
     say "pin one with make $(1)-update TO=vX.Y.Z [SDK=0.17.x] (the SDK the release asks for is in zephyr/SDK_VERSION), then commit make/project.mk"; fi
 
-zephyr_flash = $(STD_FW_SH) $(call zephyr_need_build,$(1)) \
+zephyr_flash = $(STD_FW_SH) $(call zephyr_need_build,$(1)) $(call std_fw_env_check,$(1),$$b) \
   hex="$$b/merged.hex"; [ -f "$$hex" ] || hex="$$b/zephyr/zephyr.hex"; \
   case "$($(1)_P)" in \
     probe-rs) $(call zephyr_need_chip,$(1)) \
@@ -337,7 +381,7 @@ zephyr_monitor = $(STD_FW_SH) $(STD_FW_PORT) $(STD_FW_LOGGED) \
 zephyr_target = $(STD_FW_SH) $(call zephyr_need_build,$(1)) $(call zephyr_env,$(1)) \
   for t in $(2); do west build -d "$$b" $(call zephyr_domain,$(1)) -t "$$t"; done
 
-zephyr_release = $(STD_FW_SH) f="$($(1)_BUILD)/dfu_application.zip"; $(call std_fw_release,$(1),$(2),dfu_application.zip)
+zephyr_release = $(STD_FW_SH) $(call std_fw_env_check,$(1),$($(1)_BUILD)) f="$($(1)_BUILD)/dfu_application.zip"; $(call std_fw_release,$(1),$(2),dfu_application.zip)
 
 # GitHub Release assets of the build: the signed dfu_application.zip (OTA), merged.hex (MCUboot and the app, for
 # factory programming), the signed app image, and the elf and map (debug symbols). Without sysbuild: zephyr.bin/hex.
@@ -454,6 +498,8 @@ zephyr_power = $(STD_FW_SH) out="$(CURDIR)/$(2)/build"; mkdir -p "$$out"; csv="$
 #   CHIP           probe-rs chip name, for example nRF9151_xxAA;  PROBE_ID  probe-rs --probe value
 #   OPENOCD_ARGS   -f files for openocd erase;  FLASH_ARGS  extra west flash arguments
 #   WEST_ARGS, CMAKE_ARGS   extra west build arguments, before and after `--`
+#   ENV_DEFINES_<env>  C defines for ENV=<env> (local, staging, production), NAME=value words: the app image gets
+#                  them as EXTRA_CPPFLAGS (<APP>_EXTRA_CPPFLAGS with sysbuild); check and build both
 #   MONITOR        tio -b BAUD (BAUD 115200)
 #   RECOVER        shell command for make <part>-recover (default: the probe's own unlock)
 #   PROVISION      shell command for make <part>-provision SERIAL=... (default: flash only)

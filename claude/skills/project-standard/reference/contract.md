@@ -164,6 +164,15 @@ verb; with several they list the part targets and exit 2. Likewise a part's targ
 for one build configuration: in pio, flash, erase, monitor, debug and provision start with `pio_one_env`
 (on the line of the action, like a guard), which refuses when `default_envs` selects several envs.
 
+The firmware kinds share one helper block (`ifndef STD_FW_HELPERS`), byte for byte the same in each kind file: a
+change to it is made in all six. Per-environment defines (1.8) live there: `std_fw_env_sh,part` parses
+`<part>_ENV_DEFINES_$(ENV)` into `$$envdefs` (one define per line), `$$envflags` (single-quoted `'-DNAME=value'`
+shell words: what a shell, shlex and CMake's `UNIX_COMMAND` split back into whole defines) and `$$envlist` (a CMake
+list); the value reaches the shell as one single-quoted word (`'` escaped by `subst`), and the quote escaping is done by
+awk `split`, not `gsub`, whose backslash handling differs between BSD awk and gawk. Every compile of a kind runs
+`std_fw_env_fresh` before (wipe the build folder when its `std-env` stamp records other defines) and
+`std_fw_env_stamp` after; flash and release run `std_fw_env_check` (refuse a build made for other defines).
+
 Help groups, in this order: `setup`, `dev`, `test`, `cloudflare`, `secrets`, `deploy`, `ci`,
 `firmware`, `hardware`, `app`, `release`, `project` (local.mk). A part's targets go in its group by
 kind (zephyr → firmware, cloud-worker → deploy and cloudflare, app-* → app, docker/go/python → dev...).

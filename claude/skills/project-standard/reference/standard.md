@@ -567,6 +567,57 @@ placeholder), removed when the command exits. Every firmware build is signed wit
 you test is the image you ship. eFuse burns and similar one-way operations need
 `CONFIRM=fuse`.
 
+#### Defines per environment (1.8)
+
+A firmware build can be pointed at an environment by the same `ENV` the cloud parts use, for example a device's
+server URL. `make/project.mk` declares, per env and each optional:
+
+```make
+firmware_ENV_DEFINES_staging    := CLOUD_URL="wss://api-staging.example.com/d/ws" LOG_LEVEL=3
+firmware_ENV_DEFINES_production := CLOUD_URL="wss://api.example.com/d/ws" LOG_LEVEL=1
+```
+
+`<part>_ENV_DEFINES_<env>` (env `local`, `staging` or `production`) is a list of `NAME` or `NAME=value` words, split
+at spaces outside double quotes. A double-quoted value keeps its quotes, so `CLOUD_URL="wss://..."` is the C string
+literal `"wss://..."` (`#define CLOUD_URL "wss://..."`), spaces and slashes included; a `\"` inside it stays. `make
+<part>-build ENV=staging` compiles with `-DCLOUD_URL="wss://api-staging.example.com/d/ws" -DLOG_LEVEL=3`, and so do
+`check`, `flash` and `release`, which build first (a release builds with the defines of the `ENV` it uploads to).
+With no setting for `ENV` nothing is passed and the code's own defaults apply (`#ifndef CLOUD_URL ... #endif`). A
+malformed setting (an unclosed quote, a word that is not `NAME[=value]`) stops the build. `$` is make's: write `$$`.
+
+How each kind passes them:
+
+| Kind | How |
+|---|---|
+| espidf | idf.py `-D STD_ENV_DEFINES=<A=1;B="x">` (a CMake list, so no `;` in a value), applied by a block in the part's top `CMakeLists.txt` (below). The build stops when a define is set and the file never names `STD_ENV_DEFINES`; `make audit` warns with the block. |
+| pio | `PLATFORMIO_BUILD_FLAGS` (each define a single-quoted `'-DNAME=value'`, which PlatformIO splits like a shell), on top of `build_flags` and of a `PLATFORMIO_BUILD_FLAGS` already in the environment; for every pio command, so an upload builds what build built. |
+| zephyr | west build `-- -D<APP>_EXTRA_CPPFLAGS=<flags>` with sysbuild (the app image only, MCUboot is built without them), `-DEXTRA_CPPFLAGS=<flags>` without. Zephyr splits it as a shell would. |
+| arm-gcc | A CMake project: `CFLAGS` and `CXXFLAGS` when CMake configures the build folder (a new one whenever the defines change). A Makefile project: `STD_ENV_CFLAGS` in its environment, which its `Makefile` must use: `CFLAGS += $(STD_ENV_CFLAGS)` (and `CXXFLAGS` for C++); the build stops when the Makefile never names it, and `make audit` warns. |
+| silabs | Appended to `CC` and `CXX` on the generated makefile's make line, as `check` adds `-Werror` (the generated makefile has no variable of its own for extra defines). |
+| circuitpython | None: the code is Python, copied as it is, with no compile step. Per-env settings go in the code's own files (`settings.toml`); `make audit` warns about a setting. |
+
+The espidf block, after `include($ENV{IDF_PATH}/tools/cmake/project.cmake)` and before `project()`:
+
+```cmake
+# project-standard 1.8: the defines of make <part>-build ENV=<env> (<part>_ENV_DEFINES_<env>)
+foreach(std_define IN LISTS STD_ENV_DEFINES)
+  idf_build_set_property(COMPILE_DEFINITIONS "${std_define}" APPEND)
+endforeach()
+```
+
+**Which env a build is for.** Every build writes `std-env` into its build folder: `env=<ENV>`, then its defines one
+per line (`<dir>/build/<board>/std-env` for zephyr, silabs and espidf's `<dir>/build/<target>`, `<dir>/.pio/build/<env>/std-env`
+for pio, the output folder for arm-gcc). A build whose stamp records other defines than `ENV`'s is made again from
+scratch first (the build folder removed; an arm-gcc Makefile's `clean` target), since CMake caches and plain
+makefiles would keep the old ones. A flash or release with `NOBUILD=1` (no build first) refuses a build whose
+defines differ from `ENV`'s: `the build in <dir> was made for ENV=staging, and <part>_ENV_DEFINES_production
+differs: build it again with ENV=production`. Only the defines are compared: two envs with the same defines (or
+none) share a build. A build without a stamp (from before 1.8) counts as one without defines. In CI, the build job
+builds with `ENV=production` when the run releases (`run_release` on a tag, or `confirm` `production`) and with
+`ENV=local` otherwise, so the publish job's `NOBUILD=1` release ships a production build; the stamp travels in the
+build artifact (it is not a dot file, which `upload-artifact` would leave out). The GitHub Release files
+(`release-assets`) are the build's files whatever `ENV` says.
+
 ### 4.10 Hardware (KiCad 10, Altium) and mechanical (FreeCAD)
 
 | Command | Does |
@@ -1026,10 +1077,10 @@ of the project's repository (from stdin, never on a command line), adds the publ
 ## 6. CI/CD
 
 The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/name`, default
-`mayankgautam-me/ci-templates`), tagged `v1.7` (`v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
+`mayankgautam-me/ci-templates`), tagged `v1.8` (`v1.7`, `v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
 own, independent of the project's `GITHUB_OWNER`: projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.7`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.8`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -1347,6 +1398,25 @@ the project's owner's, 5.1), `STD_CONFIG` (default `~/.config/project-standard`)
 Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) and the number in a project's `make/VERSION`, its managed
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
+
+- **1.8** (2026-11-24): a firmware build for an environment. `make/VERSION`, the managed headers and the workflows'
+  `@v1.8` say 1.8; `mayankgautam-me/ci-templates` gets the tag `v1.8` and keeps `v1.7` to `v1.0`.
+  - `<part>_ENV_DEFINES_<env> := NAME=value NAME2="a string"` in `make/project.mk` (env `local`, `staging`,
+    `production`, each optional): `make <part>-build ENV=<env>`, and check, flash and release (which build first),
+    compile with those C defines, quoting intact; no setting for the env, no defines. espidf (idf.py `-D
+    STD_ENV_DEFINES` and a `CMakeLists.txt` block), pio (`PLATFORMIO_BUILD_FLAGS`), zephyr (`<APP>_EXTRA_CPPFLAGS`, or
+    `EXTRA_CPPFLAGS` without sysbuild), arm-gcc (`CFLAGS`/`CXXFLAGS` for CMake, `STD_ENV_CFLAGS` for a Makefile),
+    silabs (appended to `CC`/`CXX`); circuitpython has no compile step (4.9, Defines per environment).
+  - A build records its env and defines in `std-env` in its build folder: a build for other defines is made again
+    from scratch, and a flash or release with `NOBUILD=1` of such a build refuses.
+  - CI: the firmware workflows' build job builds with `ENV=production` when the run releases (`run_release` or
+    `confirm` `production`), else `ENV=local`.
+  - `make audit` warns about an espidf part with the setting and no `STD_ENV_DEFINES` block, an arm-gcc Makefile that
+    never uses `STD_ENV_CFLAGS`, and a circuitpython part with the setting; a new firmware part's README shows the
+    setting (and, for espidf, the block).
+  Update from 1.7: refresh the managed files and move the `uses:` lines to `@v1.8`. Nothing changes for a part without
+  the setting, except that its next build writes the `std-env` stamp. To use it, add the settings; an espidf part adds
+  the block to its `CMakeLists.txt`, an arm-gcc Makefile part `CFLAGS += $(STD_ENV_CFLAGS)`.
 
 - **1.7** (2026-11-18): a part's Cloudflare Access setup is a standard command. `make/VERSION`, the managed headers and the
   workflows' `@v1.7` say 1.7; `mayankgautam-me/ci-templates` gets the tag `v1.7` (its workflows are 1.6's but for the

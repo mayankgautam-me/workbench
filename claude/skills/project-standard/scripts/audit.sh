@@ -952,6 +952,37 @@ done
 if [[ -n $deployable && ! -f "$DIR/docs/operations.md" ]]; then
   add warn docs docs/operations.md "missing (deployable parts:$deployable)" "$DOC_FIX"
 fi
+# Per-environment defines (1.8): <part>_ENV_DEFINES_<env> reaches an espidf build through the STD_ENV_DEFINES block of
+# its top CMakeLists.txt, and an arm-gcc Makefile build through STD_ENV_CFLAGS in its Makefile; without them the build
+# stops. circuitpython has no compile step to take them.
+# shellcheck disable=SC2016 # CMake text: ${std_define} is CMake's
+readonly ESPIDF_ENV_BLOCK='foreach(std_define IN LISTS STD_ENV_DEFINES) idf_build_set_property(COMPILE_DEFINITIONS "${std_define}" APPEND) endforeach()'
+if [[ -f "$DIR/make/project.mk" ]]; then
+  i=0
+  while ((i < ${#PART_NAMES[@]})); do
+    pn=${PART_NAMES[$i]} pk=${PART_KINDS[$i]} pd=${PART_DIRS[$i]}
+    i=$((i + 1))
+    grep -Eq "^[[:space:]]*${pn}_ENV_DEFINES_(local|staging|production)[[:space:]]*[:?+]?=" "$DIR/make/project.mk" || continue
+    case $pk in
+      espidf)
+        if [[ -f "$DIR/$pd/CMakeLists.txt" ]] && ! grep -q 'STD_ENV_DEFINES' "$DIR/$pd/CMakeLists.txt"; then
+          add warn project "$pd/CMakeLists.txt" "part $pn sets ${pn}_ENV_DEFINES_* but its CMakeLists.txt does not apply STD_ENV_DEFINES: its build stops" \
+            "add after include(\$ENV{IDF_PATH}/tools/cmake/project.cmake) and before project(): $ESPIDF_ENV_BLOCK"
+        fi
+        ;;
+      arm-gcc)
+        if [[ ! -f "$DIR/$pd/CMakeLists.txt" && -f "$DIR/$pd/Makefile" ]] && ! grep -q 'STD_ENV_CFLAGS' "$DIR/$pd/Makefile"; then
+          add warn project "$pd/Makefile" "part $pn sets ${pn}_ENV_DEFINES_* but its Makefile never uses STD_ENV_CFLAGS: its build stops" \
+            "add CFLAGS += \$(STD_ENV_CFLAGS) (and to CXXFLAGS when it compiles C++)"
+        fi
+        ;;
+      circuitpython)
+        add warn project make/project.mk "part $pn (circuitpython) sets ${pn}_ENV_DEFINES_*, which no circuitpython command uses (no compile step)" \
+          "remove it; per-environment settings go in the code's own files (settings.toml)"
+        ;;
+    esac
+  done
+fi
 
 # The CI jobs check the secrets repo and the KiCad library out into .ci/: without the ignore line a local act run or a
 # stray checkout could be committed.

@@ -20,6 +20,14 @@
 #   firmware_BOARD := nrf9151dk/nrf9151/ns
 #   firmware_NCS   := v3.2.1
 # A value given on the command line wins: `make firmware-build BOARD=...`.
+#
+# A firmware part (espidf, pio, zephyr, arm-gcc, silabs) can be built for an environment: C preprocessor defines for
+# ENV=local, staging or production, each env optional, NAME=value words (a double-quoted value stays a C string):
+#   firmware_ENV_DEFINES_staging    := CLOUD_URL="wss://api-staging.example.com/d/ws" LOG_LEVEL=3
+#   firmware_ENV_DEFINES_production := CLOUD_URL="wss://api.example.com/d/ws"
+# `make firmware-build ENV=staging` (and flash and release, which build first) compiles with them; with no line for
+# ENV the code's own defaults apply. A flash or release with NOBUILD=1 refuses a build made for other defines. espidf
+# needs a block in its CMakeLists.txt and an arm-gcc Makefile needs STD_ENV_CFLAGS (the part's README, make audit).
 
 PROJECT   := @@PROJECT@@
 PORT_BASE := @@PORT_BASE@@

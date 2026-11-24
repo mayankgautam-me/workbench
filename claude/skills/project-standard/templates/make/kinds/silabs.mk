@@ -1,4 +1,4 @@
-# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind silabs: a Silicon Labs firmware part built from an slc project (*.slcp) on the Simplicity SDK and
 # WiseConnect 3, for SiWx917 / SiWG917 (Cortex-M4 SoC mode).
@@ -164,6 +164,42 @@ std_fw_provision_default = warn "$(1)_PROVISION is not set in make/project.mk: f
 std_fw_hook = $(STD_FW_SH) $(call $(if $($(2)),std_fw_hook_run,std_fw_hook_missing),$(1),$(2),$(3))
 std_fw_hook_run = say "running $(2)"; $($(2))
 std_fw_hook_missing = die "$(3): set $(2) in make/project.mk to the command that does it for this board"
+
+# Per-environment defines (1.8). <part>_ENV_DEFINES_<env> := NAME=value NAME2="a string" in make/project.mk, for env
+# local, staging or production: C preprocessor defines that every compile of the part gets for ENV (make <part>-build
+# ENV=staging; flash and release build first). Words split at spaces outside double quotes; a double-quoted value keeps
+# its quotes, so it is a C string literal. No setting for ENV: no defines, the code's own defaults apply. A build
+# records them in <build dir>/std-env (env=<ENV>, then one define per line): a build whose stamp differs from ENV's
+# defines is made again from scratch, and a flash or release of such a build (NOBUILD=1) refuses.
+std_fw_env_defs = $(strip $($(1)_ENV_DEFINES_$(ENV)))
+# $(call std_fw_env_sh,part): sets $$envdefs (one define per line, empty without a setting), $$envflags (each define as
+# a single-quoted shell word '-DNAME=value', for a compiler run through a shell, a CMake UNIX_COMMAND list and
+# PlatformIO's build flags) and $$envlist (the defines as a CMake list, ;-separated). A malformed setting stops.
+std_fw_env_sh = envraw='$(subst ','\'',$(call std_fw_env_defs,$(1)))'; \
+  envdefs=$$(printf '%s\n' "$$envraw" | awk '{ n = length($$0); w = ""; has = 0; q = 0; \
+    for (i = 1; i <= n; i++) { c = substr($$0, i, 1); \
+      if (c == "\\" && q && i < n) { w = w c substr($$0, i + 1, 1); i++; continue } \
+      if (c == "\"") q = !q; \
+      if (!q && (c == " " || c == "\t")) { if (has) print w; w = ""; has = 0; continue } \
+      w = w c; has = 1 } \
+    if (q) exit 3; if (has) print w }') || die "$(1)_ENV_DEFINES_$(ENV): a double quote is not closed"; \
+  bad=$$(printf '%s\n' "$$envdefs" | grep -vE '^([A-Za-z_][A-Za-z0-9_]*(=.*)?)?$$' || true); \
+  [ -z "$$bad" ] || die "$(1)_ENV_DEFINES_$(ENV): not NAME or NAME=value: $$(printf '%s\n' "$$bad" | paste -sd ' ' -)"; \
+  envflags=$$(printf '%s\n' "$$envdefs" | awk 'NF { m = split($$0, p, "\047"); s = p[1]; for (j = 2; j <= m; j++) s = s "\047\\\047\047" p[j]; printf "%s\047-D%s\047", (k++ ? " " : ""), s }'); \
+  envlist=$$(printf '%s\n' "$$envdefs" | paste -sd ';' -);
+# after std_fw_env_sh: names the defines of ENV, when there are any
+std_fw_env_say = [ -z "$$envdefs" ] || say "$(1): defines for ENV=$(ENV): $$(printf '%s\n' "$$envdefs" | paste -sd ' ' -)";
+# $(call std_fw_env_old,build-dir): $$old (the defines its stamp records, empty without one) and $$oldenv (its ENV).
+std_fw_env_old = old=; oldenv=; if [ -f "$(1)/std-env" ]; then old=$$(tail -n +2 "$(1)/std-env"); oldenv=$$(sed -n '1s/^env=//p' "$(1)/std-env"); fi;
+# $(call std_fw_env_fresh,part,build-dir,wipe), after std_fw_env_sh and before a build: when the build in build-dir was
+# made with other defines (or has no stamp while ENV has defines), runs the shell command wipe, so it is made again.
+std_fw_env_fresh = $(call std_fw_env_old,$(2)) \
+  if [ "$$old" != "$$envdefs" ]; then [ ! -e "$(2)" ] || say "$(1): the build in $(2) was made for ENV=$${oldenv:-unknown}, ENV=$(ENV) has other defines: building it again from scratch"; $(3); fi;
+# $(call std_fw_env_stamp,build-dir), after a build: the ENV and the defines it was made with.
+std_fw_env_stamp = mkdir -p "$(1)"; printf 'env=%s\n%s\n' "$(ENV)" "$$envdefs" > "$(1)/std-env";
+# $(call std_fw_env_check,part,build-dir): a flash or release refuses a build made with other defines than ENV's.
+std_fw_env_check = $(call std_fw_env_sh,$(1)) $(call std_fw_env_old,$(2)) \
+  [ "$$old" = "$$envdefs" ] || die "the build in $(2) was made for ENV=$${oldenv:-unknown}, and $(1)_ENV_DEFINES_$(ENV) differs: build it again with ENV=$(ENV) (without NOBUILD=1)";
 
 endif
 
@@ -331,9 +367,12 @@ silabs_update = $(STD_FW_SH) \
 # (no post_build: no .rps). check: the compiler runs with -Werror (CC overridden on the make line, which assumes the
 # generated makefile compiles through $(CC), as slc's gcc makefiles do), and without Commander the post-build is skipped
 # (POST_BUILD_EXE=true). sign: the .rps image is signed with the key KEY from the secrets repo into <name>-signed.rps
-# (see silabs_sign).
+# (see silabs_sign). The defines of ENV (std_fw_env_sh) go the same way: appended to CC and CXX on the make line as
+# single-quoted shell words, since the generated makefile has no variable of its own for extra defines (its C_DEFS
+# would be replaced, not added to); a change of them makes build-dir again from scratch (the env stamp).
 silabs_build = $(STD_FW_SH) $(call silabs_find,$(1),$(2)) $(silabs_postbuild) $(call silabs_tools,$(1)) $(call silabs_need_tools,$(1)) \
   board="$($(1)_B)"; [ -n "$$board" ] || die "no board: set $(1)_BOARD in make/project.mk or pass BOARD=... (for example brd4338a)"; \
+  $(call std_fw_env_sh,$(1)) $(call std_fw_env_fresh,$(1),$(3),rm -rf "$(3)") $(std_fw_env_say) \
   b="$(3)"; mkdir -p "$$b"; ARM_GCC_DIR=$$(dirname "$$gccdir"); export PATH="$${java:+$$java:}$$gccdir:$$PATH" ARM_GCC_DIR; \
   $(call silabs_cmdr,$(1)) pbexe=; \
   if [ -z "$$pb" ]; then say "no post_build in $$(basename "$$slcp"): no .rps (release needs one: $(silabs_pb_lines))"; \
@@ -346,11 +385,14 @@ silabs_build = $(STD_FW_SH) $(call silabs_find,$(1),$(2)) $(silabs_postbuild) $(
   [ -f "$$b/$$name.Makefile" ] || die "slc made no $$name.Makefile in $$b"; \
   jobs=$$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4); \
   set --; [ -z "$$pbexe" ] || set -- POST_BUILD_EXE="$$pbexe"; \
+  ccx="$(if $(5), -Werror)$${envflags:+ $$envflags}"; [ -z "$$ccx" ] || set -- "$$@" CC="$$gccdir/arm-none-eabi-gcc$$ccx"; \
+  [ -z "$$envflags" ] || set -- "$$@" CXX="$$gccdir/arm-none-eabi-g++ $$envflags"; \
   say "make -f $$name.Makefile$(if $(5), with -Werror)"; \
-  env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL make -C "$$b" -f "$$name.Makefile" -j "$$jobs" $(if $(5),CC="$$gccdir/arm-none-eabi-gcc -Werror") "$$@" $($(1)_MAKE_ARGS); \
+  env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL make -C "$$b" -f "$$name.Makefile" -j "$$jobs" "$$@" $($(1)_MAKE_ARGS); \
   o="$$b/$($(1)_OUT)"; [ -f "$$o/$$name.hex" ] || [ -f "$$o/$$name.out" ] || die "the build made no $$name.hex or $$name.out in $$o"; \
   if [ -n "$$pb" ] && [ "$$pbexe" != true ]; then [ -f "$$o/$$name.rps" ] || die "the post_build $$pb ran but made no $$name.rps in $$o"; ok "$$o/$$name.rps"; fi; \
   $(if $(4),$(if $(filter 1,$($(1)_SIGN)),$(call silabs_sign,$(1)))) \
+  $(call std_fw_env_stamp,$$b) \
   ok "built $$o"
 
 # Image signing for SiWx917 M4 secure boot, run when SIGN=1 (default 0: a board whose secure boot is not provisioned
@@ -366,10 +408,12 @@ silabs_sign = rps="$$o/$$name.rps"; [ -f "$$rps" ] || die "no $$name.rps to sign
 
 # Sets b, o, name and img (the image to flash and to publish: <name>-signed.rps with SIGN=1, else <name>.hex for flash).
 silabs_need_build = $(call silabs_find,$(1),$(2)) b="$($(1)_BUILD)"; o="$$b/$($(1)_OUT)"; [ -d "$$o" ] || die "no build in $$o: run make $(1)-build";
+# a flash or OTA release of a build made with other defines than ENV's refuses (std_fw_env_check)
+silabs_need_env = $(call silabs_need_build,$(1),$(2)) $(call std_fw_env_check,$(1),$$b)
 
 silabs_sel = $(if $($(1)_DEVICE),--device "$($(1)_DEVICE)") $(if $($(1)_PROBE_ID),--serialno "$($(1)_PROBE_ID)")
 
-silabs_flash = $(STD_FW_SH) $(call silabs_need_build,$(1),$(2)) \
+silabs_flash = $(STD_FW_SH) $(call silabs_need_env,$(1),$(2)) \
   if [ "$($(1)_SIGN)" = 1 ]; then img="$$o/$$name-signed.rps"; else img="$$o/$$name.hex"; fi; [ -f "$$img" ] || die "$$img not found: run make $(1)-build"; \
   case "$($(1)_P)" in \
     commander) $(call silabs_need_cmdr,$(1)) say "commander flash $$(basename "$$img")"; "$$cmdr" flash "$$img" $(call silabs_sel,$(1));; \
@@ -426,7 +470,7 @@ silabs_power_avg = $(STD_FW_SH) $(call silabs_need_cmdr,$(1)) \
   say "AEM average over $($(1)_AEM_WINDOW) ms"; "$$cmdr" aem measure --windowlength "$($(1)_AEM_WINDOW)" $(if $($(1)_PROBE_ID),--serialno "$($(1)_PROBE_ID)")
 
 # OTA: the .rps image (signed with SIGN=1) to the OTA bucket as <part>.rps.
-silabs_release = $(STD_FW_SH) $(call silabs_need_build,$(1),$(2)) $(silabs_postbuild) \
+silabs_release = $(STD_FW_SH) $(call silabs_need_env,$(1),$(2)) $(silabs_postbuild) \
   if [ ! -f "$$o/$$name.rps" ]; then \
     if [ -z "$$pb" ]; then die "no $$name.rps in $$o: $$(basename "$$slcp") has no post_build, so the build makes none. $(silabs_pb_lines) (WiseConnect's .rps step, run by Simplicity Commander), then make $(1)-build. Nothing was uploaded"; \
     else die "no $$name.rps in $$o: the post_build $$pb of $$(basename "$$slcp") makes it with Simplicity Commander (make $(1)-doctor checks it); make $(1)-build. Nothing was uploaded"; fi; \
@@ -462,6 +506,8 @@ silabs_release_assets = $(STD_FW_SH) $(call silabs_need_build,$(1),$(2)) $(call 
 #   SLCP           (the one *.slcp in the part dir)   the slc project
 #   OUT            build/debug   where the generated makefile puts <name>.hex/.out/.rps, under the build dir
 #   SLC_ARGS, MAKE_ARGS   extra slc generate / make arguments
+#   ENV_DEFINES_<env>  C defines for ENV=<env> (local, staging, production), NAME=value words, appended to CC and
+#                  CXX on the generated makefile's make line
 #   SLC_OVERWRITE  1  slc generate --overwrite-all (0: slc keeps the copied sources it generated before)
 #   TEST_CC        cc  the host compiler of make <part>-test (TEST_ARGS= extra make arguments)
 #   PROBE          commander  commander (Simplicity Commander) or jlink (PROBE= wins); DEVICE commander --device;

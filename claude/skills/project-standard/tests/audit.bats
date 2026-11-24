@@ -6,7 +6,7 @@ if [[ -f "$BATS_TEST_DIRNAME/helpers.bash" ]]; then
   load helpers
 fi
 
-SA_HEADER='# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)'
+SA_HEADER='# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)'
 SA_KINDS="zephyr espidf pio arm-gcc circuitpython hardware cloud-worker web-pages app-flutter app-tauri app-xcode app-android docker go python"
 
 setup() {
@@ -96,7 +96,7 @@ EOF
   run "$(sa_skill_copy)/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -eq 0 ]
-  [[ $output == *"standard v1.7"* ]]
+  [[ $output == *"standard v1.8"* ]]
   [[ $output == *clean* ]]
 }
 
@@ -475,14 +475,14 @@ sa_git_lfs() {
   sa_fresh "$d"
   ci="$d/.github/workflows/checks.yml"
   sed -i.bak -e 's|actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1|actions/checkout@v7|' "$ci"
-  sed -i.bak -e 's|zephyr.yml@v1.7|zephyr.yml@v8|' "$ci"
+  sed -i.bak -e 's|zephyr.yml@v1.8|zephyr.yml@v8|' "$ci"
   printf '      - uses: some-org/deploy-tool@v1\n' >>"$ci"
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -eq 1 ]
   [[ $output == *"error    ci        .github/workflows/checks.yml: uses some-org/deploy-tool@v1: a third-party action"* ]]
   [[ $output == *"uses actions/checkout@v7: not pinned by a full commit SHA"* ]]
-  [[ $output == *"uses mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v8: the skill is at v1.7"* ]]
+  [[ $output == *"uses mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v8: the skill is at v1.8"* ]]
 }
 
 @test "audit: a reusable workflow with no @version is an error, and one from another owner is a warning" {
@@ -490,7 +490,7 @@ sa_git_lfs() {
   d="$BATS_TEST_TMPDIR/nover"
   sa_fresh "$d"
   ci="$d/.github/workflows/checks.yml"
-  sed -i.bak -e 's|zephyr.yml@v1.7|zephyr.yml|' -e 's|mayankgautam-me/ci-templates/.github/workflows/go|other-owner/ci-templates/.github/workflows/go|' "$ci"
+  sed -i.bak -e 's|zephyr.yml@v1.8|zephyr.yml|' -e 's|mayankgautam-me/ci-templates/.github/workflows/go|other-owner/ci-templates/.github/workflows/go|' "$ci"
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -eq 1 ]
@@ -508,7 +508,7 @@ sa_git_lfs() {
   sed -i.bak -e 's|mayankgautam-me/ci-templates/|fabrolabs-innovations/ci-templates/|' "$ci"
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
-  [[ $output == *"warn     ci        .github/workflows/checks.yml: uses fabrolabs-innovations/ci-templates/.github/workflows/zephyr.yml@v1.7: outdated, the CI templates are mayankgautam-me/ci-templates (CI_TEMPLATES_REPO), not fabrolabs-innovations/ci-templates"* ]]
+  [[ $output == *"warn     ci        .github/workflows/checks.yml: uses fabrolabs-innovations/ci-templates/.github/workflows/zephyr.yml@v1.8: outdated, the CI templates are mayankgautam-me/ci-templates (CI_TEMPLATES_REPO), not fabrolabs-innovations/ci-templates"* ]]
   [[ $output == *"change the uses lines to mayankgautam-me/ci-templates"* ]]
   [[ $output != *"release.yml: uses fabrolabs-innovations"* ]]
   # the project's CI_TEMPLATES_REPO makes that repo the right one, and the other file's lines outdated
@@ -982,32 +982,32 @@ sa_refs() {
   d="$BATS_TEST_TMPDIR/old"
   sa_fresh "$d"
   printf '1.0\n' >"$d/make/VERSION"
-  sed -i.bak '1s/v1\.7/v1.0/' "$d/make/common.mk"
-  sed -i.bak 's/\.yml@v1\.7/.yml@v1.0/' "$d/.github/workflows/checks.yml"
+  sed -i.bak '1s/v1\.8/v1.0/' "$d/make/common.mk"
+  sed -i.bak 's/\.yml@v1\.8/.yml@v1.0/' "$d/.github/workflows/checks.yml"
   rm -f "$d"/make/*.bak "$d"/.github/workflows/*.bak
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -ne 0 ]
   [[ $output == *"standard v1.0"* ]]
-  [[ $output == *"make/common.mk: standard v1.0, the skill is at v1.7"* ]]
-  [[ $output == *"make/VERSION: says 1.0, the skill is at v1.7"* ]]
-  [[ $output == *"zephyr.yml@v1.0: the skill is at v1.7"* ]]
+  [[ $output == *"make/common.mk: standard v1.0, the skill is at v1.8"* ]]
+  [[ $output == *"make/VERSION: says 1.0, the skill is at v1.8"* ]]
+  [[ $output == *"zephyr.yml@v1.0: the skill is at v1.8"* ]]
 }
 
-@test "audit 1.7: a project still on 1.6 is outdated (make/VERSION, the managed header, the @v1.6 uses lines)" {
+@test "audit 1.8: a project still on 1.7 is outdated (make/VERSION, the managed header, the @v1.7 uses lines)" {
   skill=$(sa_skill_copy)
-  d="$BATS_TEST_TMPDIR/on16"
+  d="$BATS_TEST_TMPDIR/on17"
   sa_fresh "$d"
-  printf '1.6\n' >"$d/make/VERSION"
-  sed -i.bak '1s/v1\.7/v1.6/' "$d/make/common.mk"
-  sed -i.bak 's/\.yml@v1\.7/.yml@v1.6/' "$d/.github/workflows/checks.yml"
+  printf '1.7\n' >"$d/make/VERSION"
+  sed -i.bak '1s/v1\.8/v1.7/' "$d/make/common.mk"
+  sed -i.bak 's/\.yml@v1\.8/.yml@v1.7/' "$d/.github/workflows/checks.yml"
   rm -f "$d"/make/*.bak "$d"/.github/workflows/*.bak
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -ne 0 ]
-  [[ $output == *"make/common.mk: standard v1.6, the skill is at v1.7"* ]]
-  [[ $output == *"make/VERSION: says 1.6, the skill is at v1.7"* ]]
-  [[ $output == *"zephyr.yml@v1.6: the skill is at v1.7"* ]]
+  [[ $output == *"make/common.mk: standard v1.7, the skill is at v1.8"* ]] || false
+  [[ $output == *"make/VERSION: says 1.7, the skill is at v1.8"* ]] || false
+  [[ $output == *"zephyr.yml@v1.7: the skill is at v1.8"* ]] || false
 }
 
 # sa_on_11 DIR: a fresh scaffold turned back into a 1.1 project: make/VERSION, the managed headers, the @v1.1 uses
@@ -1016,9 +1016,9 @@ sa_on_11() {
   local d=$1 f
   printf '1.1\n' >"$d/make/VERSION"
   for f in "$d/Makefile" "$d/make/common.mk" "$d"/make/bin/*.sh "$d"/make/kinds/*.mk; do
-    sed -i.bak '1,2s/project-standard v1\.7 /project-standard v1.1 /' "$f"
+    sed -i.bak '1,2s/project-standard v1\.8 /project-standard v1.1 /' "$f"
   done
-  sed -i.bak 's/\.yml@v1\.7/.yml@v1.1/' "$d/.github/workflows/checks.yml" "$d/.github/workflows/release.yml"
+  sed -i.bak 's/\.yml@v1\.8/.yml@v1.1/' "$d/.github/workflows/checks.yml" "$d/.github/workflows/release.yml"
   printf '#!/usr/bin/env bash\n%s\n' "$(sed -n 1p "$d/make/common.mk")" >"$d/make/bin/refs.sh"
   printf '\n# reference documents (make refs-fetch downloads what docs/references.md lists; never committed)\nreferences/\n' >>"$d/.gitignore"
   rm -f "$d"/make/*.bak "$d"/make/bin/*.bak "$d"/make/kinds/*.bak "$d"/*.bak "$d"/.github/workflows/*.bak
@@ -1035,9 +1035,9 @@ sa_on_11() {
   run "$skill/scripts/audit.sh" "$d"
   echo "$output"
   [ "$status" -ne 0 ]
-  [[ $output == *"make/common.mk: standard v1.1, the skill is at v1.7"* ]] || false
-  [[ $output == *"make/VERSION: says 1.1, the skill is at v1.7"* ]] || false
-  [[ $output == *"zephyr.yml@v1.1: the skill is at v1.7"* ]] || false
+  [[ $output == *"make/common.mk: standard v1.1, the skill is at v1.8"* ]] || false
+  [[ $output == *"make/VERSION: says 1.1, the skill is at v1.8"* ]] || false
+  [[ $output == *"zephyr.yml@v1.1: the skill is at v1.8"* ]] || false
   [[ $output == *"make/bin/refs.sh: a managed file the standard no longer has"*"git rm make/bin/refs.sh"* ]] || false
   [[ $output != *"wrl"* ]] || false
   [[ $output != *"docs      docs/references.md"* ]] || false
@@ -1170,4 +1170,26 @@ sa_submodule() {
   [ "$status" -eq 1 ]
   [[ $output == *"warn"*"layout"*"hardware/BOM: part hardware (altium): since 1.5 the BOM is the one the OutJob writes to hardware/outputs/"*"git rm -r 'hardware/BOM'"* ]] || false
   [[ $output != *"error"*"hardware/BOM"* ]] || false
+}
+
+@test "audit 1.8: ENV_DEFINES on an espidf part without the CMakeLists block, an arm-gcc Makefile without STD_ENV_CFLAGS, a circuitpython part" {
+  skill=$(sa_skill_copy)
+  d="$BATS_TEST_TMPDIR/envdefs"
+  "$skill/scripts/scaffold.sh" "$d" --project envdefs --part esp:espidf --part iface:arm-gcc --part cpy:circuitpython >/dev/null
+  printf 'cmake_minimum_required(VERSION 3.16)\ninclude($ENV{IDF_PATH}/tools/cmake/project.cmake)\nproject(esp)\n' >"$d/firmware/esp/CMakeLists.txt"
+  printf 'build:\n\tarm-none-eabi-gcc $(CFLAGS) -c main.c\n' >"$d/firmware/iface/Makefile"
+  run "$skill/scripts/audit.sh" "$d"
+  [[ $output != *"ENV_DEFINES"* ]] || false
+  printf 'esp_ENV_DEFINES_staging := CLOUD_URL="wss://x/ws"\niface_ENV_DEFINES_production := N=1\ncpy_ENV_DEFINES_local := N=2\n' >>"$d/make/project.mk"
+  run "$skill/scripts/audit.sh" "$d"
+  echo "$output"
+  [[ $output == *"firmware/esp/CMakeLists.txt: part esp sets esp_ENV_DEFINES_* but its CMakeLists.txt does not apply STD_ENV_DEFINES"*'foreach(std_define IN LISTS STD_ENV_DEFINES) idf_build_set_property(COMPILE_DEFINITIONS "${std_define}" APPEND) endforeach()'* ]] || false
+  [[ $output == *"firmware/iface/Makefile: part iface sets iface_ENV_DEFINES_* but its Makefile never uses STD_ENV_CFLAGS"*'CFLAGS += $(STD_ENV_CFLAGS)'* ]] || false
+  [[ $output == *"part cpy (circuitpython) sets cpy_ENV_DEFINES_*"* ]] || false
+  # the block and the Makefile line make the warnings go
+  printf 'cmake_minimum_required(VERSION 3.16)\ninclude($ENV{IDF_PATH}/tools/cmake/project.cmake)\nforeach(std_define IN LISTS STD_ENV_DEFINES)\n  idf_build_set_property(COMPILE_DEFINITIONS "${std_define}" APPEND)\nendforeach()\nproject(esp)\n' >"$d/firmware/esp/CMakeLists.txt"
+  printf 'CFLAGS += $(STD_ENV_CFLAGS)\nbuild:\n\tarm-none-eabi-gcc $(CFLAGS) -c main.c\n' >"$d/firmware/iface/Makefile"
+  run "$skill/scripts/audit.sh" "$d"
+  [[ $output != *"STD_ENV_DEFINES"* ]] || false
+  [[ $output != *"STD_ENV_CFLAGS"* ]] || false
 }

@@ -1,4 +1,4 @@
-# project-standard v1.7 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind arm-gcc: a bare-metal arm-none-eabi firmware part (CubeMX export, libopencm3, own Makefile).
 #
@@ -136,6 +136,42 @@ std_fw_hook = $(STD_FW_SH) $(call $(if $($(2)),std_fw_hook_run,std_fw_hook_missi
 std_fw_hook_run = say "running $(2)"; $($(2))
 std_fw_hook_missing = die "$(3): set $(2) in make/project.mk to the command that does it for this board"
 
+# Per-environment defines (1.8). <part>_ENV_DEFINES_<env> := NAME=value NAME2="a string" in make/project.mk, for env
+# local, staging or production: C preprocessor defines that every compile of the part gets for ENV (make <part>-build
+# ENV=staging; flash and release build first). Words split at spaces outside double quotes; a double-quoted value keeps
+# its quotes, so it is a C string literal. No setting for ENV: no defines, the code's own defaults apply. A build
+# records them in <build dir>/std-env (env=<ENV>, then one define per line): a build whose stamp differs from ENV's
+# defines is made again from scratch, and a flash or release of such a build (NOBUILD=1) refuses.
+std_fw_env_defs = $(strip $($(1)_ENV_DEFINES_$(ENV)))
+# $(call std_fw_env_sh,part): sets $$envdefs (one define per line, empty without a setting), $$envflags (each define as
+# a single-quoted shell word '-DNAME=value', for a compiler run through a shell, a CMake UNIX_COMMAND list and
+# PlatformIO's build flags) and $$envlist (the defines as a CMake list, ;-separated). A malformed setting stops.
+std_fw_env_sh = envraw='$(subst ','\'',$(call std_fw_env_defs,$(1)))'; \
+  envdefs=$$(printf '%s\n' "$$envraw" | awk '{ n = length($$0); w = ""; has = 0; q = 0; \
+    for (i = 1; i <= n; i++) { c = substr($$0, i, 1); \
+      if (c == "\\" && q && i < n) { w = w c substr($$0, i + 1, 1); i++; continue } \
+      if (c == "\"") q = !q; \
+      if (!q && (c == " " || c == "\t")) { if (has) print w; w = ""; has = 0; continue } \
+      w = w c; has = 1 } \
+    if (q) exit 3; if (has) print w }') || die "$(1)_ENV_DEFINES_$(ENV): a double quote is not closed"; \
+  bad=$$(printf '%s\n' "$$envdefs" | grep -vE '^([A-Za-z_][A-Za-z0-9_]*(=.*)?)?$$' || true); \
+  [ -z "$$bad" ] || die "$(1)_ENV_DEFINES_$(ENV): not NAME or NAME=value: $$(printf '%s\n' "$$bad" | paste -sd ' ' -)"; \
+  envflags=$$(printf '%s\n' "$$envdefs" | awk 'NF { m = split($$0, p, "\047"); s = p[1]; for (j = 2; j <= m; j++) s = s "\047\\\047\047" p[j]; printf "%s\047-D%s\047", (k++ ? " " : ""), s }'); \
+  envlist=$$(printf '%s\n' "$$envdefs" | paste -sd ';' -);
+# after std_fw_env_sh: names the defines of ENV, when there are any
+std_fw_env_say = [ -z "$$envdefs" ] || say "$(1): defines for ENV=$(ENV): $$(printf '%s\n' "$$envdefs" | paste -sd ' ' -)";
+# $(call std_fw_env_old,build-dir): $$old (the defines its stamp records, empty without one) and $$oldenv (its ENV).
+std_fw_env_old = old=; oldenv=; if [ -f "$(1)/std-env" ]; then old=$$(tail -n +2 "$(1)/std-env"); oldenv=$$(sed -n '1s/^env=//p' "$(1)/std-env"); fi;
+# $(call std_fw_env_fresh,part,build-dir,wipe), after std_fw_env_sh and before a build: when the build in build-dir was
+# made with other defines (or has no stamp while ENV has defines), runs the shell command wipe, so it is made again.
+std_fw_env_fresh = $(call std_fw_env_old,$(2)) \
+  if [ "$$old" != "$$envdefs" ]; then [ ! -e "$(2)" ] || say "$(1): the build in $(2) was made for ENV=$${oldenv:-unknown}, ENV=$(ENV) has other defines: building it again from scratch"; $(3); fi;
+# $(call std_fw_env_stamp,build-dir), after a build: the ENV and the defines it was made with.
+std_fw_env_stamp = mkdir -p "$(1)"; printf 'env=%s\n%s\n' "$(ENV)" "$$envdefs" > "$(1)/std-env";
+# $(call std_fw_env_check,part,build-dir): a flash or release refuses a build made with other defines than ENV's.
+std_fw_env_check = $(call std_fw_env_sh,$(1)) $(call std_fw_env_old,$(2)) \
+  [ "$$old" = "$$envdefs" ] || die "the build in $(2) was made for ENV=$${oldenv:-unknown}, and $(1)_ENV_DEFINES_$(ENV) differs: build it again with ENV=$(ENV) (without NOBUILD=1)";
+
 endif
 
 # --- arm-gcc helpers ----------------------------------------------------------------------------
@@ -148,18 +184,32 @@ armgcc_probe_sel = $(if $($(1)_PROBE_ID),--probe "$($(1)_PROBE_ID)")
 armgcc_submake = MAKEFLAGS= MAKELEVEL= $(MAKE) --no-print-directory -C "$(CURDIR)/$(2)" $($(1)_MAKE_ARGS)
 armgcc_has_target = grep -qE '^$(3):' "$(CURDIR)/$(2)/Makefile" 2>/dev/null
 
+# The defines of ENV (std_fw_env_sh), as single-quoted shell words -DNAME=value ($$envflags): a CMake project gets
+# them in CFLAGS and CXXFLAGS, which CMake reads when it configures a new build folder (the env stamp makes a new
+# one whenever they change); a Makefile project gets them as STD_ENV_CFLAGS in its environment, and its Makefile must
+# add them to what it compiles with (CFLAGS += $(STD_ENV_CFLAGS)): the build stops when the Makefile never names it.
+# The Makefile's clean target (else removing the output folder) starts over when they change.
+armgcc_wipe = if $(call armgcc_has_target,$(1),$(2),clean); then $(call armgcc_submake,$(1),$(2)) clean; else rm -rf "$($(1)_OUT)"; fi
+
 # $(call armgcc_build,part,dir,check): CMake (Ninja) when the dir has CMakeLists.txt, else its Makefile.
-armgcc_build = $(STD_FW_SH) $(call armgcc_need_gcc,$(1)) d="$(CURDIR)/$(2)"; \
+armgcc_build = $(STD_FW_SH) $(call armgcc_need_gcc,$(1)) d="$(CURDIR)/$(2)"; $(call std_fw_env_sh,$(1)) \
   if [ -f "$$d/CMakeLists.txt" ]; then \
     tc="$($(1)_TOOLCHAIN_FILE)"; if [ -z "$$tc" ] && [ -f "$$d/cmake/gcc-arm-none-eabi.cmake" ]; then tc="$$d/cmake/gcc-arm-none-eabi.cmake"; fi; \
-    out="$($(1)_OUT)$(if $(3),-check)"; say "cmake $(1) into $$out"; \
+    out="$($(1)_OUT)$(if $(3),-check)"; $(call std_fw_env_fresh,$(1),$$out,rm -rf "$$out") \
+    say "cmake $(1) into $$out"; $(std_fw_env_say) \
+    if [ -n "$$envflags" ]; then export CFLAGS="$$envflags$${CFLAGS:+ $$CFLAGS}" CXXFLAGS="$$envflags$${CXXFLAGS:+ $$CXXFLAGS}"; fi; \
     cmake -S "$$d" -B "$$out" -G Ninja $$( [ -z "$$tc" ] || printf -- '-DCMAKE_TOOLCHAIN_FILE=%s' "$$tc" ) $($(1)_CMAKE_ARGS) $(if $(3),-DCMAKE_COMPILE_WARNING_AS_ERROR=ON); \
     cmake --build "$$out"; \
   elif [ -f "$$d/Makefile" ]; then \
+    out="$($(1)_OUT)"; \
+    if [ -n "$$envdefs" ] && ! grep -q 'STD_ENV_CFLAGS' "$$d/Makefile"; then die "$(1)_ENV_DEFINES_$(ENV) is set but $(2)/Makefile never uses STD_ENV_CFLAGS, so the build would leave the defines out: add CFLAGS += \$$(STD_ENV_CFLAGS) (reference/standard.md 4.9)"; fi; \
+    $(call std_fw_env_fresh,$(1),$$out,$(call armgcc_wipe,$(1),$(2))) $(std_fw_env_say) \
+    export STD_ENV_CFLAGS="$$envflags"; \
     if [ -n "$(3)" ] && $(call armgcc_has_target,$(1),$(2),check); then say "make -C $(2) check"; $(call armgcc_submake,$(1),$(2)) check; \
     else tgt="$($(1)_MAKE_TARGET)"; if [ -z "$$tgt" ] && $(call armgcc_has_target,$(1),$(2),build); then tgt=build; fi; \
       say "make -C $(2) $$tgt"; $(call armgcc_submake,$(1),$(2)) $$tgt; fi; \
   else die "no CMakeLists.txt or Makefile in $(2)"; fi; \
+  $(call std_fw_env_stamp,$$out) \
   $(if $(3),,$(call armgcc_artifacts,$(1),$(2)) ok "built $$elf and $$(basename "$$bin")";) \
   ok "built $(1)"
 
@@ -174,7 +224,7 @@ armgcc_artifacts = out="$($(1)_OUT)"; elf="$($(1)_ELF)"; \
 
 armgcc_fail_hint = { $(if $($(1)_FLASH_HINT),warn "$($(1)_FLASH_HINT)";) exit 1; }
 
-armgcc_flash = $(STD_FW_SH) $(call armgcc_artifacts,$(1),$(2)) \
+armgcc_flash = $(STD_FW_SH) $(call armgcc_artifacts,$(1),$(2)) $(call std_fw_env_check,$(1),$($(1)_OUT)) \
   case "$($(1)_P)" in \
     dfu) have dfu-util || die "dfu-util not found: brew install dfu-util"; \
       dfu-util $(if $($(1)_DFU_ID),-d $($(1)_DFU_ID)) -a $($(1)_DFU_ALT) -s $($(1)_FLASH_ADDR):leave -D "$$bin" || $(call armgcc_fail_hint,$(1));; \
@@ -238,7 +288,7 @@ armgcc_clean = $(STD_FW_SH) \
   if [ -f "$(CURDIR)/$(2)/Makefile" ] && [ ! -f "$(CURDIR)/$(2)/CMakeLists.txt" ] && $(call armgcc_has_target,$(1),$(2),$(3)); then $(call armgcc_submake,$(1),$(2)) $(3); \
   else rm -rf "$($(1)_OUT)" "$($(1)_OUT)-check"; fi
 
-armgcc_release = $(STD_FW_SH) $(call armgcc_artifacts,$(1),$(2)) f="$$bin"; $(call std_fw_release,$(1),$(2),$(1).bin)
+armgcc_release = $(STD_FW_SH) $(call armgcc_artifacts,$(1),$(2)) $(call std_fw_env_check,$(1),$($(1)_OUT)) f="$$bin"; $(call std_fw_release,$(1),$(2),$(1).bin)
 
 # GitHub Release assets: the .bin, .hex (made with objcopy when the build has none), .elf and .map of the build.
 armgcc_release_assets = $(STD_FW_SH) $(call armgcc_artifacts,$(1),$(2)) $(call std_rel_begin,$(1),arm-gcc,$(2)) \
@@ -261,6 +311,9 @@ armgcc_release_assets = $(STD_FW_SH) $(call armgcc_artifacts,$(1),$(2)) $(call s
 #   DFU_ID          vid:pid[,vid:pid] for dfu-util -d;  DFU_ALT 0;  FLASH_ADDR 0x08000000
 #   FLASH_HINT      printed when a flash fails (for example how to get the board into DFU)
 #   MONITOR         tio -b BAUD (BAUD 115200);  RECOVER, PROVISION, OTA_*, WRANGLER, RELEASE_HOOK
+#   ENV_DEFINES_<env>  C defines for ENV=<env> (local, staging, production), NAME=value words: CFLAGS and CXXFLAGS
+#                   of a CMake project; STD_ENV_CFLAGS for a Makefile project, whose Makefile adds
+#                   CFLAGS += $(STD_ENV_CFLAGS) (the build stops when it never names it)
 # `make <part>-check` builds with warnings as errors (CMake), or runs the Makefile's check target.
 
 define kind_arm-gcc

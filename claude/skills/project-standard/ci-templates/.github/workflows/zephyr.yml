@@ -1,5 +1,7 @@
-# project-standard ci-templates v1.7: zephyr (Zephyr / nRF Connect SDK firmware, west, sysbuild, MCUboot).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.7.
+# project-standard ci-templates v1.8: zephyr (Zephyr / nRF Connect SDK firmware, west, sysbuild, MCUboot).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.8.
+# build: ENV=production when the run releases (run_release, or confirm production), else local, so the image has that
+# ENV's <part>_ENV_DEFINES (1.8); a release or publish of a build made for other defines (its std-env stamp) refuses.
 #
 # check: MCUboot's development key, no secrets. build: signs with the MCUboot key from the secrets repo.
 # release (run_release, tags): the build's signed image, NOBUILD=1, no rebuild and no key.
@@ -255,7 +257,7 @@ jobs:
       - name: Build (signed)
         env:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
-        run: make "$PART-build"
+        run: make "$PART-build" ENV=${{ (inputs.run_release || inputs.confirm == 'production') && 'production' || 'local' }}
       - name: Keep the build
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

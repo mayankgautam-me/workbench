@@ -1033,3 +1033,270 @@ printf "time_s,current_mA,voltage_V\n0.01,1.5,3.3\n0.02,0.5,3.3\n" >"$STD_PW_CSV
   [[ "$output" == *"max       1.5000 mA"* ]]
   [ -f firmware/build/power.txt ]
 }
+
+# --- per-environment defines (1.8) -----------------------------------------------------------------
+# <part>_ENV_DEFINES_<env> in make/project.mk: the build for ENV gets them as C defines, quoting intact; the build
+# records them in <build dir>/std-env, so a build for other defines is made again and a NOBUILD flash or release of
+# one refuses.
+
+ENV_STAGING='CLOUD_URL="wss://api-staging.example.com/d/ws" LOG_LEVEL=3 GREETING="hello world" MSG="it'"'"'s ok" DEBUG_UI'
+ENV_PRODUCTION='CLOUD_URL="wss://api.example.com/d/ws" LOG_LEVEL=1'
+
+# split WORDS the way a shell, shlex and CMake's UNIX_COMMAND do, one word per line
+shell_split() { eval "set -- $1"; printf '%s\n' "$@"; }
+
+# the defines every quoting test expects for ENV_STAGING, one per line
+staging_defines() {
+  printf '%s\n' '-DCLOUD_URL="wss://api-staging.example.com/d/ws"' '-DLOG_LEVEL=3' '-DGREETING="hello world"' \
+    "-DMSG=\"it's ok\"" '-DDEBUG_UI'
+}
+
+envdef_zephyr() {
+  fwproject 'firmware:zephyr' "firmware_BOARD := nrf9151dk/nrf9151/ns
+firmware_CHIP := nRF9151_xxAA
+firmware_ENV_DEFINES_staging := $ENV_STAGING
+firmware_ENV_DEFINES_production := $ENV_PRODUCTION"
+  mkdir -p firmware
+  printf 'VERSION_MAJOR = 1\nVERSION_MINOR = 4\nPATCHLEVEL = 2\n' >firmware/VERSION
+  B="$P/firmware/build/nrf9151dk_nrf9151_ns"
+}
+
+@test "1.8 zephyr: build ENV=staging passes its defines as the app image's EXTRA_CPPFLAGS, quoting intact" {
+  envdef_zephyr
+  run make firmware-build ENV=staging
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"defines for ENV=staging"* ]] || false
+  # one west argument, for the app image only (sysbuild): <APP>_EXTRA_CPPFLAGS
+  line="$(argv west | grep '^-Dfirmware_EXTRA_CPPFLAGS=')"
+  [ "$line" = "-Dfirmware_EXTRA_CPPFLAGS='-DCLOUD_URL=\"wss://api-staging.example.com/d/ws\"' '-DLOG_LEVEL=3' '-DGREETING=\"hello world\"' '-DMSG=\"it'\\''s ok\"' '-DDEBUG_UI'" ]
+  # Zephyr splits it as a UNIX_COMMAND list: each define comes out whole
+  [ "$(shell_split "${line#*=}")" = "$(staging_defines)" ]
+  if argv west | grep -q '^-DEXTRA_CPPFLAGS='; then false; fi
+  [ "$(head -n 1 "$B/std-env")" = "env=staging" ]
+  [ "$(sed -n 2p "$B/std-env")" = 'CLOUD_URL="wss://api-staging.example.com/d/ws"' ]
+}
+
+@test "1.8 zephyr: without sysbuild the defines are EXTRA_CPPFLAGS, the check build gets them too" {
+  envdef_zephyr
+  printf 'firmware_SYSBUILD := 0\n' >>make/project.mk
+  run make firmware-check ENV=production
+  [ "$status" -eq 0 ]
+  argv west | grep -qxF -- "-DEXTRA_CPPFLAGS='-DCLOUD_URL=\"wss://api.example.com/d/ws\"' '-DLOG_LEVEL=1'"
+  [ "$(head -n 1 "$P/firmware/build/check-nrf9151dk_nrf9151_ns/std-env")" = "env=production" ]
+}
+
+@test "1.8: no ENV_DEFINES for ENV passes nothing (the code's defaults), in every firmware kind" {
+  envdef_zephyr
+  run make firmware-build
+  [ "$status" -eq 0 ]
+  if argv west | grep -q 'EXTRA_CPPFLAGS'; then false; fi
+  [[ "$output" != *"defines for ENV"* ]] || false
+  [ "$(cat "$B/std-env")" = "env=local" ]
+
+  fwproject 'esp:espidf' 'esp_ENV_DEFINES_production := N=1'
+  run make esp-build
+  [ "$status" -eq 0 ]
+  if argv idf.py | grep -q 'STD_ENV_DEFINES'; then false; fi
+
+  fwproject 'fw:pio' 'fw_PIO_ENV := esp32dev
+fw_ENV_DEFINES_staging := N=1'
+  printf '[env:esp32dev]\nboard = esp32dev\n' >fw/platformio.ini
+  stub_cmd pio 'printf "%s\n" "${PLATFORMIO_BUILD_FLAGS-unset}" >>"$STUB_LOG/pio.flags"'
+  run make fw-build
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_LOG/pio.flags")" = unset ]
+}
+
+@test "1.8 zephyr: a build for other defines is made again from scratch; the same defines keep it" {
+  envdef_zephyr
+  run make firmware-build ENV=staging
+  [ "$status" -eq 0 ]
+  : >"$B/marker"
+  run make firmware-build ENV=staging
+  [ "$status" -eq 0 ]
+  [ -f "$B/marker" ]
+  run make firmware-build ENV=production
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"was made for ENV=staging, ENV=production has other defines: building it again from scratch"* ]] || false
+  [ ! -e "$B/marker" ]
+  [ "$(head -n 1 "$B/std-env")" = "env=production" ]
+}
+
+@test "1.8 zephyr: release and flash with NOBUILD=1 refuse a build made for another ENV's defines" {
+  envdef_zephyr
+  run make firmware-build ENV=staging
+  [ "$status" -eq 0 ]
+  echo zip >"$B/dfu_application.zip"
+  echo hex >"$B/merged.hex"
+  run make firmware-release ENV=production CONFIRM=production NOBUILD=1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"was made for ENV=staging, and firmware_ENV_DEFINES_production differs: build it again with ENV=production"* ]] || false
+  [ ! -f "$STUB_LOG/npx.argv" ]
+  run make firmware-flash ENV=production NOBUILD=1
+  [ "$status" -ne 0 ]
+  [ ! -f "$STUB_LOG/probe-rs.argv" ]
+  # the ENV it was built for goes through
+  run make firmware-release ENV=staging NOBUILD=1
+  [ "$status" -eq 0 ]
+  [[ "$(argv npx)" == *"demo/firmware/staging/1.4.2/dfu_application.zip"* ]] || false
+  run make firmware-flash ENV=staging NOBUILD=1
+  [ "$status" -eq 0 ]
+  [[ "$(argv probe-rs)" == *"$B/merged.hex"* ]] || false
+}
+
+@test "1.8 zephyr: release without NOBUILD builds for its ENV first, so it ships that ENV's defines" {
+  envdef_zephyr
+  run make firmware-build ENV=staging
+  [ "$status" -eq 0 ]
+  # the stub west makes no image: put one where the rebuild for production leaves it
+  stub_cmd west 'printf "%s\n" "$@" >>"$STUB_LOG/west.argv"; d=; p=; for a in "$@"; do [ "$p" = -d ] && d="$a"; p="$a"; done; [ -z "$d" ] || { mkdir -p "$d"; echo zip >"$d/dfu_application.zip"; }'
+  run make firmware-release ENV=production CONFIRM=production
+  [ "$status" -eq 0 ]
+  [ "$(head -n 1 "$B/std-env")" = "env=production" ]
+  argv west | grep -qxF -- "-Dfirmware_EXTRA_CPPFLAGS='-DCLOUD_URL=\"wss://api.example.com/d/ws\"' '-DLOG_LEVEL=1'"
+  [[ "$(argv npx)" == *"demo/firmware/production/1.4.2/dfu_application.zip"* ]] || false
+}
+
+@test "1.8: a build from before 1.8 (no stamp) counts as one without defines" {
+  envdef_zephyr
+  zephyr_built
+  run make firmware-release ENV=staging NOBUILD=1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"was made for ENV=unknown"* ]] || false
+  printf 'firmware_ENV_DEFINES_staging :=\n' >>make/project.mk
+  run make firmware-release ENV=staging NOBUILD=1
+  [ "$status" -eq 0 ]
+}
+
+@test "1.8: a malformed ENV_DEFINES setting stops the build" {
+  envdef_zephyr
+  printf 'firmware_ENV_DEFINES_local := URL="wss://x\n' >>make/project.mk
+  run make firmware-build
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"firmware_ENV_DEFINES_local: a double quote is not closed"* ]] || false
+  printf 'firmware_ENV_DEFINES_local := 1BAD=2 -DX=1\n' >>make/project.mk
+  run make firmware-build
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not NAME or NAME=value: 1BAD=2 -DX=1"* ]] || false
+  [ ! -f "$STUB_LOG/west.argv" ]
+}
+
+@test "1.8 espidf: the defines go to idf.py as the CMake list STD_ENV_DEFINES; the build needs the CMakeLists block" {
+  esp_proj "esp_ENV_DEFINES_staging := $ENV_STAGING"
+  run make esp-build ENV=staging
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"esp/CMakeLists.txt does not apply STD_ENV_DEFINES"* ]] || false
+  [ ! -f "$STUB_LOG/idf.py.argv" ]
+  cat >esp/CMakeLists.txt <<'EOF'
+cmake_minimum_required(VERSION 3.16)
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+foreach(std_define IN LISTS STD_ENV_DEFINES)
+  idf_build_set_property(COMPILE_DEFINITIONS "${std_define}" APPEND)
+endforeach()
+project(esp)
+EOF
+  run make esp-build ENV=staging
+  [ "$status" -eq 0 ]
+  [[ "$(argv idf.py)" == *$'\n-D\nSTD_ENV_DEFINES=CLOUD_URL="wss://api-staging.example.com/d/ws";LOG_LEVEL=3;GREETING="hello world";MSG="it\'s ok";DEBUG_UI\nbuild\n'* ]] || false
+  [ "$(head -n 1 esp/build/esp32c6/std-env)" = "env=staging" ]
+  # a flash of it for another ENV refuses without building
+  : >"$PORTS_DIR/cu.usbmodem1"
+  run make esp-flash ENV=production NOBUILD=1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"was made for ENV=staging"* ]] || false
+  [[ "$(argv idf.py)" != *$'\nflash'* ]] || false
+  # a value with ; cannot be a CMake list item
+  printf 'esp_ENV_DEFINES_local := A="x;y"\n' >>make/project.mk
+  run make esp-build
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"cannot hold a ;"* ]] || false
+}
+
+@test "1.8 pio: every pio command gets the defines in PLATFORMIO_BUILD_FLAGS, split like shlex; release checks the stamp" {
+  fwproject 'fw:pio' "fw_PIO_ENV := esp32dev
+fw_ENV_DEFINES_staging := $ENV_STAGING
+fw_ENV_DEFINES_production := $ENV_PRODUCTION"
+  printf '[env:esp32dev]\nboard = esp32dev\n' >fw/platformio.ini
+  echo 1.0.0 >fw/VERSION
+  stub_cmd pio 'printf "%s\n" "$@" >>"$STUB_LOG/pio.argv"; printf "%s\n" "${PLATFORMIO_BUILD_FLAGS-unset}" >>"$STUB_LOG/pio.flags"; mkdir -p "$PWD/fw/.pio/build/esp32dev"; echo bin >"$PWD/fw/.pio/build/esp32dev/firmware.bin"'
+  PLATFORMIO_BUILD_FLAGS='-DFROM_ENV=1' run make fw-build ENV=staging
+  [ "$status" -eq 0 ]
+  flags="$(cat "$STUB_LOG/pio.flags")"
+  # what was in the environment stays, first
+  [ "$(shell_split "$flags" | head -n 1)" = "-DFROM_ENV=1" ]
+  [ "$(shell_split "$flags" | tail -n +2)" = "$(staging_defines)" ]
+  if command -v python3 >/dev/null 2>&1; then
+    [ "$(python3 -c 'import shlex, sys; print("\n".join(shlex.split(sys.argv[1])))' "$flags" | tail -n +2)" = "$(staging_defines)" ]
+  fi
+  [ "$(head -n 1 fw/.pio/build/esp32dev/std-env)" = "env=staging" ]
+  run make fw-release ENV=production CONFIRM=production NOBUILD=1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"was made for ENV=staging"* ]] || false
+  [ ! -f "$STUB_LOG/npx.argv" ]
+  # an upload builds, with the defines of its ENV, and stamps the env it built
+  : >"$PORTS_DIR/cu.usbserial-1"
+  rm -f "$STUB_LOG/pio.flags"
+  run make fw-flash ENV=production
+  [ "$status" -eq 0 ]
+  [ "$(shell_split "$(cat "$STUB_LOG/pio.flags")")" = "$(printf '%s\n' '-DCLOUD_URL="wss://api.example.com/d/ws"' '-DLOG_LEVEL=1')" ]
+  [ "$(head -n 1 fw/.pio/build/esp32dev/std-env)" = "env=production" ]
+  run make fw-release ENV=production CONFIRM=production NOBUILD=1
+  [ "$status" -eq 0 ]
+}
+
+@test "1.8 arm-gcc Makefile: STD_ENV_CFLAGS reaches the compiler through the project's Makefile, quoting intact" {
+  fwproject 'iface:arm-gcc' "iface_PROBE := dfu
+iface_ENV_DEFINES_staging := $ENV_STAGING
+iface_ENV_DEFINES_production := $ENV_PRODUCTION"
+  mkdir -p iface/build
+  printf '.PHONY: build clean\nbuild:\n\t@touch build/iface.elf\nclean:\n\t@rm -f build/iface.elf build/iface.bin\n' >iface/Makefile
+  run make iface-build ENV=staging
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"iface/Makefile never uses STD_ENV_CFLAGS"* ]] || false
+  printf '.PHONY: build clean\nCFLAGS += -O2 $(STD_ENV_CFLAGS)\nbuild:\n\t@arm-none-eabi-gcc $(CFLAGS) -c main.c\n\t@touch build/iface.elf\nclean:\n\t@echo CLEANED >>clean.log\n' >iface/Makefile
+  run make iface-build ENV=staging
+  [ "$status" -eq 0 ]
+  [ "$(argv arm-none-eabi-gcc | sed -n '2,6p')" = "$(staging_defines)" ]
+  [ "$(head -n 1 iface/build/std-env)" = "env=staging" ]
+  # no stamp before (a build from before 1.8, or none): the Makefile's clean ran first
+  [ "$(cat iface/clean.log)" = CLEANED ]
+  rm -f iface/clean.log
+  run make iface-build ENV=staging
+  [ "$status" -eq 0 ]
+  [ ! -f iface/clean.log ]
+  # another ENV: the Makefile's clean first, then the build with that ENV's defines
+  run make iface-flash ENV=production
+  [ "$status" -eq 0 ]
+  [ "$(cat iface/clean.log)" = CLEANED ]
+  argv arm-none-eabi-gcc | grep -qx -- '-DCLOUD_URL="wss://api.example.com/d/ws"'
+  [ "$(head -n 1 iface/build/std-env)" = "env=production" ]
+  run make iface-flash ENV=staging NOBUILD=1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"was made for ENV=production"* ]] || false
+}
+
+@test "1.8 arm-gcc CMake: the defines are in CFLAGS and CXXFLAGS when CMake configures a new build folder" {
+  fwproject 'iface:arm-gcc' "iface_ENV_DEFINES_staging := $ENV_STAGING"
+  mkdir -p iface
+  : >iface/CMakeLists.txt
+  stub_cmd cmake 'printf "%s\n" "$@" >>"$STUB_LOG/cmake.argv"; if [ "$1" = --build ]; then mkdir -p "$2"; : >"$2/iface.elf"; else printf "%s\n" "${CFLAGS-unset}|${CXXFLAGS-unset}" >>"$STUB_LOG/cmake.flags"; fi'
+  CFLAGS=-Os run make iface-build ENV=staging
+  [ "$status" -eq 0 ]
+  f="$(cat "$STUB_LOG/cmake.flags")"
+  [ "$(shell_split "${f%%|*}")" = "$(staging_defines; echo -Os)" ]
+  [ "$(shell_split "${f#*|}")" = "$(staging_defines)" ]
+  [ "$(head -n 1 iface/build/std-env)" = "env=staging" ]
+  rm -f "$STUB_LOG/cmake.flags"
+  run make iface-build
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$STUB_LOG/cmake.flags")" != *-D* ]] || false
+  [ "$(cat iface/build/std-env)" = "env=local" ]
+}
+
+@test "1.8: the shared firmware helper block (env defines among them) is the same in every firmware kind" {
+  ref="$(awk '/^ifndef STD_FW_HELPERS/,/^endif/' "$STD_TEMPLATES/kinds/espidf.mk")"
+  [[ $ref == *"std_fw_env_sh = "* ]] || false
+  for k in zephyr pio arm-gcc circuitpython silabs; do
+    [ "$(awk '/^ifndef STD_FW_HELPERS/,/^endif/' "$STD_TEMPLATES/kinds/$k.mk")" = "$ref" ] || { echo "differs: $k"; false; }
+  done
+}
