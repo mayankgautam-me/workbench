@@ -32,7 +32,7 @@
 # the project owns (project.mk, local.mk, README.md, PLAN.md, ...) are kept when they exist.
 set -euo pipefail
 
-readonly STD_VERSION=1.8
+readonly STD_VERSION=1.9
 SKILL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 readonly SKILL_DIR
 readonly TPL_MAKE="$SKILL_DIR/templates/make"
@@ -1650,6 +1650,11 @@ ci_job() {
   # a board with its own library tables (<part>_LIBRARY := local in make/project.mk): CI checks out no KiCad library
   if [[ $k == hardware && $(project_mk_value "${p}_LIBRARY") == local ]]; then
     printf '      library: local\n'
+  fi
+  # a Flutter part's release (<part>_FLUTTER_VERSION in make/project.mk): CI installs that Flutter (1.9; without it the
+  # workflow takes the part's .fvmrc, else the latest stable)
+  if [[ $k == app-flutter && -n $(project_mk_value "${p}_FLUTTER_VERSION") ]]; then
+    printf "      flutter_version: '%s'\\n" "$(project_mk_value "${p}_FLUTTER_VERSION")"
   fi
   # a push to main deploys staging (a production-only part: nothing)
   if [[ $mode == ci ]]; then

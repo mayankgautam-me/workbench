@@ -1,6 +1,6 @@
 # ci-templates
 
-The source of the reusable GitHub Actions workflows in `mayankgautam-me/ci-templates`, tagged `v1.8` (`v1.7`, `v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay,
+The source of the reusable GitHub Actions workflows in `mayankgautam-me/ci-templates`, tagged `v1.9` (`v1.8`, `v1.7`, `v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay,
 for the projects not updated yet). Each file here is one part kind, at `.github/workflows/<kind>.yml`, and it has
 only `on: workflow_call`. A project's `.github/workflows/checks.yml` (pushes and pull requests) and `release.yml`
 (tags) call them with `uses:`. Every script line calls `make`, so CI runs what a developer runs locally. The v8
@@ -17,7 +17,7 @@ on:
   pull_request:
 jobs:
   cloud-api:
-    uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.8
+    uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.9
     with:
       part: cloud-api
       part_dir: cloud/api
@@ -39,7 +39,7 @@ jobs:
   firmware:
     needs: tag
     if: needs.tag.outputs.part == 'firmware'
-    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.8
+    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.9
     with:
       part: firmware
       part_dir: firmware
@@ -66,7 +66,7 @@ permissions:
   contents: write
 jobs:
   firmware:
-    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.8
+    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.9
     with:
       part: firmware
       part_dir: firmware
@@ -97,6 +97,7 @@ not in these files: the project's `checks.yml` decides which parts run, with `pa
 | `deploy_staging` | boolean, `false` | cloud-worker, web-pages, docker: deploy to staging. |
 | `production_only` | boolean, `false` | cloud-worker, web-pages: the part has no staging, so `deploy-staging` is skipped. Production deploys the same way either way. |
 | `target` | string, `''` | app-flutter: the store target (`appbundle` by default, or `ios`). |
+| `flutter_version` | string, `''` | app-flutter: the Flutter release to install (`3.50.0`; the scaffold writes `<part>_FLUTTER_VERSION`). Empty: the part's `.fvmrc`, else the latest stable (1.9). |
 | `library` | string, `shared` | hardware: `shared` checks out the KiCad library (`KICAD_LIBRARY_REPO`) for the 3D models; `local` checks out none, for a board whose own `sym-lib-table` and `fp-lib-table` are its library (`<part>_LIBRARY := local`; the scaffold writes `library: local` on its jobs). |
 
 ## Secrets
@@ -185,12 +186,12 @@ as unconfirmed and check the usage report after the first arm64 run.
 | `altium` | check | Altium runs on Windows only, so CI checks the layout, the documents and the Git LFS pointers (no LFS pull); `run_build` and `run_release` do nothing. The Release is made where the OutJob's outputs are: `make <part>-github-release FORCE=1` |
 | `mechanical` | check, build, release | FreeCAD from Ubuntu 24.04 (0.21, not pinned): open and recompute every model, export STEP and STL; release attaches the exports and the models |
 | `app-tauri` | check, build, release-linux-amd64, release-linux-arm64, release-windows-x64, release-windows-arm64, release-macos (MACOS_CI), publish-ios (MACOS_CI, production), publish-android (production) | arm64 Windows builds NSIS only (make decides); `.aab`/mapping kept as artifacts for 7 days |
-| `app-flutter` | check, build, release-linux-amd64, release-linux-arm64, publish (production) | `publish` takes `target` |
+| `app-flutter` | check, build, release-linux-amd64, release-linux-arm64, publish (production) | `publish` takes `target`; on the runner, no image (1.9): Flutter at `flutter_version` from `subosito/flutter-action` (Linux arm64: from git at the release tag), the runner's Android SDK for build and publish, else `android-actions/setup-android` |
 | `app-xcode` | check, build, release-macos, publish (production) | all macOS, all gated by `MACOS_CI` |
 | `app-android` | check, build, publish (production) | no release job: the release files are made on the Mac (`make <part>-github-release FORCE=1 PLATFORM=android`), as in v8 |
 
 Images are pinned by tag or digest, as in v8: `node:22.22-bookworm`, `rust:1.99.1-bookworm`,
-`ghcr.io/cirruslabs/flutter:3.44.0`, `ghcr.io/cirruslabs/android-sdk:36`, `golang:1.27-bookworm`,
+`ghcr.io/cirruslabs/android-sdk:36`, `golang:1.27-bookworm`,
 `python:3.13-slim-bookworm`, `python:3.12-slim` (digest), `espressif/idf:v5.5` (digest),
 `ghcr.io/nrfconnect/sdk-nrf-toolchain:v3.2.1` (digest), `debian:trixie-20261104-slim` (digest),
 `kicad/kicad:10.0.8` (digest). The docker and circuitpython builds use the runner's Docker, not Docker in Docker.

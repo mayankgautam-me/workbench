@@ -149,12 +149,55 @@ SH
 }
 
 @test "flutter check runs the format check, analyze and tests" {
-  mkdir -p "$P/app/fl/test"
+  mkdir -p "$P/app/fl/test" "$P/app/fl/lib"
+  : > "$P/app/fl/lib/main.dart"
   run make -C "$P" fl-check
   [ "$status" -eq 0 ]
-  grep -q '^dart format --output=none --set-exit-if-changed \.' "$STUB_LOG"
+  grep -q '^dart format --output=none --set-exit-if-changed .*lib/main\.dart' "$STUB_LOG"
   grep -q '^flutter analyze' "$STUB_LOG"
   grep -q '^flutter test' "$STUB_LOG"
+}
+
+# 1.9: `dart format .` also formatted the generated, gitignored Dart files of a build (build/ios/SourcePackages after an
+# iOS build), so the check failed on a clean tree. Only the project's own files are formatted and checked.
+@test "flutter check and format leave build/ and .dart_tool/ alone outside git" {
+  d="$P/app/fl"
+  mkdir -p "$d/lib/src" "$d/test" "$d/build/ios/SourcePackages/x" "$d/.dart_tool/y"
+  : > "$d/lib/main.dart"; : > "$d/lib/src/a b.dart"; : > "$d/test/w_test.dart"
+  : > "$d/build/ios/SourcePackages/x/gen.dart"; : > "$d/.dart_tool/y/gen.dart"
+  run make -C "$P" fl-check
+  [ "$status" -eq 0 ]
+  line=$(grep '^dart format --output=none' "$STUB_LOG")
+  [[ $line == *lib/main.dart* && $line == *"lib/src/a b.dart"* && $line == *test/w_test.dart* ]]
+  [[ $line != *build/* && $line != *.dart_tool* ]]
+  : > "$STUB_LOG"
+  run make -C "$P" fl-format
+  [ "$status" -eq 0 ]
+  line=$(grep '^dart format' "$STUB_LOG")
+  [[ $line == *lib/main.dart* && $line != *build/* && $line != *.dart_tool* && $line != *" ." ]]
+}
+
+@test "flutter check in git formats the tracked and new files, not the ignored ones" {
+  command -v git >/dev/null 2>&1 || skip "git is not installed"
+  d="$P/app/fl"
+  mkdir -p "$d/lib" "$d/build/ios/SourcePackages" "$d/ios/.symlinks/plugins/p/lib"
+  : > "$d/lib/main.dart"; : > "$d/lib/new.dart"
+  : > "$d/build/ios/SourcePackages/gen.dart"; : > "$d/ios/.symlinks/plugins/p/lib/p.dart"
+  printf 'build/\n.dart_tool/\nios/.symlinks/\n' > "$d/.gitignore"
+  git -C "$P" init -q
+  git -C "$P" add app/fl/lib/main.dart app/fl/.gitignore
+  run make -C "$P" fl-check
+  [ "$status" -eq 0 ]
+  line=$(grep '^dart format --output=none' "$STUB_LOG")
+  [[ $line == *lib/main.dart* && $line == *lib/new.dart* ]]
+  [[ $line != *build/* && $line != *.symlinks* ]]
+}
+
+@test "flutter check with no Dart files skips the format check and still analyzes" {
+  run make -C "$P" fl-check
+  [ "$status" -eq 0 ]
+  ! grep -q '^dart format' "$STUB_LOG"
+  grep -q '^flutter analyze' "$STUB_LOG"
 }
 
 @test "flutter build TARGET=ios compiles without code signing" {

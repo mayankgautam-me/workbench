@@ -181,7 +181,7 @@ firmware_BOARD := nrf9151dk/nrf9151/ns
 | `python` | Python packages and services | uv, ruff, pytest |
 
 Per-part settings are `<part>_<VAR> := value` in `project.mk` (each kind file documents its own:
-`_BOARD`, `_NCS`, `_ZEPHYR`, `_TARGET`, `_IDF`, `_SDK`, `_WISECONNECT`, `_LIBRARY`, `_PORT_OFFSET`, `_URL_<env>`,
+`_BOARD`, `_NCS`, `_ZEPHYR`, `_TARGET`, `_IDF`, `_SDK`, `_WISECONNECT`, `_LIBRARY`, `_FLUTTER_VERSION`, `_PORT_OFFSET`, `_URL_<env>`,
 `_SCHEME`, `_IMAGE`, ...). A value on the command line wins.
 
 Firmware SDKs are pinned per part and installed once per machine into `~/.toolchains/<tool>-<version>`
@@ -1077,10 +1077,10 @@ of the project's repository (from stdin, never on a command line), adds the publ
 ## 6. CI/CD
 
 The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/name`, default
-`mayankgautam-me/ci-templates`), tagged `v1.8` (`v1.7`, `v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
+`mayankgautam-me/ci-templates`), tagged `v1.9` (`v1.8`, `v1.7`, `v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
 own, independent of the project's `GITHUB_OWNER`: projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.8`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.9`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -1398,6 +1398,24 @@ the project's owner's, 5.1), `STD_CONFIG` (default `~/.config/project-standard`)
 Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) and the number in a project's `make/VERSION`, its managed
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
+
+- **1.9** (2026-11-24): app-flutter builds on the project's Flutter and checks only its own Dart files. `make/VERSION`,
+  the managed headers and the workflows' `@v1.9` say 1.9; `mayankgautam-me/ci-templates` gets the tag `v1.9` and keeps
+  `v1.8` to `v1.0`.
+  - CI: the app-flutter workflow runs on the runner, not in `ghcr.io/cirruslabs/flutter:3.44.0` (no newer image is
+    published, so a Flutter 3.50 / Dart 3.14 part failed `pub get`). Each job installs Flutter with
+    `subosito/flutter-action` (pinned by commit SHA) at the new input `flutter_version`, which the scaffold writes from
+    `<part>_FLUTTER_VERSION` in `make/project.mk`; without it, the part's `.fvmrc`, else the latest stable. Linux arm64
+    has no Flutter archive, so there it comes from git at the release tag. build and publish use the runner's Android
+    SDK, or `android-actions/setup-android` on a runner without one.
+  - `make <part>-check` and `<part>-format` format the part's own Dart files (git: tracked and new, not ignored;
+    outside git: all but `build/` and `.dart_tool/`), not `.`: the generated Dart under `build/` (an iOS build's
+    `SourcePackages`) failed the check on a clean tree.
+  - `make audit` warns when `<part>_FLUTTER_VERSION` is set and a job of the part in `checks.yml` or `release.yml`
+    does not pass it as `flutter_version`.
+  Update from 1.8: refresh the managed files and move the `uses:` lines to `@v1.9`. A Flutter part sets
+  `<part>_FLUTTER_VERSION := <x.y.z>` (its `flutter --version`) and gets `flutter_version: '<x.y.z>'` on its jobs in
+  `checks.yml` and `release.yml` (by hand, or `scaffold.sh` on a new workflow file).
 
 - **1.8** (2026-11-24): a firmware build for an environment. `make/VERSION`, the managed headers and the workflows'
   `@v1.8` say 1.8; `mayankgautam-me/ci-templates` gets the tag `v1.8` and keeps `v1.7` to `v1.0`.

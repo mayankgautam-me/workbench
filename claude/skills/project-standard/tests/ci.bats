@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 bats_require_minimum_version 1.5.0
-# The reusable GitHub workflows in ci-templates/.github/workflows/ (v1.8). Parsed with PyYAML and checked on the raw
+# The reusable GitHub workflows in ci-templates/.github/workflows/ (v1.9). Parsed with PyYAML and checked on the raw
 # text, so the comments count too. Nothing here runs a workflow: a real run needs the repo, the secrets and the runners.
 
 WF="$BATS_TEST_DIRNAME/../ci-templates/.github/workflows"
@@ -29,6 +29,10 @@ PINS = {
     # the restore and save halves of actions/cache, same repo and pin (zephyr: save right after setup)
     "actions/cache/restore": "55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
     "actions/cache/save": "55cc8345863c7cc4c66a329aec7e433d2d1c52a9",
+    # app-flutter (1.9): Flutter on the runner at the project's version (no image has 3.50), and the Android SDK on a
+    # runner without one; the only actions outside actions/*
+    "subosito/flutter-action": "1a449444c387b1966244ae4d4f8c696479add0b2",
+    "android-actions/setup-android": "be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd",
 }
 VARS = {"SECRETS_REPO", "KICAD_LIBRARY_REPO", "ALTIUM_LIBRARY_REPO", "KICAD_LIB_PREFIX", "STD_APT_PACKAGES", "STD_IBOM_COMMIT", "MACOS_CI", "STD_RUNNER", "STD_RUNNER_WINDOWS", "STD_RUNNER_MACOS", "STD_RUNNER_LINUX_ARM"}
 SETUP_STEP = re.compile(r"^(Install|Check out|Git setting|Get |Keep |Log in|Export)")
@@ -75,10 +79,10 @@ def check_names():
     for f in files:
         first = open(f).readline()
         kind = os.path.basename(f)[:-4]
-        if f"project-standard ci-templates v1.8: {kind}" not in first:
-            fails.append(f"{kind}.yml: header line does not name v1.8 and the kind")
-        if f"workflows/{kind}.yml@v1.8" not in open(f).read():
-            fails.append(f"{kind}.yml: header has no uses: line with @v1.8")
+        if f"project-standard ci-templates v1.9: {kind}" not in first:
+            fails.append(f"{kind}.yml: header line does not name v1.9 and the kind")
+        if f"workflows/{kind}.yml@v1.9" not in open(f).read():
+            fails.append(f"{kind}.yml: header has no uses: line with @v1.9")
 
 
 def check_uses():
@@ -245,7 +249,7 @@ PY
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
 
-@test "there is one workflow per kind, named for the kind, with the v1.8 header and the uses: line" {
+@test "there is one workflow per kind, named for the kind, with the v1.9 header and the uses: line" {
   run check names
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
@@ -255,7 +259,7 @@ PY
   [ ! -e "$BATS_TEST_DIRNAME/../templates/project/.gitlab-ci.yml" ]
 }
 
-@test "every uses: is one of the five actions/* pinned by a full SHA with a version comment" {
+@test "every uses: is one of the five actions/* (or the two app-flutter setup actions) pinned by a full SHA with a version comment" {
   run check uses
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
@@ -367,19 +371,19 @@ PY
 
 @test "the README and the workflows name the public mayankgautam-me/ci-templates, with no Access step for it (1.7)" {
   README="$BATS_TEST_DIRNAME/../ci-templates/README.md"
-  grep -q 'uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.8' "$README"
+  grep -q 'uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.9' "$README"
   [ "$(grep -c '<owner>/ci-templates' "$README")" -eq 0 ]
   [ "$(grep -c 'Accessible from repositories owned by the same user' "$README")" -eq 0 ]
   grep -q 'This repository is public' "$README"
   for f in "$WF"/*.yml; do
-    grep -q "uses: mayankgautam-me/ci-templates/.github/workflows/$(basename "$f")@v1.8" "$f" ||
+    grep -q "uses: mayankgautam-me/ci-templates/.github/workflows/$(basename "$f")@v1.9" "$f" ||
       { echo "$f does not name mayankgautam-me/ci-templates"; false; }
   done
 }
 
-@test "the README documents the v1.8 call shape, the inputs, the secrets and the four variables" {
+@test "the README documents the v1.9 call shape, the inputs, the secrets and the four variables" {
   README="$BATS_TEST_DIRNAME/../ci-templates/README.md"
-  grep -q 'workflows/cloud-worker.yml@v1.8' "$README"
+  grep -q 'workflows/cloud-worker.yml@v1.9' "$README"
   for v in SECRETS_REPO KICAD_LIBRARY_REPO STD_APT_PACKAGES MACOS_CI SECRETS_DEPLOY_KEY SOPS_AGE_KEY KICAD_LIBRARY_DEPLOY_KEY; do
     grep -q "$v" "$README" || { echo "README does not mention $v"; false; }
   done
@@ -434,4 +438,41 @@ for x in fails:
     print(x)
 sys.exit(1 if fails else 0)
 PY
+}
+
+@test "app-flutter installs the project's Flutter on the runner (1.9): no 3.44 image, flutter_version input, Android SDK for build and publish" {
+  python3 - "$WF/app-flutter.yml" <<'PY'
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+fails = []
+ins = d.get("on", d.get(True))["workflow_call"]["inputs"]
+if ins.get("flutter_version", {}).get("type") != "string" or ins["flutter_version"].get("default") != "":
+    fails.append("no flutter_version string input defaulting to ''")
+for jid, job in d["jobs"].items():
+    if "container" in job:
+        fails.append(f"{jid}: still runs in a container")
+    steps = job["steps"]
+    uses = [str(s.get("uses", "")) for s in steps]
+    ids = [s.get("id") for s in steps]
+    fl = [i for i, u in enumerate(uses) if u.startswith("subosito/flutter-action@")]
+    if len(fl) != 1:
+        fails.append(f"{jid}: {len(fl)} Flutter installs")
+        continue
+    w = steps[fl[0]]["with"]
+    if "steps.flutter-version.outputs.version" not in str(w.get("flutter-version")) or "flutter-version" not in ids[:fl[0]]:
+        fails.append(f"{jid}: Flutter version not from the flutter-version step")
+    vstep = steps[ids.index("flutter-version")]
+    if "inputs.flutter_version" not in str(vstep.get("env")) or ".fvmrc" not in vstep["run"]:
+        fails.append(f"{jid}: the version step does not read the input and .fvmrc")
+    setup = [i for i, s in enumerate(steps) if "PART-setup" in str(s.get("run", ""))]
+    if not setup or setup[0] < fl[0]:
+        fails.append(f"{jid}: Flutter is installed after make setup")
+    android = any(u.startswith("android-actions/setup-android@") for u in uses)
+    if android != (jid in ("build", "publish")):
+        fails.append(f"{jid}: Android SDK step {'missing' if not android else 'unexpected'}")
+for s in fails:
+    print(s)
+sys.exit(1 if fails else 0)
+PY
+  ! grep -q 'cirruslabs/flutter' "$WF/app-flutter.yml"
 }

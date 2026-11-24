@@ -1177,6 +1177,26 @@ if [[ -d $WF ]]; then
             "add 'confirm: production' under with: of job $pn-release (scaffold a scratch project to see the job)"
         fi
         ;;
+      # 1.9: CI installs the Flutter of flutter_version (from <part>_FLUTTER_VERSION), else the part's .fvmrc, else the
+      # latest stable (no pin is no finding); a pinned version that the jobs do not pass is not the one CI builds with
+      app-flutter)
+        flv=''
+        [[ ! -f "$DIR/make/project.mk" ]] || flv=$(make_var "$DIR/make/project.mk" "${pn}_FLUTTER_VERSION")
+        [[ -n $flv ]] || continue
+        for wf in checks release; do
+          f="$WF/$wf.yml" job="  $pn:"
+          [[ $wf == checks ]] || job="  $pn-release:"
+          [[ -f $f ]] || continue
+          if ! awk -v job="$job" -v want="$flv" '
+              $0 == job { in_job = 1; next }
+              in_job && /^  [^ #]/ { exit }
+              in_job && /^[[:space:]]+flutter_version:/ { v = $0; sub(/^[^:]*:[[:space:]]*/, "", v); gsub(/["\047[:space:]]/, "", v); found = (v == want); exit }
+              END { exit !found }' "$f"; then
+            add warn ci ".github/workflows/$wf.yml" "job ${job#  } does not pass ${pn}_FLUTTER_VERSION ($flv), so CI builds with another Flutter" \
+              "add flutter_version: '$flv' under with: of job ${job#  }"
+          fi
+        done
+        ;;
     esac
   done
 fi

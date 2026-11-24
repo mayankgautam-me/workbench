@@ -262,6 +262,10 @@ Read-only until the user says yes.
    repository the audit names (`CI_TEMPLATES_REPO`, default `mayankgautam-me/ci-templates`, independent of
    `GITHUB_OWNER`; a line on the pre-1.7 `<owner>/ci-templates` is reported outdated) and the current version tag
    (`v` + `make/VERSION`); and add jobs for kinds that were added.
+   From v1.8 to v1.9: re-copy the managed files and set every `uses:` line to `@v1.9`. A Flutter part gets
+   `<part>_FLUTTER_VERSION := <x.y.z>` in `make/project.mk` (the version its `pubspec.yaml` needs; `flutter --version`)
+   and `flutter_version: '<x.y.z>'` under `with:` of its jobs in `checks.yml` and `release.yml`: CI installs that
+   Flutter instead of the old 3.44 image.
    From v1.7 to v1.8: re-copy the managed files and set every `uses:` line to `@v1.8`. A firmware part whose build
    should differ per env gets `<part>_ENV_DEFINES_<env>` (and, for espidf, the `CMakeLists.txt` block; for an arm-gcc
    Makefile, `CFLAGS += $(STD_ENV_CFLAGS)`), then `make <part>-build ENV=staging` to check it.

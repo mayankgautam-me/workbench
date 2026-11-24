@@ -317,7 +317,7 @@ Vite, `<dir>/out` for Next, `<dir>` for a static site. Package binaries run thro
 |---|---|
 | setup / doctor | `flutter pub get`, `pod install` / `flutter doctor` |
 | dev | `flutter run` with hot reload on `DEVICE` |
-| check / test / format | `dart format` check, `flutter analyze`, `flutter test` / `dart format` |
+| check / test / format | `dart format` check, `flutter analyze`, `flutter test` / `dart format`; only the part's own Dart files (git: tracked and new, not ignored), never `build/` or `.dart_tool/` (1.9) |
 | build | `TARGET=apk\|appbundle\|ios\|macos\|linux\|web`, release mode |
 | release | `TARGET=ios` to TestFlight, or the app bundle to the Play track `TRACK`; signing keys from the secrets repo (`CONFIRM=production`) |
 | logs | App log from the Android device or the iOS simulator |

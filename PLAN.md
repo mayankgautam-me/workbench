@@ -330,6 +330,9 @@ needs: [instructions, detect, bootstrap]
 - [x] 1.3: scaffold --force on an existing repo does not suggest git init {#std-1-3-scaffold-hint}
 - [x] 1.3: audit warns on trailing comments after := in an existing make/project.mk {#std-1-3-audit-projectmk-comments}
 - [x] 1.3: publish ci-templates v1.3 tag and update CoreLink {#std-1-3-publish}
+- [x] 1.9: app-flutter CI installs the project's Flutter (flutter_version from <part>_FLUTTER_VERSION, subosito/flutter-action on the runner; no 3.44 image) {#std-1-9-flutter-ci}
+- [x] 1.9: app-flutter check/format only the part's own Dart files, never build/ or .dart_tool/ {#std-1-9-flutter-format}
+- [x] 1.9: tests, publish ci-templates v1.9 tag {#std-1-9-publish}
 
 ## Workbench {#workbench}
 tech: zsh, Brewfile, defaults, symlinks

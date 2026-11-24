@@ -1,4 +1,4 @@
-# project-standard v1.8 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.9 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind app-flutter: a Flutter application (iOS, Android, and desktop or web targets).
 #
@@ -6,6 +6,8 @@
 #   <name>_APP_ID           Android application id and iOS bundle id, used by release and logs
 #   <name>_ASC_KEY_ID       App Store Connect API key id (ios release)
 #   <name>_ASC_ISSUER       App Store Connect issuer id (ios release)
+#   <name>_FLUTTER_VERSION  the Flutter release CI installs (3.50.0): the scaffold writes it as the workflow's
+#                           flutter_version. Without it CI takes the part's .fvmrc, else the latest stable (1.9)
 #
 # Command line:  TARGET=apk|appbundle|ios|macos|linux|web   (build, dev, release; default apk, release default appbundle)
 #                DEVICE=<id>  TRACK=<play track, default internal>  TEST=<name>  FLUTTER_ARGS='...'
@@ -14,6 +16,14 @@
 # else from PATH. Signing keys come from the central secrets: the App Store API key (keys/appstore-api-key)
 # and the Play service account (keys/play-service-account) are handed over as a mode-600 temp file
 # through `secrets.sh with-file`, so their values never appear in a command line or on disk.
+
+# The project's own Dart files of the part (run in its folder): tracked or new and not ignored, so the generated code
+# under build/ (an iOS build's SourcePackages), .dart_tool/ and ios/.symlinks is never formatted or checked. Outside
+# git: every .dart file but those under build/ and .dart_tool/. Read into the array dart_files (bash 3.2: no mapfile).
+app_flutter_dart_files = dart_files=(); \
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then list() { git ls-files -z --cached --others --exclude-standard -- '*.dart'; }; \
+  else list() { find . \( -path ./build -o -path ./.dart_tool \) -prune -o -name '*.dart' -type f -print0; }; fi; \
+  while IFS= read -r -d '' f; do if [ -f "$$f" ]; then dart_files+=("$$f"); fi; done < <(list)
 
 # Prefix in front of flutter and dart for the part at $(1): the fvm SDK, mise, or nothing.
 app_flutter_prefix = $(if $(wildcard $(1)/.fvm/flutter_sdk/bin/flutter),$(CURDIR)/$(1)/.fvm/flutter_sdk/bin/,$(if $(shell grep -qs flutter $(1)/mise.toml && echo yes),mise exec -- ,))
@@ -102,7 +112,8 @@ $(1)-dev:
 $(call std_verb,$(1),check,test,Format check analyze and tests of the app)
 $(1)-check:
 	@set -euo pipefail; cd $(2); \
-	$$($(1)_DT) format --output=none --set-exit-if-changed .; \
+	$$(app_flutter_dart_files); \
+	if [ $$$${#dart_files[@]} -gt 0 ]; then $$($(1)_DT) format --output=none --set-exit-if-changed "$$$${dart_files[@]}"; fi; \
 	$$($(1)_FL) analyze; \
 	if [ -d test ]; then $$($(1)_FL) test; fi
 
@@ -112,7 +123,9 @@ $(1)-test:
 
 $(call std_verb,$(1),format,test,Rewrite the formatting of the Dart code)
 $(1)-format:
-	@cd $(2) && $$($(1)_DT) format .
+	@set -euo pipefail; cd $(2); \
+	$$(app_flutter_dart_files); \
+	if [ $$$${#dart_files[@]} -gt 0 ]; then $$($(1)_DT) format "$$$${dart_files[@]}"; else echo "$(1): no Dart files"; fi
 
 $(call std_verb,$(1),build,app,Build TARGET apk appbundle ios macos linux or web in release mode without signing for ios)
 $(1)-build:
