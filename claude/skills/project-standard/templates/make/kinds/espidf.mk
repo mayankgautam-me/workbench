@@ -1,4 +1,4 @@
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind espidf: an ESP-IDF firmware part (idf.py, one build per chip target).
 #
@@ -260,7 +260,7 @@ espidf_update = $(STD_FW_SH) \
 
 # Reads the eFuse summary of the chip on $$port into $$sum and SPI_BOOT_CRYPT_CNT into $$cnt/$$bits.
 espidf_efuse_state = sum=$$(python -m espefuse --chip $($(1)_T) -p "$$port" summary 2>/dev/null || true); \
-  cnt=$$(printf '%s\n' "$$sum" | grep 'SPI_BOOT_CRYPT_CNT' | grep -oE '0b[01]+' | head -n 1 || true); \
+  cnt=$$(printf '%s\n' "$$sum" | grep 'SPI_BOOT_CRYPT_CNT' | grep -oE '0b[01]+' | sed -n 1p || true); \
   [ -n "$$cnt" ] || die "could not read SPI_BOOT_CRYPT_CNT on $$port (wrong chip, not $($(1)_T)? port busy?): refusing to guess"; \
   bits=$$(printf '%s' "$$cnt" | sed 's/^0b//' | tr -cd 1 | wc -c | tr -d ' '); \
   xts=$$(printf '%s\n' "$$sum" | grep -E '^KEY_PURPOSE_[0-9]' | grep -c 'XTS_AES' || true); \

@@ -338,6 +338,10 @@ needs: [instructions, detect, bootstrap]
 - [x] 1.10: <part>-android-sdk installs SDK packages with the android CLI, sdkmanager as fallback {#std-1-10-android-sdk}
 - [x] 1.10: hardware kind runs kicad-cli with a minimal fontconfig on macOS (no Homebrew conf.d warnings) {#std-1-10-kicad-fontconfig}
 - [x] 1.10: version, docs, tests, publish ci-templates v1.10 tag {#std-1-10-publish}
+- [x] 1.11: secrets-import FORCE=1 replaces a key file (atomic, refused without it); keygen keeps refusing {#std-1-11-import-force}
+- [x] 1.11: no `producer | grep -q` under pipefail (false "not in schema" rows in secrets-list, hook and cf.sh checks) {#std-1-11-grep-q}
+- [x] 1.11: bats tests for both {#std-1-11-tests}
+- [x] 1.11: version, docs, full bats suite, publish ci-templates v1.11 tag {#std-1-11-publish}
 
 ## Workbench {#workbench}
 tech: zsh, Brewfile, defaults, symlinks

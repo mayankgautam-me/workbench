@@ -262,6 +262,9 @@ Read-only until the user says yes.
    repository the audit names (`CI_TEMPLATES_REPO`, default `mayankgautam-me/ci-templates`, independent of
    `GITHUB_OWNER`; a line on the pre-1.7 `<owner>/ci-templates` is reported outdated) and the current version tag
    (`v` + `make/VERSION`); and add jobs for kinds that were added.
+   From v1.10 to v1.11: re-copy the managed files and set every `uses:` line to `@v1.11`. Nothing else is required:
+   `make secrets-import NAME= FILE= FORCE=1` now replaces an existing key (refused without `FORCE=1`), and
+   `make secrets-list` no longer shows false `not in schema` rows.
    From v1.9 to v1.10: re-copy the managed files (a new one, `make/bin/store-ios.sh`) and set every `uses:` line to
    `@v1.10`. Nothing else is required: `make deploy` now checks and builds only the parts that deploy, kicad-cli runs
    without Homebrew's fontconfig warnings on macOS, and `make <part>-android-sdk` (app-flutter, app-android) installs

@@ -1,4 +1,4 @@
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind pio: a PlatformIO firmware part (platformio.ini in the part dir).
 #
@@ -261,7 +261,7 @@ pio_setup =$(STD_FW_SH) $(pio_need) say "pio pkg install for $(1)"; pio pkg inst
 pio_ready = $(call std_fresh,$(CURDIR)/$(2),.pio/.std-setup,platformio.ini)
 
 pio_doctor = $(STD_FW_SH) say "$(1): pio$(if $($(1)_E), env $($(1)_E))"; \
-  if have pio; then ok "$$(pio --version 2>/dev/null | head -n 1)"; else bad "pio missing: mise install (mise.toml pins platformio)"; fi; \
+  if have pio; then ok "$$(pio --version 2>/dev/null | sed -n 1p)"; else bad "pio missing: mise install (mise.toml pins platformio)"; fi; \
   $(call std_doctor_started,$(1),$(2)) \
   $(if $($(1)_E),if [ -f "$(CURDIR)/$(2)/platformio.ini" ] && ! grep -q '^\[env:$($(1)_E)\]' "$(CURDIR)/$(2)/platformio.ini"; then bad "no [env:$($(1)_E)] in platformio.ini"; fi;) \
   if [ -d "$(CURDIR)/$(2)/.pio" ]; then ok "packages and build in $(2)/.pio"; else warn "nothing built yet: make $(1)-setup then make $(1)-build"; fi; \

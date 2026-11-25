@@ -1,4 +1,4 @@
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # The stage commands, the same in every project. GNU make 3.81 compatible (macOS /usr/bin/make):
 # no .ONESHELL, .SHELLFLAGS, $(file), .RECIPEPREFIX, undefine, != or ::=.
@@ -217,7 +217,7 @@ STD_ANDROID_HOME := $(or $(ANDROID_HOME),$(ANDROID_SDK_ROOT),$(if $(filter Darwi
 # from PATH or the SDK's cmdline-tools/latest. Packages already installed are left as they are.
 std_android_sdk = set -euo pipefail; sdk="$(STD_ANDROID_HOME)"; mkdir -p "$$sdk"; \
   pk=$$(printf '%s\n' $(foreach p,$(1),'$(p)') | tr ';' '/' | tr '\n' ' '); \
-  if command -v android >/dev/null 2>&1 && android --no-metrics sdk install --help 2>/dev/null | grep -q 'Installs SDK packages'; then \
+  if command -v android >/dev/null 2>&1 && [ "$$(android --no-metrics sdk install --help 2>/dev/null | grep -c 'Installs SDK packages' || true)" != 0 ]; then \
     echo "android sdk install $$pk into $$sdk"; android --no-metrics --sdk="$$sdk" sdk install $$pk; \
   else \
     sm=$$(command -v sdkmanager 2>/dev/null || true); \
@@ -495,7 +495,7 @@ $(call std_h,cloudflare,cf-wipe,Back up; then delete the data and keep the resou
 $(call std_h,cloudflare,cf-destroy,Back up; then delete the resources of ENV (needs CONFIRM=<env>; R2 needs R2_UNBACKED=1))
 $(call std_h,secrets,secrets-init,Create this project's secrets from secrets.schema (GEN=1 generates values))
 $(call std_h,secrets,secrets-set,Set one value: NAME=<name> ENV=<env>; hidden prompt)
-$(call std_h,secrets,secrets-import,Import a key file (NAME= FILE=) or a dotenv file (FILE= ENV=))
+$(call std_h,secrets,secrets-import,Import a key file (NAME= FILE=) or a dotenv file (FILE= ENV=); FORCE=1 replaces what exists)
 $(call std_h,secrets,secrets-edit,Edit the values of ENV=local or common in sops (staging and production: secrets-set))
 $(call std_h,secrets,secrets-list,Names; environments and users; no values)
 $(call std_h,secrets,secrets-check,Missing names; wrong recipients; tracked secret files; gitleaks)
@@ -783,7 +783,7 @@ secrets-init:
 secrets-set:
 	@$(call std_production_guard) && $(call std_need,NAME) && $(STD_SECRETS) set "$$NAME" --project "$(PROJECT)" --env "$(ENV)"
 secrets-import:
-	@$(call std_production_guard) && $(call std_need,FILE) && $(if $(filter command line,$(origin ENV)),$(STD_SECRETS) import --file "$$FILE" --project "$(PROJECT)" --env "$(ENV)" $(if $(FORCE),--force),$(call std_need,NAME) && $(STD_SECRETS) import "$$NAME" --file "$$FILE" --project "$(PROJECT)" $(if $(FORCE),--force))
+	@$(call std_production_guard) && $(call std_need,FILE) && $(if $(filter command line,$(origin ENV)),$(STD_SECRETS) import --file "$$FILE" --project "$(PROJECT)" --env "$(ENV)" $(std_force),$(call std_need,NAME) && $(STD_SECRETS) import "$$NAME" --file "$$FILE" --project "$(PROJECT)" $(std_force))
 secrets-edit:
 	@$(call std_production_guard) && $(STD_SECRETS) edit --project "$(PROJECT)" --env "$(ENV)"
 secrets-list:
@@ -850,7 +850,7 @@ ci-setup:
 	  if [ -f "$$f" ]; then log_info "deploy key $$f exists"; \
 	  else ssh-keygen -q -t ed25519 -N '' -C "$(PROJECT)-ci-$$1" -f "$$f" || die "ssh-keygen failed"; log_ok "created $$f"; fi; \
 	  pub="$$(cut -d' ' -f1,2 "$$f.pub")"; \
-	  if gh repo deploy-key list --repo "$$2" --json key -q '.[].key' 2>/dev/null | grep -qxF "$$pub"; then log_info "its public key is already a deploy key of $$2"; \
+	  if [ "$$(gh repo deploy-key list --repo "$$2" --json key -q '.[].key' 2>/dev/null | grep -cxF "$$pub" || true)" != 0 ]; then log_info "its public key is already a deploy key of $$2"; \
 	  else gh repo deploy-key add "$$f.pub" --repo "$$2" --title "$(PROJECT)-ci-read-only" >/dev/null || die "could not add the deploy key to $$2"; \
 	    log_ok "read-only deploy key added to $$2"; fi; \
 	  gh secret set "$$3" --repo "$$repo" <"$$f" || die "could not set the secret $$3 of $$repo"; \

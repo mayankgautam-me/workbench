@@ -45,7 +45,7 @@ std_setup_env() {
 mkproject() {
   local dir="$1" text="$2"
   mkdir -p "$dir/make/kinds"
-  printf '# project-standard v1.10 (managed: test)\ninclude make/project.mk\ninclude make/common.mk\n' >"$dir/Makefile"
+  printf '# project-standard v1.11 (managed: test)\ninclude make/project.mk\ninclude make/common.mk\n' >"$dir/Makefile"
   printf '%s\n' "$text" >"$dir/make/project.mk"
   cp "$STD_TEMPLATES/common.mk" "$dir/make/common.mk"
   mkdir -p "$dir/make/bin"

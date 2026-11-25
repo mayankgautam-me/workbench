@@ -1,4 +1,4 @@
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind python: a Python project managed by uv (pyproject.toml, uv.lock), with ruff and pytest.
 #
@@ -60,7 +60,7 @@ $(1)-release: $(1)-check $(1)-build
 
 $(call std_verb,$(1),version,setup,Print the version from pyproject.toml)
 $(1)-version:
-	@sed -n 's/^version *= *"\(.*\)"/\1/p' $(2)/pyproject.toml | head -n 1
+	@sed -n 's/^version *= *"\(.*\)"/\1/p' $(2)/pyproject.toml | sed -n 1p
 
 $(call std_release,$(1),python,$(2),python_release_assets,build)
 

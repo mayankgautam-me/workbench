@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # What this project uses from the shared machine, what the standard installed there, and the commands that undo it:
 # `make teardown` (this project) and `make prune` (the whole machine). make runs it from the project root; STD_PROJECT_DIR
@@ -323,7 +323,7 @@ cmd_rustup_add() {
   list="$(rustup target list --installed --toolchain "$tc" 2>/dev/null)" || listed=0
   for t in "$@"; do
     tc_line_ok "rustup $tc $t" || continue
-    if [ "$listed" -eq 1 ] && printf '%s\n' "$list" | grep -Fxq -- "$t"; then
+    if [ "$listed" -eq 1 ] && has_match "$list" -Fx -- "$t"; then
       tc_record_add rustup "$tc $t"
     elif rustup target add --toolchain "$tc" "$t" >/dev/null 2>&1; then
       tc_record_add rustup "$tc $t"
@@ -337,7 +337,7 @@ cmd_rustup_add() {
 # --- other records ------------------------------------------------------------------------------
 
 # tc_record_path FILE   the project folder a record names.
-tc_record_path() { tc_norm <"$1" | sed -n 's/^path //p' | head -n 1; }
+tc_record_path() { tc_norm <"$1" | sed -n 's/^path //p' | sed -n 1p; }
 
 # tc_path_state PATH   live (a folder), stale (gone, its parent is there) or unreachable (the parent is missing too, or it is
 # on a drive that is not mounted).
@@ -479,7 +479,7 @@ tc_classify() {
         C_STATE=keep C_WHY="cannot tell the host target"
       elif [ "$target" = "$host" ]; then
         C_STATE=keep C_WHY="host target"
-      elif rustup target list --installed --toolchain "$tc" 2>/dev/null | grep -Fxq -- "$target"; then
+      elif has_match "$(rustup target list --installed --toolchain "$tc" 2>/dev/null)" -Fx -- "$target"; then
         C_STATE=remove
         p="${RUSTUP_HOME:-$HOME/.rustup}/toolchains/$tc/lib/rustlib/$target"
         if [ -d "$p" ]; then C_PATH="$p"; fi

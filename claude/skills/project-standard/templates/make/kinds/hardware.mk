@@ -1,4 +1,4 @@
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind hardware: a KiCad board (one .kicad_pro per part dir), driven by kicad-cli.
 #
@@ -88,7 +88,7 @@ hw_locks = locks=$$(ls -d "$$d"/*.lck 2>/dev/null || true);
 
 # Sets rev: <dir>/VERSION, else the title block rev of the board ("Version 2" -> 2).
 hw_rev = rev=; if [ -f "$$d/VERSION" ]; then rev=$$(head -n 1 "$$d/VERSION" | tr -d '[:space:]'); fi; \
-  if [ -z "$$rev" ] && [ -f "$$pcb" ]; then rev=$$(sed -nE 's/^[[:space:]]*\(rev "([^"]*)"\).*/\1/p' "$$pcb" | head -n 1 | sed -E 's/^([Vv]ersion|[Rr]evision|[Rr]ev|[Vv])[[:space:]]*//' | tr ' ' '-'); fi; \
+  if [ -z "$$rev" ] && [ -f "$$pcb" ]; then rev=$$(sed -nE 's/^[[:space:]]*\(rev "([^"]*)"\).*/\1/p' "$$pcb" | sed -n 1p | sed -E 's/^([Vv]ersion|[Rr]evision|[Rr]ev|[Vv])[[:space:]]*//' | tr ' ' '-'); fi; \
   [ -n "$$rev" ] || die "no revision: write it to $(2)/VERSION or set rev in the title block of $$name.kicad_pcb";
 
 hw_check = $(hw_sh) $(call hw_find,$(1),$(2)) mkdir -p "$$out"; rc=0; \
@@ -172,7 +172,7 @@ hw_new = $(hw_sh) name="$(NAME)"; [ -n "$$name" ] || die "NAME= is required (the
 # reports (its highest minor), else the highest version folder present. Empty when neither has it.
 hw_lib = lib="$(KICAD_LIBRARY_DIR)"; lib_from="KICAD_LIBRARY_DIR"; \
   if [ -z "$$lib" ]; then lib_from=; \
-    kmaj=$$($(KICAD_CLI) version 2>/dev/null | head -n 1 | sed -n 's/^[^0-9]*\([0-9][0-9]*\)\..*/\1/p' || true); \
+    kmaj=$$($(KICAD_CLI) version 2>/dev/null | sed -n 1p | sed -n 's/^[^0-9]*\([0-9][0-9]*\)\..*/\1/p' || true); \
     kfile=$$(for c in "$(KICAD_PREFS_ROOT)"/*/kicad_common.json; do [ -f "$$c" ] || continue; v=$$(basename "$$(dirname "$$c")"); \
         printf '%s %s\n' "$$v" "$$c"; done | sort -t. -k1,1n -k2,2n | \
       awk -v m="$$kmaj" '$$1 !~ /^[0-9]/ { next } { split($$1, a, "."); all = $$0; if (m != "" && a[1] == m) mine = $$0 } END { print (mine != "" ? mine : all) }' | cut -d' ' -f2-); \
@@ -253,7 +253,7 @@ hw_setup_local = $(hw_sh) $(call std_skip_unstarted,$(1),$(2),library setup) \
   if [ "$$problems" -eq 0 ]; then ok "$(1): library tables complete"; else die "$(1): $$problems problem(s) in the board's library tables, fixes above"; fi
 
 hw_doctor = $(hw_sh) say "$(1): hardware, KiCad $(KICAD_VERSION)"; \
-  if have $(KICAD_CLI); then v=$$($(KICAD_CLI) version 2>/dev/null | head -n 1); \
+  if have $(KICAD_CLI); then v=$$($(KICAD_CLI) version 2>/dev/null | sed -n 1p); \
     case "$$v" in $(KICAD_VERSION)*|$(firstword $(subst ., ,$(KICAD_VERSION))).*) ok "kicad-cli $$v";; *) bad "kicad-cli is $$v, the standard is KiCad $(KICAD_VERSION)";; esac; \
   else bad "kicad-cli: brew install --cask kicad"; fi; \
   d="$(CURDIR)/$(2)"; set -- "$$d"/*.kicad_pro; \

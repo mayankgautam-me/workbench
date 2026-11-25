@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # secrets.sh: the secrets engine. One private git repo per GitHub owner (SECRETS_DIR, cloned from SECRETS_REMOTE;
 # make/common.mk picks the project's) holds the secrets of that owner's projects, encrypted with sops + age. Values reach processes through the environment only; nothing is ever
@@ -213,7 +213,7 @@ commit_push() {
   if ! git_s diff --cached --quiet; then
     git_s -c "core.hooksPath=$SECRETS_DIR/.git/hooks" ${extra[@]+"${extra[@]}"} commit -q -m "$1"
   fi
-  if git_s remote | grep -q .; then
+  if [ -n "$(git_s remote)" ]; then
     GIT_TERMINAL_PROMPT=0 git_s push -q origin HEAD 2>/dev/null || log_warn "could not push the secrets repo; run it again when online"
   fi
 }
@@ -222,7 +222,7 @@ commit_push() {
 sync_secrets() {
   [ -z "${STD_NO_SYNC:-}" ] || return 0
   [ -d "$SECRETS_DIR/.git" ] || return 0
-  git_s remote | grep -q . || return 0
+  [ -n "$(git_s remote)" ] || return 0
   local stamp="$SECRETS_DIR/.git/project-standard-pulled"
   if [ "${1:-}" != force ] && [ -f "$stamp" ] && [ -n "$(find "$stamp" -mmin "-$SYNC_INTERVAL_MIN" 2>/dev/null)" ]; then
     return 0
@@ -235,13 +235,15 @@ sync_secrets() {
 repo_hook_body() {
   cat <<'HOOK'
 #!/usr/bin/env bash
-# project-standard v1.10 secrets-repo pre-commit hook: refuses anything that is not SOPS-encrypted
+# project-standard v1.11 secrets-repo pre-commit hook: refuses anything that is not SOPS-encrypted
 set -euo pipefail
 bad=0
 while IFS= read -r -d '' f; do
   case "$f" in
     recipients/*.txt)
-      if git show ":$f" | grep -q -i -E 'age-secret-key-1|age-plugin-[a-z]*-1'; then
+      # never `producer | grep -q` under pipefail: grep stops at the first match, the producer can die of SIGPIPE
+      # and the pipeline then counts as no match. grep -c reads all its input (1.11).
+      if [ "$(git show ":$f" | grep -c -i -E 'age-secret-key-1|age-plugin-[a-z]*-1' || true)" != 0 ]; then
         echo "secrets pre-commit: $f holds a private key; recipients/ takes public keys only" >&2
         bad=1
       fi
@@ -256,12 +258,13 @@ while IFS= read -r -d '' f; do
   content="$(git show ":$f")"
   case "$f" in
     *.env.sops)
-      if printf '%s\n' "$content" | grep -v -E '^(sops_[A-Za-z0-9_]*=.*)?$' | grep -v -E '^[A-Za-z_][A-Za-z0-9_]*=ENC\[' | grep -q .; then
+      plain="$(printf '%s\n' "$content" | grep -v -E '^(sops_[A-Za-z0-9_]*=.*)?$' | grep -v -E '^[A-Za-z_][A-Za-z0-9_]*=ENC\[' || true)"
+      if [ -n "$plain" ]; then
         echo "secrets pre-commit: $f has a value that is not encrypted" >&2
         bad=1
       fi ;;
     *)
-      if ! printf '%s\n' "$content" | grep -q '"data": "ENC\['; then
+      if [ "$(printf '%s\n' "$content" | grep -c '"data": "ENC\[' || true)" = 0 ]; then
         echo "secrets pre-commit: $f is not a SOPS-encrypted file" >&2
         bad=1
       fi ;;
@@ -309,7 +312,7 @@ seed_source() {
   for d in ${SECRETS_DEFAULT_DIR:+"$SECRETS_DEFAULT_DIR"} "$HOME"/.secrets-*; do
     [ -d "$d/recipients" ] || continue
     [ "$(cd "$d" && pwd -P)" != "$here" ] || continue
-    if [ -n "$(find "$d/recipients/se" "$d/recipients/dev" -name '*.txt' 2>/dev/null | head -n 1)" ]; then
+    if [ -n "$(find "$d/recipients/se" "$d/recipients/dev" -name '*.txt' 2>/dev/null | sed -n 1p)" ]; then
       printf '%s\n' "$d"
       return 0
     fi
@@ -366,7 +369,7 @@ ensure_repo() {
     fi
   fi
   chmod 700 "$SECRETS_DIR"
-  if [ -n "$SECRETS_REMOTE" ] && ! git_s remote | grep -q .; then
+  if [ -n "$SECRETS_REMOTE" ] && [ -z "$(git_s remote)" ]; then
     git_s remote add origin "$(remote_url "$SECRETS_REMOTE")"
   fi
   ensure_repo_files
@@ -385,7 +388,7 @@ ensure_repo() {
 # --- recipients and .sops.yaml ---
 
 read_recipient() {
-  grep -v -E '^[[:space:]]*(#|$)' "$1" | head -n 1 | tr -d '[:space:]'
+  grep -v -E '^[[:space:]]*(#|$)' "$1" | sed -n 1p | tr -d '[:space:]'
 }
 
 # collect KIND... : one public key per line. KIND: se dev recovery ci:NAME
@@ -492,7 +495,8 @@ schema_rows() {
 }
 
 schema_gen_for() { # NAME
-  schema_rows | awk -F'|' -v n="$1" '$1 == n { print $4; exit }'
+  # awk reads to the end (no exit): an early exit would stop schema_rows with SIGPIPE under pipefail (1.11)
+  schema_rows | awk -F'|' -v n="$1" '$1 == n && !f { print $4; f = 1 }'
 }
 
 # schema_optional NAME   true when NAME's description (the rest of the line after the four columns) starts with
@@ -564,7 +568,9 @@ keygen_into() {
   local name="$1" type="$2" rel tmp
   valid_name "$name" || die "invalid key name: $name"
   rel="$(key_rel "$name")"
-  [ ! -e "$SECRETS_DIR/$rel" ] || die "keys/$name.sops already exists; refusing to overwrite it"
+  # never replaced, --force or not: devices and stores trust the public half of a generated key. A deliberate
+  # replacement is an import of the new key with --force (1.11).
+  [ ! -e "$SECRETS_DIR/$rel" ] || die "keys/$name.sops already exists; refusing to overwrite it (to replace it on purpose: make secrets-import NAME=$name FILE=<new key> FORCE=1)"
   mkdir -p "$SECRETS_DIR/$PROJECT/keys"
   tmp="$SECRETS_DIR/$rel.tmp.$$"
   if ! gen_key_stdout "$type" | sops_plain --encrypt --input-type binary --output-type binary --filename-override "$rel" /dev/stdin >"$tmp"; then
@@ -801,7 +807,7 @@ cmd_edit() {
 cmd_import() {
   parse_args "$@"
   need_project
-  local name src="$OPT_FILE" rel line k v conflicts="" pairs=0 e="$OPT_ENV"
+  local name src="$OPT_FILE" rel line k v conflicts="" pairs=0 e="$OPT_ENV" verb=import
   [ -n "$src" ] || die "usage: secrets.sh import NAME --file PATH   or   secrets.sh import --file PATH --env E"
   [ -r "$src" ] || die "cannot read $src"
   require_repo
@@ -811,14 +817,19 @@ cmd_import() {
     name="$(pos 0)"
     valid_name "$name" || die "usage: secrets.sh import NAME --file PATH"
     rel="$(key_rel "$name")"
-    [ ! -e "$SECRETS_DIR/$rel" ] || die "keys/$name.sops already exists; refusing to overwrite it"
+    # an existing key is replaced only with --force (make secrets-import FORCE=1, a rotated key); the new one is
+    # encrypted into a temp file first and moved over the old one, so a failed encrypt leaves the old key whole (1.11)
+    if [ -e "$SECRETS_DIR/$rel" ]; then
+      [ "$OPT_FORCE" = 1 ] || die "keys/$name.sops already exists; refusing to overwrite it (FORCE=1 replaces it, --force for secrets.sh)"
+      verb=replace
+    fi
     gen_sops_yaml
     mkdir -p "$SECRETS_DIR/$PROJECT/keys"
     sops_plain --encrypt --input-type binary --output-type binary --filename-override "$rel" /dev/stdin <"$src" >"$SECRETS_DIR/$rel.tmp.$$" ||
-      { rm -f "$SECRETS_DIR/$rel.tmp.$$"; die "could not encrypt $src"; }
-    mv "$SECRETS_DIR/$rel.tmp.$$" "$SECRETS_DIR/$rel"
-    commit_push "import key $name ($PROJECT)"
-    log_ok "imported $src as keys/$name.sops"
+      { rm -f "$SECRETS_DIR/$rel.tmp.$$"; die "could not encrypt $src; keys/$name.sops is unchanged"; }
+    mv -f "$SECRETS_DIR/$rel.tmp.$$" "$SECRETS_DIR/$rel"
+    commit_push "$verb key $name ($PROJECT)"
+    if [ "$verb" = replace ]; then log_ok "replaced keys/$name.sops with $src"; else log_ok "imported $src as keys/$name.sops"; fi
     log_info "now remove the plain file and purge it from git history if it was tracked: $src"
     return 0
   fi
@@ -998,12 +1009,15 @@ cmd_list() {
   done <<EOF
 $(schema_rows)
 EOF
-  # names in the files that the schema does not know
+  # names in the files that the schema does not know. The schema's names are read once: `schema_rows | grep -q`
+  # under pipefail stopped schema_rows with SIGPIPE at grep's first match and listed known names here (1.11).
+  local known
+  known="$(schema_rows | cut -d'|' -f1)"
   for e in common local staging production; do
     rel="$SECRETS_DIR/$(env_rel "$e")"
     [ -f "$rel" ] || continue
     grep -o -E '^[A-Za-z_][A-Za-z0-9_]*=' "$rel" | tr -d '=' | grep -v '^sops_' | while IFS= read -r name; do
-      if ! schema_rows | grep -q "^$name|"; then printf '%-28s %-11s %-12s %s\n' "$name" "$e" "-" "$(paint 1 yellow 'not in schema')"; fi
+      if ! has_match "$known" -xF -- "$name"; then printf '%-28s %-11s %-12s %s\n' "$name" "$e" "-" "$(paint 1 yellow 'not in schema')"; fi
     done || true
   done
 }
@@ -1311,7 +1325,7 @@ cmd_doctor() {
   legacy_hint
   if [ -d "$SECRETS_DIR/.git" ]; then
     log_ok "secrets repo $SECRETS_DIR${SECRETS_REMOTE:+ ($SECRETS_REMOTE)}"
-    git_s remote | grep -q . || log_warn "the secrets repo has no remote (SECRETS_REMOTE)"
+    [ -n "$(git_s remote)" ] || log_warn "the secrets repo has no remote (SECRETS_REMOTE)"
     if [ -x "$SECRETS_DIR/.git/hooks/pre-commit" ] && [ "$(git_s config core.hooksPath || true)" = "$SECRETS_DIR/.git/hooks" ]; then
       log_ok "secrets repo pre-commit hook"
     else

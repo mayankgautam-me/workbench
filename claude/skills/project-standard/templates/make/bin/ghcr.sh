@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # The GitHub container registry (ghcr.io) for the docker kind. gh does the work; its token reaches docker on stdin only.
 #
@@ -86,7 +86,7 @@ cmd_doctor() {
   on_ghcr "$registry" || return 0
   in_ci && return 0
   if gh_ready; then
-    if gh auth status 2>&1 | grep -q 'write:packages'; then
+    if has_match "$(gh auth status 2>&1)" 'write:packages'; then
       log_ok "gh's token has write:packages (ghcr.io pushes)"
     else
       log_warn "gh's token lacks the write:packages scope that pushing to ghcr.io needs: gh auth refresh -s write:packages"

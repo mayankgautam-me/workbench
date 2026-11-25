@@ -1,4 +1,4 @@
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind silabs: a Silicon Labs firmware part built from an slc project (*.slcp) on the Simplicity SDK and
 # WiseConnect 3, for SiWx917 / SiWG917 (Cortex-M4 SoC mode).
@@ -233,7 +233,7 @@ silabs_find = d="$(CURDIR)/$(2)"; slcp="$($(1)_SLCP)"; \
   if [ -z "$$slcp" ]; then set -- "$$d"/*.slcp; [ -f "$$1" ] || die "no .slcp in $(2): the part is a Simplicity Studio / slc project"; \
     [ -z "$${2:-}" ] || die "several .slcp in $(2): pick one with $(1)_SLCP in make/project.mk"; slcp="$$1"; \
   else case "$$slcp" in /*) ;; *) slcp="$$d/$$slcp";; esac; [ -f "$$slcp" ] || die "$(1)_SLCP=$($(1)_SLCP) not found in $(2)"; fi; \
-  name=$$(sed -nE 's/^project_name:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/p' "$$slcp" | head -n 1); [ -n "$$name" ] || name=$$(basename "$$slcp" .slcp);
+  name=$$(sed -nE 's/^project_name:[[:space:]]*"?([^"[:space:]]+)"?.*/\1/p' "$$slcp" | sed -n 1p); [ -n "$$name" ] || name=$$(basename "$$slcp" .slcp);
 
 # $(call silabs_postbuild): after silabs_find, sets pb to the .slcp's post_build profile (the line under post_build:,
 # `profile: <name>`, else `yes` for a post_build without one), empty when the .slcp has no post_build.
@@ -245,10 +245,10 @@ silabs_cmdr = cmdr="$(SILABS_COMMANDER)"; \
   if [ -z "$$cmdr" ]; then cmdr=$$(command -v commander 2>/dev/null || true); fi; \
   if [ -z "$$cmdr" ]; then for c in $(SILABS_COMMANDER_PATHS); do if [ -x "$$c" ]; then cmdr="$$c"; break; fi; done; fi; \
   if [ -z "$$cmdr" ] && [ -x "$($(1)_SLT_DIR)/slt" ]; then \
-    cpath=$$("$($(1)_SLT_DIR)/slt" where commander$(if $(strip $($(1)_COMMANDER)),/$(strip $($(1)_COMMANDER))) --non-interactive --ignore-slconf 2>/dev/null | head -n 1 || true); \
+    cpath=$$("$($(1)_SLT_DIR)/slt" where commander$(if $(strip $($(1)_COMMANDER)),/$(strip $($(1)_COMMANDER))) --non-interactive --ignore-slconf 2>/dev/null | sed -n 1p || true); \
     if [ -n "$$cpath" ]; then for c in "$$cpath/Contents/MacOS/commander" "$$cpath/commander" "$$cpath"; do if [ -f "$$c" ] && [ -x "$$c" ]; then cmdr="$$c"; break; fi; done; fi; \
   fi; \
-  if [ -z "$$cmdr" ]; then cmdr=$$(find "$($(1)_SLT_HOME)/installs/archive" -maxdepth 4 -name commander -type f -perm -u+x 2>/dev/null | head -n 1 || true); fi;
+  if [ -z "$$cmdr" ]; then cmdr=$$(find "$($(1)_SLT_HOME)/installs/archive" -maxdepth 4 -name commander -type f -perm -u+x 2>/dev/null | sed -n 1p || true); fi;
 # The fix a missing Commander message gives.
 silabs_cmdr_fix = make $(1)-setup (it installs Simplicity Commander$(if $(strip $($(1)_COMMANDER)), $(strip $($(1)_COMMANDER))) through slt), or set SILABS_COMMANDER
 silabs_need_cmdr = $(call silabs_cmdr,$(1)) [ -n "$$cmdr" ] || die "Simplicity Commander not found: $(call silabs_cmdr_fix,$(1))";
@@ -262,19 +262,19 @@ silabs_need_cmdr = $(call silabs_cmdr,$(1)) [ -n "$$cmdr" ] || die "Simplicity C
 silabs_tools = slt="$($(1)_SLT_DIR)/slt"; inst="$($(1)_SLT_HOME)/installs"; \
   pkg() { find "$$inst/conan" -name "*.$$1" -type f 2>/dev/null | while IFS= read -r f; do \
     if grep -qE "^(sdk_)?version:[[:space:]]*\"?$$2\"?[[:space:]]*$$" "$$f"; then dirname "$$f"; break; fi; done; }; \
-  slc=$$(ls "$$inst"/archive/slc-cli-*/slc_cli/slc 2>/dev/null | head -n 1 || true); [ -n "$$slc" ] || slc=$$(command -v slc 2>/dev/null || true); \
-  java=$$(find "$$inst/archive" \( -path '*/jre/bin/java' -o -path '*/jre/*/bin/java' \) -type f 2>/dev/null | head -n 1 || true); [ -z "$$java" ] || java=$$(dirname "$$java"); \
+  slc=$$(ls "$$inst"/archive/slc-cli-*/slc_cli/slc 2>/dev/null | sed -n 1p || true); [ -n "$$slc" ] || slc=$$(command -v slc 2>/dev/null || true); \
+  java=$$(find "$$inst/archive" \( -path '*/jre/bin/java' -o -path '*/jre/*/bin/java' \) -type f 2>/dev/null | sed -n 1p || true); [ -z "$$java" ] || java=$$(dirname "$$java"); \
   gccver="$(strip $($(1)_GCC))"; gccdir=; \
   if [ -n "$$gccver" ]; then gccdir=$$(find "$$inst/conan" -name "$$gccver-*manifest.txt" -type f 2>/dev/null | while IFS= read -r m; do \
       if [ -x "$$(dirname "$$m")/bin/arm-none-eabi-gcc" ]; then printf '%s\n' "$$(dirname "$$m")/bin"; break; fi; done || true); \
-  else gccdir=$$(find "$$inst/conan" -name arm-none-eabi-gcc -type f 2>/dev/null | head -n 1 || true); \
+  else gccdir=$$(find "$$inst/conan" -name arm-none-eabi-gcc -type f 2>/dev/null | sed -n 1p || true); \
     if [ -n "$$gccdir" ]; then gccdir=$$(dirname "$$gccdir"); elif command -v arm-none-eabi-gcc >/dev/null 2>&1; then gccdir=$$(dirname "$$(command -v arm-none-eabi-gcc)"); fi; fi; \
   sdk=$$(pkg slcs "$($(1)_SDK)" || true); wc=$$(pkg slce "$($(1)_WISECONNECT)" || true);
 
 # The versions of what slt installed, for the messages: every *.slcs / *.slce version found, and the GNU Arm toolchains
 # (gccfound, from their <ver>-*manifest.txt).
 silabs_have_versions = found=$$(find "$$inst/conan" \( -name '*.slcs' -o -name '*.slce' \) -type f 2>/dev/null | while IFS= read -r f; do \
-    sed -nE 's/^(sdk_)?version:[[:space:]]*"?([^"[:space:]]+)"?.*/\2/p' "$$f" | head -n 1; done | sort -u | paste -sd' ' - || true); \
+    sed -nE 's/^(sdk_)?version:[[:space:]]*"?([^"[:space:]]+)"?.*/\2/p' "$$f" | sed -n 1p; done | sort -u | paste -sd' ' - || true); \
   gccfound=$$(find "$$inst/conan" -name '*-arm-none-eabi-manifest.txt' -type f 2>/dev/null | sed -E 's,.*/,,; s,-(darwin|linux|mingw|win).*,,' | sort -u | paste -sd' ' - || true);
 
 silabs_need_tools = [ -x "$$slt" ] || die "slt $($(1)_SLT) is not in $($(1)_SLT_DIR): run make $(1)-setup"; \

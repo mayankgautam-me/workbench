@@ -1,4 +1,4 @@
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind altium: an Altium Designer board (one *.PrjPcb per part dir). Altium is Windows only and licensed, so
 # nothing here runs Altium: the outputs come from the project's OutJob, run in Altium, into <dir>/outputs/ (never
@@ -113,7 +113,7 @@ norm() (
 # exists PATH: true when PATH exists, also in another letter case (Altium runs on case-insensitive Windows)
 exists() {
   [ -e "$$1" ] && return 0
-  [ -n "$$(find . -ipath "./$$1" -print 2>/dev/null | head -n 1)" ]
+  [ -n "$$(find . -ipath "./$$1" -print 2>/dev/null | sed -n 1p)" ]
 }
 
 moves=() edits=()
@@ -173,7 +173,7 @@ while IFS= read -r line; do
     case $$(lc "$$np") in
       "$$(lc "$$lib")"/*)
         if [ -n "$$(ls -A "$$root/$$lib" 2>/dev/null)" ] && [ ! -e "$$root/$$np" ] &&
-          [ -z "$$(find "$$root/$$lib" -ipath "$$root/$$np" -print 2>/dev/null | head -n 1)" ]; then
+          [ -z "$$(find "$$root/$$lib" -ipath "$$root/$$np" -print 2>/dev/null | sed -n 1p)" ]; then
           bad "DocumentPath=$$orig in $$prj: the file is not in the Altium library $$lib"
         fi
         continue ;;
@@ -339,7 +339,7 @@ alt_outputs = [ -d "$$out" ] || die "no $(2)/outputs: run $$name.OutJob in Altiu
   lst() { find "$$out" -type f \( "$$@" \) 2>/dev/null | LC_ALL=C sort; }; \
   gerbers=$$(lst -iname '*.gbr' -o -iname '*.ger' -o -iname '*.gtl' -o -iname '*.gbl' -o -iname '*.gto' -o -iname '*.gbo' -o -iname '*.gts' -o -iname '*.gbs' \
     -o -iname '*.gtp' -o -iname '*.gbp' -o -iname '*.gko' -o -iname '*.gm' -o -iname '*.gm[0-9]*' -o -iname '*.g[0-9]' -o -iname '*.g[0-9][0-9]' -o -iname '*.gp[0-9]'); \
-  odb=$$(find "$$out" -iname 'odb*' 2>/dev/null | LC_ALL=C sort | head -n 1 || true); \
+  odb=$$(find "$$out" -iname 'odb*' 2>/dev/null | LC_ALL=C sort | sed -n 1p || true); \
   drills=$$(find "$$out" -type f \( -iname '*.drl' -o -iname '*.txt' -o -iname '*.xln' -o -iname '*.exc' \) -exec grep -l '^M48' {} + 2>/dev/null | LC_ALL=C sort || true); \
   pnp=$$(lst -ipath '*pick*place*' -o -iname '*pnp*' -o -iname '*-pos.*' -o -iname '*cpl*'); \
   bomcsv=$$(lst -iname '*bom*.csv'); boms=$$(lst -iname '*bom*.csv' -o -iname '*bom*.xlsx'); \
@@ -351,9 +351,9 @@ alt_count = $$(printf '%s\n' "$$$(1)" | grep -c . || true)
 alt_verify = say "outputs in $(2)/outputs"; \
   if [ -n "$$gerbers" ]; then ok "Gerber: $(call alt_count,gerbers) files"; elif [ -n "$$odb" ]; then ok "ODB++: $$(printf '%s' "$$odb" | sed "s|^$$out/||")"; else bad "no Gerber or ODB++ files"; fi; \
   if [ -n "$$drills" ]; then ok "NC drill: $(call alt_count,drills) Excellon files"; elif [ -n "$$odb" ]; then ok "NC drill: in the ODB++"; else bad "no NC drill (Excellon) files"; fi; \
-  if [ -n "$$pnp" ]; then ok "pick and place: $$(printf '%s\n' "$$pnp" | head -n 1 | sed "s|^$$out/||")"; else bad "no pick and place file (Pick Place, pnp, pos or cpl in its name)"; fi; \
-  if [ -n "$$bomcsv" ]; then ok "BOM: $$(printf '%s\n' "$$bomcsv" | head -n 1 | sed "s|^$$out/||")"; \
-  elif [ -n "$$boms" ]; then bad "no BOM CSV, only $$(printf '%s\n' "$$boms" | head -n 1 | sed "s|^$$out/||"): add a CSV Bill of Materials output to $$name.OutJob"; \
+  if [ -n "$$pnp" ]; then ok "pick and place: $$(printf '%s\n' "$$pnp" | sed -n 1p | sed "s|^$$out/||")"; else bad "no pick and place file (Pick Place, pnp, pos or cpl in its name)"; fi; \
+  if [ -n "$$bomcsv" ]; then ok "BOM: $$(printf '%s\n' "$$bomcsv" | sed -n 1p | sed "s|^$$out/||")"; \
+  elif [ -n "$$boms" ]; then bad "no BOM CSV, only $$(printf '%s\n' "$$boms" | sed -n 1p | sed "s|^$$out/||"): add a CSV Bill of Materials output to $$name.OutJob"; \
   else bad "no BOM CSV (a Bill of Materials output of $$name.OutJob, BOM in its name, .csv)"; fi; \
   if [ -n "$$pdfs" ]; then ok "PDF: $(call alt_count,pdfs) files (the schematic among them)"; else bad "no schematic PDF"; fi; \
   if [ -n "$$gerbers" ] && have $(GERBV); then \
@@ -390,7 +390,7 @@ alt_release_assets = $(alt_sh) $(call alt_find,$(1),$(2)) \
 
 # The BOM is the OutJob's (1.5): the first outputs/**/*BOM*.csv.
 alt_bom = $(alt_sh) $(call alt_find,$(1),$(2)) \
-  bom=$$(find "$$out" -type f -iname '*bom*.csv' 2>/dev/null | LC_ALL=C sort | head -n 1 || true); \
+  bom=$$(find "$$out" -type f -iname '*bom*.csv' 2>/dev/null | LC_ALL=C sort | sed -n 1p || true); \
   say "sourcing and pricing are the bom skill's job, on the BOM $$name.OutJob writes: run the OutJob in Altium first, then ask Claude, in this project:"; \
   if [ -n "$$bom" ]; then bomrel="$(2)/outputs/$$(printf '%s' "$$bom" | sed "s|^$$out/||")"; else bomrel="$(2)/outputs/<the BOM CSV of the OutJob>"; fi; \
   printf '\n    use the bom skill on %s\n    (Altium project %s, fab JLCPCB)\n\n' "$$bomrel" "$$name.PrjPcb"; \

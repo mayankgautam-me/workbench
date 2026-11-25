@@ -1050,6 +1050,11 @@ make secrets-import NAME=<name> FILE=/path/to/key.pem
 `ENV=<env>` with a dotenv `FILE` imports its values into that environment instead (an old
 `.dev.vars` or `.prod.vars`, say), refusing names that already exist.
 
+An existing key, or an existing name in the environment, is refused; `FORCE=1` on the command line replaces it
+(a rotated App Store Connect key, say). A key is encrypted into a temp file and moved over the old one, so a failed
+encrypt leaves the old key as it was (1.11). `secrets-keygen` never replaces a key: devices and stores trust its
+public half, so a deliberate replacement is a `secrets-import ... FORCE=1` of the new key.
+
 Add its `keys` line to `secrets.schema`, `git rm --cached` the plain file in the project, and plan
 a rotation: the old file stays in the project's git history.
 
@@ -1077,10 +1082,10 @@ of the project's repository (from stdin, never on a command line), adds the publ
 ## 6. CI/CD
 
 The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/name`, default
-`mayankgautam-me/ci-templates`), tagged `v1.10` (`v1.9`, `v1.8`, `v1.7`, `v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
+`mayankgautam-me/ci-templates`), tagged `v1.11` (`v1.10`, `v1.9`, `v1.8`, `v1.7`, `v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
 own, independent of the project's `GITHUB_OWNER`: projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.10`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.11`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -1398,6 +1403,26 @@ the project's owner's, 5.1), `STD_CONFIG` (default `~/.config/project-standard`)
 Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) and the number in a project's `make/VERSION`, its managed
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
+
+- **1.11** (2026-11-25): secrets fixes. `make/VERSION`, the managed headers and the workflows' `@v1.11` say 1.11;
+  `mayankgautam-me/ci-templates` gets the tag `v1.11` (its workflows change only in the version) and keeps `v1.10` to
+  `v1.0`.
+  - `make secrets-import NAME=<key> FILE=<path> FORCE=1` replaces an existing key (a rotated App Store Connect key):
+    the new key is encrypted into a temp file and moved over the old one, so a failed encrypt leaves the old key whole.
+    Without `FORCE=1` it is refused, and the error says that `FORCE=1` replaces it. `FORCE` counts only on the command
+    line and only as `1`, as for the other targets (before, any `FORCE` from anywhere passed `--force`).
+    `secrets-keygen` still never replaces a key: devices and stores trust its public half; its error points at the
+    import.
+  - `make secrets-list` no longer lists names that are in the schema a second time as `not in schema`. The check ran
+    `schema_rows | grep -q` under `pipefail`: grep stops at the first match, `schema_rows` then died of SIGPIPE and the
+    pipeline counted as no match. The schema's names are now read once. The same race is gone from the secrets repo's
+    pre-commit hook (a large key could be refused as not encrypted), `secrets-rotate`'s schema lookup (could stop
+    without a message), cf.sh's declared-resource checks, the LFS pointer check of `make hooks`, ghcr.sh, release.sh,
+    toolchain.sh, the audit, the android-sdk and deploy-key checks of common.mk, docker's `--annotation` probe and
+    zephyr's probe check. They use `grep -c` (it reads all its input) through the new `has_match TEXT GREP-ARGS` of
+    lib.sh, never a here-string (bash 3.2 backs those with a file); `| head -n 1` after a command is `| sed -n 1p` and
+    awk no longer exits early. A `printf` of one short value into grep cannot race and is left as it was.
+  Update from 1.10: refresh the managed files and move the `uses:` lines to `@v1.11`. Nothing else changes.
 
 - **1.10** (2026-11-25): store uploads from CI, a deploy that builds only what it deploys. `make/VERSION`, the managed
   headers and the workflows' `@v1.10` say 1.10; `mayankgautam-me/ci-templates` gets the tag `v1.10` and keeps `v1.9` to

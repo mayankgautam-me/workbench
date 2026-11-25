@@ -1,4 +1,4 @@
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind app-xcode: a native Swift or SwiftUI app built with xcodebuild (iOS, iPadOS or macOS).
 # Needs a Mac with Xcode, not only the command line tools. Its CI jobs need a macOS runner.
@@ -83,7 +83,7 @@ $(1)-release:
 	test -n "$($(1)_ASC_KEY_ID)" -a -n "$($(1)_ASC_ISSUER)" || { echo "$(1): set $(1)_ASC_KEY_ID and $(1)_ASC_ISSUER in make/project.mk"; exit 1; }; \
 	test -f $(2)/ExportOptions.plist || { echo "$(1): $(2)/ExportOptions.plist is missing"; exit 1; }; \
 	xcodebuild -exportArchive -archivePath $(2)/build/$(1).xcarchive -exportPath $(2)/build/export -exportOptionsPlist $(2)/ExportOptions.plist -quiet; \
-	ipa=$$$$(ls $(2)/build/export/*.ipa | head -n 1); \
+	ipa=$$$$(ls $(2)/build/export/*.ipa | sed -n 1p); \
 	test -f "$$$$ipa" || { echo "$(1): no ipa was exported"; exit 1; }; \
 	$$(call std_confirm,production) && $$($(1)_SEC) with-file appstore-api-key -- sh -c 'd=$$$$(mktemp -d); trap "rm -rf \"$$$$d\"" EXIT; cp "$$$$1" "$$$$d/AuthKey_$($(1)_ASC_KEY_ID).p8"; API_PRIVATE_KEYS_DIR="$$$$d" xcrun altool --upload-app -f "$$$$2" --type $(if $(filter macos,$(TARGET)),osx,ios) --apiKey "$($(1)_ASC_KEY_ID)" --apiIssuer "$($(1)_ASC_ISSUER)"' sh {} "$$$$ipa"
 

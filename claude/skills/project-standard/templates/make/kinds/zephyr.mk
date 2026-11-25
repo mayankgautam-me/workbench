@@ -1,4 +1,4 @@
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind zephyr: a Zephyr / nRF Connect SDK firmware part (west, sysbuild, MCUboot).
 #
@@ -309,7 +309,7 @@ zephyr_doctor = $(STD_FW_SH) say "$(1): zephyr, $($(1)_SRC), Zephyr SDK $($(1)_Z
   case "$($(1)_P)" in \
     probe-rs) if have probe-rs; then ok "probe-rs"; else bad "probe-rs: brew install probe-rs-tools"; fi; \
       if [ -z "$($(1)_CHIP)" ]; then bad "probe-rs needs $(1)_CHIP (for example nRF9151_xxAA)"; fi; \
-      if have probe-rs; then if probe-rs list 2>/dev/null | grep -q '\['; then ok "probe connected"; else warn "no debug probe connected"; fi; fi;; \
+      if have probe-rs; then if [ "$$(probe-rs list 2>/dev/null | grep -c '\[' || true)" != 0 ]; then ok "probe connected"; else warn "no debug probe connected"; fi; fi;; \
     jlink) if have JLinkExe; then ok "J-Link"; else bad "J-Link: brew install --cask segger-jlink"; fi;; \
     openocd) if have openocd; then ok "openocd"; else bad "openocd: brew install openocd"; fi; \
       if [ -z "$($(1)_OPENOCD_ARGS)" ]; then warn "$(1)_OPENOCD_ARGS is empty (west runner defaults apply)"; fi;; \

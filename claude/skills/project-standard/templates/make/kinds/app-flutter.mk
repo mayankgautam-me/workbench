@@ -1,4 +1,4 @@
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind app-flutter: a Flutter application (iOS, Android, and desktop or web targets).
 #
@@ -60,7 +60,7 @@ app_flutter_release_assets = set -euo pipefail; $(call std_rel_begin,$(1),app-fl
     ios) \
       [ "$$(uname -s)" = Darwin ] || { echo "$(1): PLATFORM=ios is built on a Mac" >&2; exit 1; }; \
       $(if $(NOBUILD),,$(call std_secret_prefix,production) $($(1)_FL) build ipa --release --export-options-plist=ios/ExportOptions.plist;) \
-      arch=$$(ls -d build/ios/archive/*.xcarchive 2>/dev/null | head -n 1); \
+      arch=$$(ls -d build/ios/archive/*.xcarchive 2>/dev/null | sed -n 1p); \
       [ -n "$$arch" ] || { echo "$(1): no archive in build/ios/archive: run make $(1)-build TARGET=ios" >&2; exit 1; }; \
       zipdir "$$arch/dSYMs" "$(1)-$$ver-ios-dSYMs.zip"; \
       bn=$$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:CFBundleVersion' "$$arch/Info.plist"); \
@@ -68,13 +68,13 @@ app_flutter_release_assets = set -euo pipefail; $(call std_rel_begin,$(1),app-fl
     macos) \
       [ "$$(uname -s)" = Darwin ] || { echo "$(1): PLATFORM=macos is built on a Mac" >&2; exit 1; }; \
       $(if $(NOBUILD),,$($(1)_FL) build macos --release;) \
-      app=$$(ls -d build/macos/Build/Products/Release/*.app 2>/dev/null | head -n 1); \
+      app=$$(ls -d build/macos/Build/Products/Release/*.app 2>/dev/null | sed -n 1p); \
       [ -n "$$app" ] || { echo "$(1): no macOS app in build/macos/Build/Products/Release: run make $(1)-build TARGET=macos" >&2; exit 1; }; \
       ditto -c -k --keepParent "$$app" "$$out/$(1)-$$ver-macos-universal.zip"; printf '  asset %s\n' "$(1)-$$ver-macos-universal.zip" ;; \
     linux-amd64 | linux-arm64) \
       [ "$$(uname -s)" = Linux ] || { echo "$(1): PLATFORM=$$plat is built on a Linux runner (its CI job)" >&2; exit 1; }; \
       $(if $(NOBUILD),,$($(1)_FL) build linux --release;) \
-      bd=$$(ls -d build/linux/*/release/bundle 2>/dev/null | head -n 1); \
+      bd=$$(ls -d build/linux/*/release/bundle 2>/dev/null | sed -n 1p); \
       [ -n "$$bd" ] || { echo "$(1): no linux bundle under build/linux: run make $(1)-build TARGET=linux" >&2; exit 1; }; \
       tar -C "$$bd" -czf "$$out/$(1)-$$ver-$$plat.tar.gz" . ; printf '  asset %s\n' "$(1)-$$ver-$$plat.tar.gz" ;; \
     windows) \

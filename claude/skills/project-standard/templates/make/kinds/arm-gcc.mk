@@ -1,4 +1,4 @@
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind arm-gcc: a bare-metal arm-none-eabi firmware part (CubeMX export, libopencm3, own Makefile).
 #
@@ -271,7 +271,7 @@ armgcc_monitor = $(STD_FW_SH) $(STD_FW_PORT) $(STD_FW_LOGGED) \
 armgcc_size = $(STD_FW_SH) $(call armgcc_artifacts,$(1),$(2)) $($(1)_PREFIX)size "$$elf"
 
 armgcc_doctor = $(STD_FW_SH) say "$(1): arm-gcc, probe $($(1)_P)"; \
-  if have $($(1)_PREFIX)gcc; then ok "$$($($(1)_PREFIX)gcc --version | head -n 1)"; else bad "$($(1)_PREFIX)gcc: brew install --cask gcc-arm-embedded (or set $(1)_PREFIX)"; fi; \
+  if have $($(1)_PREFIX)gcc; then ok "$$($($(1)_PREFIX)gcc --version | sed -n 1p)"; else bad "$($(1)_PREFIX)gcc: brew install --cask gcc-arm-embedded (or set $(1)_PREFIX)"; fi; \
   if [ -f "$(CURDIR)/$(2)/CMakeLists.txt" ]; then ok "CMake project"; for t in cmake ninja; do if have $$t; then ok "$$t"; else bad "$$t: brew install $$t"; fi; done; \
   elif [ -f "$(CURDIR)/$(2)/Makefile" ]; then ok "Makefile project"; else $(call std_doctor_started,$(1),$(2)) fi; \
   case "$($(1)_P)" in \

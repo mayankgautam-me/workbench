@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # cf.sh: the Cloudflare engine. Everything that talks to Cloudflare runs under
 # `secrets.sh exec --env E`, so wrangler sees CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID from
@@ -763,11 +763,11 @@ find_existing() {
       printf '%s' "$out" | jq -r --arg n "$name" '[.[] | select(.title == $n) | .id][0] // empty' ;;
     r2)
       out="$(wr_global r2 bucket list)" || return 1
-      printf '%s\n' "$out" | grep -E "^name:[[:space:]]+$name\$" | head -n1 | sed -E 's/^name:[[:space:]]+//' ;;
+      printf '%s\n' "$out" | grep -E "^name:[[:space:]]+$name\$" | sed -n -E '1s/^name:[[:space:]]+//p' ;;
     queue)
       # the name as a whole table cell: `grep -w` would also take "jobs" from "jobs-dlq" ("-" ends a word)
       out="$(wr_global queues list)" || return 1
-      printf '%s\n' "$out" | awk -v n="$name" '{ for (i = 1; i <= NF; i++) if ($i == n) { print n; exit } }' ;;
+      printf '%s\n' "$out" | awk -v n="$name" '!f { for (i = 1; i <= NF; i++) if ($i == n) { print n; f = 1; break } }' ;;
   esac
 }
 
@@ -793,7 +793,7 @@ cmd_provision() {
         found="$(find_existing d1 "$name")"
         if [ -z "$found" ]; then
           out="$(wr_global d1 create "$name")" || die "d1 create $name failed"
-          found="$(printf '%s' "$out" | grep -o -E '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | head -n1)"
+          found="$(printf '%s' "$out" | grep -o -E '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}' | sed -n 1p)"
           [ -n "$found" ] || die "could not read the new database id for $name"
           log_ok "created D1 $name"
         else
@@ -808,7 +808,7 @@ cmd_provision() {
           log_info "KV $binding exists ($id)"
         elif [ -z "$found" ]; then
           out="$(wr_global kv namespace create "$title")" || die "kv namespace create $title failed"
-          found="$(printf '%s' "$out" | grep -o -E '[0-9a-f]{32}' | head -n1)"
+          found="$(printf '%s' "$out" | grep -o -E '[0-9a-f]{32}' | sed -n 1p)"
           [ -n "$found" ] || die "could not read the new namespace id for $title"
           log_ok "created KV $title"
         else
@@ -864,9 +864,12 @@ cmd_status() {
 $(declared "$file" "$OPT_ENV")
 EOF
   # extras: databases of this project's environment that wrangler.jsonc does not declare
+  # the declared names are read once; `producer | grep -q` under pipefail can count a match as none (1.11)
+  local dnames
+  dnames="$(declared "$file" "$OPT_ENV" | cut -d'|' -f3)" || dnames=''
   wr_global d1 list --json 2>/dev/null | jq -r --arg p "$PROJECT-$OPT_ENV" '.[] | select(.name | startswith($p)) | .name' 2>/dev/null |
     while IFS= read -r name; do
-      if ! declared "$file" "$OPT_ENV" | cut -d'|' -f3 | grep -qx -- "$name"; then
+      if ! has_match "$dnames" -xF -- "$name"; then
         printf '%-6s %-24s %-32s %s\n' d1 - "$name" "$(paint 1 yellow 'extra (exists, not declared)')"
       fi
     done || true
@@ -921,7 +924,7 @@ ota_wrangler() {
 ota_dev_url() {
   local out
   out="$(ota_wrangler r2 bucket dev-url get "$1" 2>&1)" || return 1
-  printf '%s\n' "$out" | grep -o -E 'https://[A-Za-z0-9.-]+\.r2\.dev[^[:space:]]*' | head -n1 || true
+  printf '%s\n' "$out" | grep -o -E 'https://[A-Za-z0-9.-]+\.r2\.dev[^[:space:]]*' | sed -n 1p || true
 }
 
 # provision-ota: make sure every OTA bucket exists (one bucket serves every env: objects go under
@@ -943,7 +946,7 @@ cmd_provision_ota() {
   list="$(ota_wrangler r2 bucket list)" || die "r2 bucket list failed"
   while IFS= read -r name; do
     [ -n "$name" ] || continue
-    if printf '%s\n' "$list" | grep -Eq "^name:[[:space:]]+$name\$"; then
+    if has_match "$list" -E "^name:[[:space:]]+$name\$"; then
       log_info "R2 OTA bucket $name exists"
     else
       ota_wrangler r2 bucket create "$name" >/dev/null || die "r2 bucket create $name failed"
@@ -972,7 +975,7 @@ cmd_status_ota() {
   printf '%-6s %-24s %-32s %s\n' KIND BINDING NAME STATE
   while IFS= read -r name; do
     [ -n "$name" ] || continue
-    if ! printf '%s\n' "$list" | grep -Eq "^name:[[:space:]]+$name\$"; then
+    if ! has_match "$list" -E "^name:[[:space:]]+$name\$"; then
       state="$(paint 1 red 'missing (make cf-provision)')"
       problems=$((problems + 1))
     else
@@ -1016,7 +1019,7 @@ cmd_seed() {
   file="$(config_file)"
   need_env_block "$file"
   ensure_creds
-  first="$(d1_names "$file" "$OPT_ENV" | head -n1 | cut -d'|' -f2)"
+  first="$(d1_names "$file" "$OPT_ENV" | sed -n 1p | cut -d'|' -f2)"
   [ -n "$first" ] || die "no D1 database declared for $OPT_ENV in $file"
   for sql in "$OPT_DIR"/seed/*.sql; do
     [ -e "$sql" ] || continue
@@ -1184,13 +1187,15 @@ EOF
       *) die "refused: the Worker name '$wname' neither ends with -$OPT_ENV nor starts with $PROJECT-$OPT_ENV" ;;
     esac
   fi
-  if declared "$file" "$OPT_ENV" | cut -d'|' -f1 | grep -qx r2; then
+  local dkinds
+  dkinds="$(declared "$file" "$OPT_ENV" | cut -d'|' -f1)" || dkinds=''
+  if has_match "$dkinds" -x r2; then
     if [ "$OPT_R2_UNBACKED" != 1 ]; then
       die "refused: R2 objects cannot be backed up (wrangler cannot list or download them), so $OPT_ENV would lose them. Copy them yourself first (for example with rclone), then repeat with R2_UNBACKED=1 on the command line"
     fi
     log_warn "R2 objects are NOT in the backup (R2_UNBACKED=1)"
   fi
-  if declared "$file" "$OPT_ENV" | cut -d'|' -f1 | grep -qx queue; then
+  if has_match "$dkinds" -x queue; then
     log_warn "queue messages are not backed up (queues hold no stored data, only messages in flight)"
   fi
 }

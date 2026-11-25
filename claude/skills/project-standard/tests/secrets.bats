@@ -275,6 +275,67 @@ EOF
   assert_no_plain KEYFILE-CONTENT-77 "$SECRETS_DIR"
 }
 
+@test "import --force replaces a key file; without it the error says how; a failed encrypt keeps the old key (1.11)" {
+  sec init
+  printf 'OLD-KEY-11\n' >"$W/old.key"
+  printf 'NEW-KEY-11\n' >"$W/new.key"
+  sec import ascKey --file "$W/old.key"
+  run sec import ascKey --file "$W/new.key"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"FORCE=1 replaces it"* ]]
+  run sec with-file ascKey -- cat {}
+  [ "$output" = OLD-KEY-11 ]
+  # encryption fails: the old key stays whole and no temp file is left
+  local real
+  real="$(command -v sops)"
+  stub_cmd sops 'for a in "$@"; do [ "$a" = --encrypt ] && { echo "sops: boom" >&2; exit 1; }; done; exec '"$real"' "$@"'
+  run sec import ascKey --file "$W/new.key" --force
+  [ "$status" -ne 0 ]
+  rm "$STUBS/sops"
+  run sec with-file ascKey -- cat {}
+  [ "$output" = OLD-KEY-11 ]
+  [ -z "$(find "$SECRETS_DIR/demo/keys" -name '*.tmp.*')" ]
+  run sec import ascKey --file "$W/new.key" --force
+  [ "$status" -eq 0 ]
+  run sec with-file ascKey -- cat {}
+  [ "$output" = NEW-KEY-11 ]
+  [ -z "$(git -C "$SECRETS_DIR" status --porcelain)" ]
+  assert_no_plain NEW-KEY-11 "$SECRETS_DIR"
+  # keygen never replaces a key, --force or not
+  run sec keygen ascKey --type ed25519 --force
+  [ "$status" -ne 0 ]
+  run sec with-file ascKey -- cat {}
+  [ "$output" = NEW-KEY-11 ]
+}
+
+@test "repo hook: a large key commits; grep stopping early is no false refusal (1.11)" {
+  sec init
+  head -c 600000 /dev/urandom | base64 >"$W/big.key"
+  run sec import bigkey --file "$W/big.key"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"not a SOPS-encrypted file"* ]]
+  [ -z "$(git -C "$SECRETS_DIR" status --porcelain)" ]
+  git -C "$SECRETS_DIR" log --format=%s | grep -qx 'import key bigkey (demo)'
+}
+
+@test "list: a long schema has no false 'not in schema' rows (grep -q under pipefail, 1.11)" {
+  sec init
+  local i
+  {
+    echo '# NAME  envs  used-by  gen  description'
+    for i in $(seq 1 400); do printf 'NAME_%03d   staging,production   cf   no   n\n' "$i"; done
+  } >secrets.schema
+  {
+    for i in $(seq 1 400); do printf 'NAME_%03d=v%s\n' "$i" "$i"; done
+    echo 'STRAY_ONE=x'
+  } >"$W/.env.many"
+  sec import --file "$W/.env.many" --env staging
+  run sec list
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"STRAY_ONE"*"not in schema"* ]]
+  [ "$(printf '%s\n' "$output" | grep -c 'not in schema')" -eq 1 ]
+}
+
 @test "import: a dotenv file merges into an env, conflicts need --force" {
   sec init
   printf '# comment\nexport A_ONE="one"\nA_TWO=two words\n\nA_THREE='"'"'3'"'"'\n' >"$W/.env.old"

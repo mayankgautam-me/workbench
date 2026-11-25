@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Versions, release notes and GitHub Releases of one part. make runs it from the project root.
 #
@@ -187,7 +187,7 @@ tauri_file() {
   local conf v
   conf=$(tauri_conf)
   [[ -f $conf ]] || return 0
-  v=$(sed -nE 's/.*"version":[[:space:]]*"([^"]*)".*/\1/p' "$conf" | head -n 1)
+  v=$(sed -nE 's/.*"version":[[:space:]]*"([^"]*)".*/\1/p' "$conf" | sed -n 1p)
   case $v in
     */* | *.json) printf '%s\n' "$(dirname "$conf")/$v" ;;
     *) printf '%s\n' "$conf" ;;
@@ -291,10 +291,10 @@ xcode_version() {
   local d v=''
   d=$(pdir)
   if have xcrun; then
-    v=$(cd "$d" && xcrun agvtool what-marketing-version -terse1 2>/dev/null | head -n 1 | tr -d '[:space:]') || v=''
+    v=$(cd "$d" && xcrun agvtool what-marketing-version -terse1 2>/dev/null | sed -n 1p | tr -d '[:space:]') || v=''
   fi
   if [[ -z $v ]]; then
-    v=$(cat "$d"/*.xcodeproj/project.pbxproj 2>/dev/null | sed -nE 's/.*MARKETING_VERSION = "?([^";]*)"?;.*/\1/p' | head -n 1)
+    v=$(cat "$d"/*.xcodeproj/project.pbxproj 2>/dev/null | sed -nE 's/.*MARKETING_VERSION = "?([^";]*)"?;.*/\1/p' | sed -n 1p)
   fi
   printf '%s\n' "$v"
 }
@@ -322,21 +322,21 @@ current_version() {
       else
         f=$(hw_pcb)
         if [[ -n $f ]]; then
-          v=$(sed -nE 's/^[[:space:]]*\(rev "([^"]*)"\).*/\1/p' "$f" | head -n 1 |
+          v=$(sed -nE 's/^[[:space:]]*\(rev "([^"]*)"\).*/\1/p' "$f" | sed -n 1p |
             sed -E 's/^([Vv]ersion|[Rr]evision|[Rr]ev|[Vv])[[:space:]]*//' | tr ' ' '-')
         fi
       fi
       ;;
     app-flutter)
-      [[ ! -f $d/pubspec.yaml ]] || v=$(sed -nE 's/^version:[[:space:]]*([^+[:space:]]*).*/\1/p' "$d/pubspec.yaml" | head -n 1)
+      [[ ! -f $d/pubspec.yaml ]] || v=$(sed -nE 's/^version:[[:space:]]*([^+[:space:]]*).*/\1/p' "$d/pubspec.yaml" | sed -n 1p)
       ;;
     app-tauri)
       f=$(tauri_file)
-      [[ -z $f || ! -f $f ]] || v=$(sed -nE 's/.*"version":[[:space:]]*"([^"]*)".*/\1/p' "$f" | head -n 1)
+      [[ -z $f || ! -f $f ]] || v=$(sed -nE 's/.*"version":[[:space:]]*"([^"]*)".*/\1/p' "$f" | sed -n 1p)
       ;;
     app-android)
       f=$(gradle_file)
-      [[ ! -f $f ]] || v=$(sed -nE 's/.*versionName[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/p' "$f" | head -n 1)
+      [[ ! -f $f ]] || v=$(sed -nE 's/.*versionName[[:space:]]*=[[:space:]]*"([^"]*)".*/\1/p' "$f" | sed -n 1p)
       ;;
     app-xcode) v=$(xcode_version) ;;
     python)
@@ -471,7 +471,7 @@ set_version() {
     app-android)
       f=$(gradle_file)
       [[ -f $f ]] || die "$OPT_PART: no $f"
-      code=$(sed -nE 's/.*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$f" | head -n 1)
+      code=$(sed -nE 's/.*versionCode[[:space:]]*=[[:space:]]*([0-9]+).*/\1/p' "$f" | sed -n 1p)
       awk -v v="$v" -v code="${code:-}" '
         !dn && /versionName[ \t]*=[ \t]*"[^"]*"/ { sub(/versionName[ \t]*=[ \t]*"[^"]*"/, "versionName = \"" v "\""); dn = 1 }
         !dc && code != "" && /versionCode[ \t]*=[ \t]*[0-9]+/ { sub(/versionCode[ \t]*=[ \t]*[0-9]+/, "versionCode = " (code + 1)); dc = 1 }
@@ -808,7 +808,7 @@ builds_kept() {
     if [[ -n $3 ]]; then
       case $l in "- $3:"*) continue ;; esac
     fi
-    printf '%s\n' "$2" | grep -Fxq -- "$l" || return 1
+    has_match "$2" -Fx -- "$l" || return 1
   done < <(printf '%s\n' "$1")
   return 0
 }
@@ -1010,7 +1010,7 @@ cmd_latest_sync() {
   # the group's files of the version it replaces that this version does not have
   while IFS= read -r f; do
     [[ -n $f ]] || continue
-    printf '%s\n' "$names" | grep -Fxq -- "$f" && continue
+    has_match "$names" -Fx -- "$f" && continue
     gh_cli release delete-asset "$LATEST_TAG" "$f" --yes >/dev/null 2>&1 || log_warn "could not remove $f from the latest Release"
   done < <(printf '%s\n' "$old")
 
@@ -1036,8 +1036,8 @@ cmd_push() {
   remote_tags=$(git ls-remote --tags origin 2>/dev/null || true)
   for t in $(git tag --merged HEAD --list '*-v[0-9]*'); do
     mine=$(git rev-parse "refs/tags/$t^{commit}")
-    theirs=$(printf '%s\n' "$remote_tags" | awk -v r="refs/tags/$t^{}" '$2 == r { print $1; exit }')
-    [[ -n $theirs ]] || theirs=$(printf '%s\n' "$remote_tags" | awk -v r="refs/tags/$t" '$2 == r { print $1; exit }')
+    theirs=$(printf '%s\n' "$remote_tags" | awk -v r="refs/tags/$t^{}" '$2 == r && !f { print $1; f = 1 }')
+    [[ -n $theirs ]] || theirs=$(printf '%s\n' "$remote_tags" | awk -v r="refs/tags/$t" '$2 == r && !f { print $1; f = 1 }')
     if [[ -n $theirs ]]; then
       [[ $theirs == "$mine" ]] || die "tag $t is on origin with another commit ($theirs): move it on purpose, by hand"
       continue

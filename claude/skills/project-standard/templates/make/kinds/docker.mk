@@ -1,4 +1,4 @@
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind docker: a container image built with buildx, and optionally a compose stack for local development.
 #
@@ -38,7 +38,7 @@ DOCKER_IMAGE_SOURCE ?= $(if $(GITHUB_REPOSITORY),https://github.com/$(GITHUB_REP
 # arguments of buildx. Annotations only when this buildx has --annotation (0.12 and later).
 docker_oci = oci_rev=$$(git rev-parse HEAD 2>/dev/null || true); oci_ver=; \
   for oci_t in $$(git tag --points-at HEAD 2>/dev/null); do case "$$oci_t" in $(1)-v*) oci_ver="$${oci_t\#$(1)-v}";; esac; done; \
-  oci_ann=; if [ "$(2)" = push ] && docker buildx build --help 2>/dev/null | grep -q -- '--annotation'; then oci_ann=1; fi; \
+  oci_ann=; if [ "$(2)" = push ] && [ "$$(docker buildx build --help 2>/dev/null | grep -c -- '--annotation' || true)" != 0 ]; then oci_ann=1; fi; \
   oci=(); oci_add() { oci+=(--label "org.opencontainers.image.$$1=$$2"); if [ -n "$$oci_ann" ]; then oci+=(--annotation "index:org.opencontainers.image.$$1=$$2"); fi; }; \
   if [ -n "$(DOCKER_IMAGE_SOURCE)" ]; then oci_add source "$(DOCKER_IMAGE_SOURCE)"; fi; \
   if [ -n "$$oci_rev" ]; then oci_add revision "$$oci_rev"; fi; \

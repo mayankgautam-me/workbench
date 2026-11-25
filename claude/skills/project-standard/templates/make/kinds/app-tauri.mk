@@ -1,4 +1,4 @@
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind app-tauri: a Tauri 2 application (Svelte or another web front end, Rust in src-tauri/).
 #
@@ -47,7 +47,7 @@ app_tauri_release_assets = set -euo pipefail; $(call std_rel_begin,$(1),app-taur
           $(call std_apple_prefix) $($(1)_EXEC) tauri build --target universal-apple-darwin --bundles dmg,app; };) \
       b=src-tauri/target/universal-apple-darwin/release/bundle; \
       need_glob "$$b/dmg/*.dmg" "$(1)-$$ver-macos-universal.dmg"; \
-      app=$$(ls -d "$$b"/macos/*.app 2>/dev/null | head -n 1); \
+      app=$$(ls -d "$$b"/macos/*.app 2>/dev/null | sed -n 1p); \
       [ -n "$$app" ] || { echo "$(1): no .app in $$b/macos: run make $(1)-build" >&2; exit 1; }; \
       ditto -c -k --keepParent "$$app" "$$out/$(1)-$$ver-macos-universal.app.zip"; printf '  asset %s\n' "$(1)-$$ver-macos-universal.app.zip" ;; \
     linux-amd64 | linux-arm64) \
@@ -76,15 +76,15 @@ app_tauri_release_assets = set -euo pipefail; $(call std_rel_begin,$(1),app-taur
     ios) \
       [ "$$(uname -s)" = Darwin ] || { echo "$(1): PLATFORM=ios is built on a Mac" >&2; exit 1; }; \
       $(if $(NOBUILD),,$(call std_secret_prefix,production) $($(1)_EXEC) tauri ios build;) \
-      arch=$$(find src-tauri/gen/apple -name '*.xcarchive' -maxdepth 4 | head -n 1); \
+      arch=$$(find src-tauri/gen/apple -name '*.xcarchive' -maxdepth 4 | sed -n 1p); \
       [ -n "$$arch" ] || { echo "$(1): no .xcarchive under src-tauri/gen/apple: run make $(1)-build TARGET=ios" >&2; exit 1; }; \
       zipdir "$$arch/dSYMs" "$(1)-$$ver-ios-dSYMs.zip"; \
       bn=$$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:CFBundleVersion' "$$arch/Info.plist" 2>/dev/null || /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$$arch/Info.plist"); \
       printf 'ios: TestFlight build %s (version %s)\n' "$$bn" "$$ver" >"$(CURDIR)/$(2)/release/$$ver.build-note" ;; \
     android) \
       $(if $(NOBUILD),,$(call std_secret_prefix,production) $($(1)_EXEC) tauri android build --apk --aab;) \
-      apk=$$(find src-tauri/gen/android -path '*release*' -name '*.apk' | head -n 1); \
-      aab=$$(find src-tauri/gen/android -path '*release*' -name '*.aab' | head -n 1); \
+      apk=$$(find src-tauri/gen/android -path '*release*' -name '*.apk' | sed -n 1p); \
+      aab=$$(find src-tauri/gen/android -path '*release*' -name '*.aab' | sed -n 1p); \
       [ -n "$$apk" ] || { echo "$(1): no release apk under src-tauri/gen/android" >&2; exit 1; }; \
       need "$$apk" "$(1)-$$ver-android.apk"; \
       if [ -n "$$aab" ]; then need "$$aab" "$(1)-$$ver.aab"; else echo "  skip  aab (not built)"; fi ;; \
@@ -163,8 +163,8 @@ $(1)-build:
 $(1)-build-release:
 	@set -euo pipefail; cd $(2); mkdir -p dist-release; \
 	case "$(or $(TARGET),ios)" in \
-	  ios) $$($(1)_EXEC) tauri ios build; find src-tauri/gen/apple -name '*.ipa' | head -n 1 > dist-release/artifact.path ;; \
-	  android) $$($(1)_EXEC) tauri android build $(if $(filter play,$(CHANNEL)),--aab,--apk); find src-tauri/gen/android -path '*release*' \( -name '*.apk' -o -name '*.aab' \) | head -n 1 > dist-release/artifact.path ;; \
+	  ios) $$($(1)_EXEC) tauri ios build; find src-tauri/gen/apple -name '*.ipa' | sed -n 1p > dist-release/artifact.path ;; \
+	  android) $$($(1)_EXEC) tauri android build $(if $(filter play,$(CHANNEL)),--aab,--apk); find src-tauri/gen/android -path '*release*' \( -name '*.apk' -o -name '*.aab' \) | sed -n 1p > dist-release/artifact.path ;; \
 	  *) echo "$(1)-release: TARGET must be ios or android"; exit 1 ;; \
 	esac; \
 	test -s dist-release/artifact.path || { echo "$(1): no artifact found"; exit 1; }
@@ -180,7 +180,7 @@ $(1)-release:
 	    test -n "$($(1)_ASC_KEY_ID)" -a -n "$($(1)_ASC_ISSUER)" || { echo "$(1): set $(1)_ASC_KEY_ID and $(1)_ASC_ISSUER in make/project.mk"; exit 1; }; \
 	    $$(call std_confirm,production) && $$($(1)_SEC) with-file appstore-api-key -- sh -c 'd=$$$$(mktemp -d); trap "rm -rf \"$$$$d\"" EXIT; cp "$$$$1" "$$$$d/AuthKey_$($(1)_ASC_KEY_ID).p8"; API_PRIVATE_KEYS_DIR="$$$$d" xcrun altool --upload-app -f "$$$$2" --type ios --apiKey "$($(1)_ASC_KEY_ID)" --apiIssuer "$($(1)_ASC_ISSUER)"' sh {} "$$$$art" ;; \
 	  android) \
-	    ver=$$$$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' src-tauri/tauri.conf.json | head -n 1); \
+	    ver=$$$$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' src-tauri/tauri.conf.json | sed -n 1p); \
 	    if [ "$(or $(CHANNEL),ota)" = play ]; then \
 	      $$(call std_confirm,production) && $$($(1)_SEC) with-file play-service-account -- fastlane supply --json_key {} --package_name "$($(1)_APP_ID)" --track $(or $(TRACK),internal) --aab "$$$$art"; \
 	    else \
@@ -200,7 +200,7 @@ $(1)-logs:
 
 $(call std_verb,$(1),version,setup,Print the version in tauri.conf.json)
 $(1)-version:
-	@sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' $(2)/src-tauri/tauri.conf.json | head -n 1
+	@sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' $(2)/src-tauri/tauri.conf.json | sed -n 1p
 
 $(call std_release,$(1),app-tauri,$(2),app_tauri_release_assets,)
 

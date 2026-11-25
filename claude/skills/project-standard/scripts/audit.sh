@@ -123,7 +123,7 @@ has_header() {
 }
 
 header_version() {
-  head -n 2 "$1" 2>/dev/null | sed -n 's/.*project-standard v\([0-9][0-9]*\(\.[0-9][0-9]*\)*\).*/\1/p' | head -n 1
+  head -n 2 "$1" 2>/dev/null | sed -n 's/.*project-standard v\([0-9][0-9]*\(\.[0-9][0-9]*\)*\).*/\1/p' | sed -n 1p
 }
 
 # sq TEXT: TEXT as one single-quoted shell word, so a suggested command survives spaces and quotes in paths.
@@ -758,10 +758,10 @@ if has_part_kind altium; then
   alib=${alib%/}
   have_sub=0
   if [[ -f "$DIR/.gitmodules" ]] &&
-    git config -f "$DIR/.gitmodules" --get-regexp '^submodule\..*\.path$' 2>/dev/null | awk '{ print $2 }' | grep -Fxq -- "$alib"; then
+    grep -Fxq -- "$alib" <<<"$(git config -f "$DIR/.gitmodules" --get-regexp '^submodule\..*\.path$' 2>/dev/null | awk '{ print $2 }')"; then
     have_sub=1
   fi
-  if ((IS_GIT == 1)) && git -C "$DIR" ls-files -s -- "$alib" 2>/dev/null | grep -q '^160000 '; then have_sub=1; fi
+  if ((IS_GIT == 1)) && grep -q '^160000 ' <<<"$(git -C "$DIR" ls-files -s -- "$alib" 2>/dev/null)"; then have_sub=1; fi
   if ((have_sub == 0)); then
     aproj=''
     [[ ! -f "$DIR/make/project.mk" ]] || aproj=$(make_var "$DIR/make/project.mk" ALTIUM_LIBRARY_PROJECT)
@@ -1087,7 +1087,7 @@ fi
 # when gh is installed and a remote points at github.com, and says nothing when gh cannot read the repository
 # (offline, not signed in). STD_AUDIT_OFFLINE=1 skips it.
 if [[ -z ${STD_AUDIT_OFFLINE:-} ]] && command -v gh >/dev/null 2>&1; then
-  gh_repo=$(git -C "$DIR" remote -v 2>/dev/null | awk '$2 ~ /github\.com[:\/]/ { print $2; exit }' |
+  gh_repo=$(git -C "$DIR" remote -v 2>/dev/null | awk '$2 ~ /github\.com[:\/]/ && !f { print $2; f = 1 }' |
     sed -E 's#^.*github\.com[:/]##; s#\.git$##' || true)
   if [[ -n $gh_repo ]] && gh_desc=$(gh repo view "$gh_repo" --json description --jq .description 2>/dev/null); then
     [[ -n $gh_desc ]] ||

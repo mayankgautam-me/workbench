@@ -1,4 +1,4 @@
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind app-android: a native Android app built with Gradle (Kotlin or Java, Compose or Views).
 #
@@ -31,7 +31,7 @@ app_android_release_assets = set -euo pipefail; $(call std_rel_begin,$(1),app-an
   apks=$$(ls "$$o"/apk/release/*.apk 2>/dev/null || true); \
   [ "$$(printf '%s\n' "$$apks" | grep -c .)" = 1 ] || { echo "$(1): expected one release apk in $$o/apk/release (ABI splits: set one universal apk)" >&2; exit 1; }; \
   need "$$apks" "$(1)-$$ver-android.apk"; \
-  aab=$$(ls "$$o"/bundle/release/*.aab 2>/dev/null | head -n 1 || true); \
+  aab=$$(ls "$$o"/bundle/release/*.aab 2>/dev/null | sed -n 1p || true); \
   if [ -n "$$aab" ]; then need "$$aab" "$(1)-$$ver.aab"; else echo "  skip  aab (not built)"; fi; \
   opt "$$o/mapping/release/mapping.txt" "$(1)-$$ver-android-mapping.txt"; \
   $(std_rel_end_plat)
@@ -69,14 +69,14 @@ $(call std_verb,$(1),release,release,Build the signed release and publish it to 
 $(1)-release:
 	@set -euo pipefail; cd $(2); \
 	$$(call std_confirm,production) && $$($(1)_SEC) exec --env production -- $$($(1)_SEC) with-file android-keystore -- sh -c 'ANDROID_KEYSTORE_FILE="$$$$1" exec ./gradlew $(if $(filter play,$(CHANNEL)),bundleRelease,assembleRelease)' sh {}; \
-	art=$$$$(find app/build/outputs -path '*release*' \( -name '*.apk' -o -name '*.aab' \) | head -n 1); \
+	art=$$$$(find app/build/outputs -path '*release*' \( -name '*.apk' -o -name '*.aab' \) | sed -n 1p); \
 	test -n "$$$$art" || { echo "$(1): no release artifact found"; exit 1; }; \
 	if [ "$(or $(CHANNEL),ota)" = play ]; then \
 	  test -n "$($(1)_APP_ID)" || { echo "$(1): set $(1)_APP_ID in make/project.mk"; exit 1; }; \
 	  $$(call std_confirm,production) && $$($(1)_SEC) with-file play-service-account -- fastlane supply --json_key {} --package_name "$($(1)_APP_ID)" --track $(or $(TRACK),internal) --aab "$$$$art"; \
 	else \
 	  test -n "$(OTA_BUCKET)" -a -n "$($(1)_OTA_URL)" || { echo "$(1): set OTA_BUCKET and $(1)_OTA_URL in make/project.mk"; exit 1; }; \
-	  ver=$$$$(sed -n 's/.*versionName *= *"\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1); \
+	  ver=$$$$(sed -n 's/.*versionName *= *"\([^"]*\)".*/\1/p' app/build.gradle.kts | sed -n 1p); \
 	  test -n "$$$$ver" || { echo "$(1): no versionName in app/build.gradle.kts"; exit 1; }; \
 	  json=$$$$(mktemp); trap 'rm -f "$$$$json"' EXIT; \
 	  printf '{"version":"%s","url":"%s/%s/app.apk"}\n' "$$$$ver" "$($(1)_OTA_URL)" "$$$$ver" > "$$$$json"; \
@@ -105,7 +105,7 @@ $(1)-logs:
 
 $(call std_verb,$(1),version,setup,Print the versionName from app/build.gradle.kts)
 $(1)-version:
-	@sed -n 's/.*versionName *= *"\([^"]*\)".*/\1/p' $(2)/app/build.gradle.kts | head -n 1
+	@sed -n 's/.*versionName *= *"\([^"]*\)".*/\1/p' $(2)/app/build.gradle.kts | sed -n 1p
 
 $(call std_release,$(1),app-android,$(2),app_android_release_assets,)
 

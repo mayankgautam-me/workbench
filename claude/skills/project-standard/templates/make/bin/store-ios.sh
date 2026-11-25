@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Archives, signs and exports the iOS app of a Flutter part and uploads it to App Store Connect (TestFlight), signed with
 # Xcode's automatic signing through the App Store Connect API key: xcodebuild -allowProvisioningUpdates with the key
@@ -73,7 +73,7 @@ xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Relea
 echo "store-ios: export with $export_options"
 xcodebuild -exportArchive -archivePath "$archive" -exportPath "$ipa_dir" -exportOptionsPlist "$export_options" "${auth[@]}"
 
-ipa=$(find "$ipa_dir" -maxdepth 1 -name '*.ipa' | head -n 1)
+ipa=$(find "$ipa_dir" -maxdepth 1 -name '*.ipa' | sed -n 1p)
 [ -n "$ipa" ] || { echo "store-ios: the export made no ipa in $ipa_dir" >&2; exit 1; }
 echo "store-ios: $ipa"
 

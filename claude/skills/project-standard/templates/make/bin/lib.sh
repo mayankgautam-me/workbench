@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Shared shell helpers for secrets.sh, cf.sh and the recipes in common.mk.
 # Source it:   . "$STD_BIN/lib.sh"
@@ -40,6 +40,15 @@ paint() {
 
 log_info() { printf '%s %s\n' "$(paint 2 blue '>')" "$*" >&2; }
 log_ok() { printf '%s %s\n' "$(paint 2 green 'ok')" "$*" >&2; }
+# has_match TEXT GREP-ARGS...   true when a line of TEXT matches (has_match "$list" -Fx -- "$name"). Never
+# `producer | grep -q` under pipefail: grep -q stops at the first match, the producer dies of SIGPIPE and the pipeline
+# counts as no match. grep -c reads all its input, and no here-string is used (bash 3.2 backs those with a file) (1.11).
+has_match() {
+  local text="$1"
+  shift
+  [ "$(printf '%s\n' "$text" | grep -c "$@" || true)" != 0 ]
+}
+
 log_warn() { printf '%s %s\n' "$(paint 2 yellow 'warn')" "$*" >&2; }
 
 # github_repo_slug URL   owner/name of a GitHub repository written as https://github.com/<o>/<n>[.git],
@@ -273,7 +282,7 @@ STD_HOOK_MARK='# project-standard v[0-9][0-9.]* pre-commit hook'
 install_hook_body() {
   cat <<'HOOK'
 #!/usr/bin/env bash
-# project-standard v1.10 pre-commit hook (installed by `make hooks`; fast checks only)
+# project-standard v1.11 pre-commit hook (installed by `make hooks`; fast checks only)
 set -euo pipefail
 max_mb="${STD_MAX_FILE_MB:-5}"
 limit=$((max_mb * 1024 * 1024))
@@ -301,7 +310,9 @@ while IFS= read -r -d '' f; do
     fail=1
   fi
   attr="$(git check-attr filter -- "$f" | sed 's/.*: //')"
-  if [ "$attr" = "lfs" ] && ! git cat-file -p ":$f" 2>/dev/null | head -c 64 | grep -q 'git-lfs'; then
+  start=''
+  [ "$attr" != "lfs" ] || start="$(git cat-file -p ":$f" 2>/dev/null | head -c 64 || true)"
+  if [ "$attr" = "lfs" ] && [[ $start != *git-lfs* ]]; then
     echo "pre-commit: $f should be an LFS pointer; run: git lfs install && git add --renormalize '$f'" >&2
     fail=1
   fi
