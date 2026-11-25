@@ -1,4 +1,4 @@
-# project-standard v1.9 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind hardware: a KiCad board (one .kicad_pro per part dir), driven by kicad-cli.
 #
@@ -32,6 +32,10 @@
 # default <owner>/kicad-library) is where make ci-setup adds the KiCad deploy key; doctor prints it. The revision is <dir>/VERSION, else the rev of the board's title block.
 # Outputs go to <dir>/outputs/, the fab zip to <dir>/production/<Board>_v<rev>.zip, a release's files to
 # <dir>/release/<rev>/. make <part>-bump sets VERSION and tags <part>-v<rev>; <part>-release is the GitHub Release.
+# Fonts (1.10): on macOS every kicad-cli call runs with FONTCONFIG_FILE set to a minimal config (the system and user font
+# folders, written once to $TMPDIR/project-standard-kicad-fonts.conf). KiCad's bundled fontconfig otherwise reads
+# Homebrew's newer /opt/homebrew/etc/fonts/conf.d and prints dozens of "Fontconfig warning" lines per ERC and DRC. Nothing
+# is filtered: every other message of kicad-cli still shows. A FONTCONFIG_FILE in the environment wins.
 
 KICAD_VERSION ?= 10.0
 KICAD_CLI ?= kicad-cli
@@ -62,7 +66,16 @@ hw_sh = set -euo pipefail; \
   bad() { printf '  %smiss%s  %s\n' "$$c_err" "$$c_0" "$$*"; problems=$$((problems + 1)); }; \
   die() { printf '%serror%s %s\n' "$$c_err" "$$c_0" "$$*" >&2; exit 1; }; \
   have() { command -v "$$1" >/dev/null 2>&1; }; \
-  kc() { $(KICAD_CLI) "$$@"; };
+  kc_fc=; \
+  if [ "$$(uname -s)" = Darwin ] && [ -z "$${FONTCONFIG_FILE:-}" ]; then \
+    kc_fc="$${TMPDIR:-/tmp}/project-standard-kicad-fonts.conf"; \
+    if [ ! -f "$$kc_fc" ]; then \
+      printf '%s\n' '<?xml version="1.0"?>' '<!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">' '<fontconfig>' \
+        '  <dir>/System/Library/Fonts</dir>' '  <dir>/Library/Fonts</dir>' '  <dir>~/Library/Fonts</dir>' \
+        '  <cachedir prefix="xdg">fontconfig</cachedir>' '</fontconfig>' >"$$kc_fc.$$$$" && mv "$$kc_fc.$$$$" "$$kc_fc"; \
+    fi; \
+  fi; \
+  kc() { if [ -n "$$kc_fc" ]; then FONTCONFIG_FILE="$$kc_fc" $(KICAD_CLI) "$$@"; else $(KICAD_CLI) "$$@"; fi; };
 
 # Sets d, name, pro, sch, pcb, out for the part's single KiCad project.
 hw_find = d="$(CURDIR)/$(2)"; set -- "$$d"/*.kicad_pro; \

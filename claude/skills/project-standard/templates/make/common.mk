@@ -1,4 +1,4 @@
-# project-standard v1.9 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # The stage commands, the same in every project. GNU make 3.81 compatible (macOS /usr/bin/make):
 # no .ONESHELL, .SHELLFLAGS, $(file), .RECIPEPREFIX, undefine, != or ::=.
@@ -208,6 +208,26 @@ std_secret_prefix = $(if $(call std_has_env,$(1)),bash $(CURDIR)/$(STD_BIN)/secr
 # APPLE_API_KEY_PATH (notarisation) when the secrets hold it. The command follows the prefix.
 std_apple_prefix = $(call std_secret_prefix,production) $(if $(wildcard $(SECRETS_DIR)/$(PROJECT)/keys/appstore-api-key.sops),bash $(CURDIR)/$(STD_BIN)/secrets.sh with-file appstore-api-key -- sh -c 'export APPLE_API_KEY_PATH="$$1"; shift; exec "$$@"' sh {} ,)
 
+# The Android SDK the app kinds install into (1.10): ANDROID_HOME, else ANDROID_SDK_ROOT, from the environment, else
+# ~/Library/Android/sdk on a Mac (where Android Studio puts it) and ~/Android/Sdk elsewhere.
+STD_ANDROID_HOME := $(or $(ANDROID_HOME),$(ANDROID_SDK_ROOT),$(if $(filter Darwin,$(shell uname -s)),$(HOME)/Library/Android/sdk,$(HOME)/Android/Sdk))
+# std_android_sdk PACKAGES : shell text that installs the SDK packages (sdkmanager names such as platforms;android-36, or
+# the android CLI's, platforms/android-36) into STD_ANDROID_HOME and accepts their licences. It uses the android CLI of
+# cmdline-tools (android sdk install, which replaces the deprecated sdkmanager) when that is on PATH, else sdkmanager
+# from PATH or the SDK's cmdline-tools/latest. Packages already installed are left as they are.
+std_android_sdk = set -euo pipefail; sdk="$(STD_ANDROID_HOME)"; mkdir -p "$$sdk"; \
+  pk=$$(printf '%s\n' $(foreach p,$(1),'$(p)') | tr ';' '/' | tr '\n' ' '); \
+  if command -v android >/dev/null 2>&1 && android --no-metrics sdk install --help 2>/dev/null | grep -q 'Installs SDK packages'; then \
+    echo "android sdk install $$pk into $$sdk"; android --no-metrics --sdk="$$sdk" sdk install $$pk; \
+  else \
+    sm=$$(command -v sdkmanager 2>/dev/null || true); \
+    if [ -z "$$sm" ] && [ -x "$$sdk/cmdline-tools/latest/bin/sdkmanager" ]; then sm="$$sdk/cmdline-tools/latest/bin/sdkmanager"; fi; \
+    [ -n "$$sm" ] || { echo "no android CLI and no sdkmanager: brew install --cask android-commandlinetools" >&2; exit 1; }; \
+    echo "no android CLI: using the deprecated sdkmanager $$sm"; \
+    yes | "$$sm" --sdk_root="$$sdk" --licenses >/dev/null 2>&1 || true; \
+    "$$sm" --sdk_root="$$sdk" $$(printf '%s\n' $$pk | tr '/' ';' | tr '\n' ' '); \
+  fi
+
 # Every verb a kind may fan out. `bump` and `github-release` act on one part (root `make bump PART=...`).
 STD_VERBS := doctor setup update dev stop status logs reset check test test-e2e test-device format \
   build deploy smoke test-remote preview promote versions rollback release version bump github-release clean distclean \
@@ -272,8 +292,11 @@ endef
 # std_h group,target,description : help entry for a root target.
 std_h = $(eval STD_HELP += $(subst $(space),__SP__,$(1)|$(2)|$(3)))
 
-# The parts a root verb applies to, in PARTS order, restricted by PART=.
-std_sel = $(if $(PART),$(filter $(PART)-$(1),$(STD_VERB_$(1))),$(STD_VERB_$(1)))
+# The parts a root verb applies to, in PARTS order, restricted by PART= and by STD_ONLY= (a list of part names: the
+# sub-makes of make deploy, so its check and build cover only the parts that deploy, 1.10).
+std_sel = $(filter $(if $(STD_ONLY),$(addsuffix -$(1),$(STD_ONLY)),%),$(if $(PART),$(filter $(PART)-$(1),$(STD_VERB_$(1))),$(STD_VERB_$(1))))
+# The names of the parts make deploy deploys (their kind has deploy: cloud-worker, web-pages, docker), restricted by PART=.
+std_deploy_parts = $(patsubst %-deploy,%,$(call std_sel,deploy))
 
 # A shell line that refuses with a message (exit 1).
 std_refuse = $(STD_LIB); log_err "refused: $(1)"; exit 1
@@ -485,7 +508,7 @@ $(call std_h,secrets,secrets-add-machine,Let a new Mac decrypt: HOST=<host>)
 $(call std_h,secrets,secrets-remove-machine,Revoke a Mac: HOST=<host>; lists the values to rotate)
 $(call std_h,secrets,secrets-sync,Pull the secrets repo now)
 $(call std_h,secrets,secrets-doctor,Check the secrets tools and identities)
-$(call std_h,deploy,deploy,check; build; deploy the parts; smoke (production needs CONFIRM=production))
+$(call std_h,deploy,deploy,check and build the parts that deploy; deploy them; smoke (production needs CONFIRM=production))
 $(call std_h,deploy,smoke,Health and smoke tests against the deployed URLs)
 $(call std_h,deploy,test-remote,Full deployed test suite (production needs CONFIRM=production))
 $(call std_h,deploy,preview,Upload a version and smoke test its preview URL)
@@ -677,8 +700,10 @@ format:
 	@$(call std_fan,format)
 
 .PHONY: deploy smoke test-remote preview promote versions rollback
+# check and build only the parts that deploy (STD_ONLY=): firmware, apps and boards are not built for a deploy (1.10). The
+# root check and build still run, so prerequisites make/local.mk adds to them still run too.
 deploy:
-	@$(call std_production_guard) && $(MAKE) --no-print-directory check && $(MAKE) --no-print-directory build && { $(call std_fan,deploy); } && $(MAKE) --no-print-directory smoke
+	@$(call std_production_guard) && $(if $(strip $(std_deploy_parts)),$(MAKE) --no-print-directory check STD_ONLY="$(std_deploy_parts)" && $(MAKE) --no-print-directory build STD_ONLY="$(std_deploy_parts)" && { $(call std_fan,deploy); } && $(MAKE) --no-print-directory smoke,$(call std_fan,deploy))
 smoke:
 	@$(call std_fan,smoke)
 test-remote:

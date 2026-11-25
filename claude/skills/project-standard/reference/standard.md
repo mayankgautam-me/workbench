@@ -474,7 +474,7 @@ One `ok` or `fail` line each. `make doctor` checks, for every part with Access s
 
 | Command | Does |
 |---|---|
-| `make deploy ENV=staging` | `check`, `build`, `cf-migrate`, deploy (Worker, Pages or container), then `smoke`. Stops at the first failure. |
+| `make deploy ENV=staging` | `check` and `build` of the parts that deploy (cloud-worker, web-pages, docker; not firmware, apps or boards, 1.10), `cf-migrate`, deploy (Worker, Pages or container), then `smoke`. Stops at the first failure. |
 | `make smoke ENV=` | The health endpoint and `tests/smoke` against the deployed URLs. |
 | `make test-remote ENV=staging` | The full suite in `tests/remote` against staging; production only with `CONFIRM`. |
 | `make preview` | `wrangler versions upload`, prints the preview URL, smoke-tests it. |
@@ -1077,10 +1077,10 @@ of the project's repository (from stdin, never on a command line), adds the publ
 ## 6. CI/CD
 
 The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/name`, default
-`mayankgautam-me/ci-templates`), tagged `v1.9` (`v1.8`, `v1.7`, `v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
+`mayankgautam-me/ci-templates`), tagged `v1.10` (`v1.9`, `v1.8`, `v1.7`, `v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
 own, independent of the project's `GITHUB_OWNER`: projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.9`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.10`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -1398,6 +1398,41 @@ the project's owner's, 5.1), `STD_CONFIG` (default `~/.config/project-standard`)
 Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) and the number in a project's `make/VERSION`, its managed
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
+
+- **1.10** (2026-11-25): store uploads from CI, a deploy that builds only what it deploys. `make/VERSION`, the managed
+  headers and the workflows' `@v1.10` say 1.10; `mayankgautam-me/ci-templates` gets the tag `v1.10` and keeps `v1.9` to
+  `v1.0`.
+  - `make deploy` runs `check` and `build` only for the parts whose kind deploys (cloud-worker, web-pages, docker), then
+    deploys them and runs `smoke`; firmware, apps and boards are no longer built for a deploy. The root `check` and
+    `build` still run (with the internal `STD_ONLY=` list), so prerequisites `make/local.mk` adds to them still run;
+    `PART=` and the production guard are as before. `make check` and `make build` alone still cover every part.
+  - app-flutter store uploads on the part's tag, opt-in with `<part>_STORE := android ios` (or one): the scaffold writes
+    `store:` and `confirm: production` on the tag job. `store-android` (Linux) builds the bundle and uploads it with
+    `fastlane supply` to the Play **internal** track; `store-ios` (a GitHub-hosted macOS runner, `STD_RUNNER_MACOS`
+    when set; gated by its input, not `MACOS_CI`) archives, signs and uploads to **TestFlight**. Nothing is released
+    publicly or sent for review. The manual `publish` job runs only from a dispatch, not on a tag.
+  - `make <part>-release` (the same command on a Mac and in CI): `TARGET=appbundle` signs with
+    `keys/android-upload-keystore` when the secrets hold it (`ANDROID_KEYSTORE_FILE` and the production values
+    `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD` in the build's environment, for
+    `build.gradle(.kts)`) and skips the metadata, changelog, image and screenshot uploads; `TARGET=ios` runs
+    `flutter build ios --config-only` and then `make/bin/store-ios.sh` (new managed file): `xcodebuild archive` and
+    `-exportArchive` with `-allowProvisioningUpdates` and the App Store Connect key, so Xcode's automatic signing
+    creates the certificate and profile (no manual certificates on the runner; the key needs the Admin role), then
+    `altool --upload-app`. `ios/ExportOptions.plist` is used when it exists, else app-store-connect with automatic
+    signing. `<part>_STORE_ARGS` adds flutter build arguments to both store builds (dart-defines), read when the
+    recipe runs, so `make/local.mk` can set it.
+  - `make <part>-android-sdk` (app-flutter, app-android): installs `<part>_ANDROID_PACKAGES` (default
+    `platform-tools`) into `ANDROID_HOME` (else `~/Library/Android/sdk` on a Mac) with the `android` CLI of
+    cmdline-tools (`android sdk install`, slash names) and falls back to the deprecated `sdkmanager` (`;` names); either
+    spelling is accepted. app-flutter then points `flutter config --android-sdk` at it.
+  - hardware: on macOS every kicad-cli call runs with `FONTCONFIG_FILE` set to a minimal config of the system and user
+    font folders (`$TMPDIR/project-standard-kicad-fonts.conf`), so KiCad's bundled fontconfig no longer reads
+    Homebrew's newer `conf.d` and prints about 45 `Fontconfig warning` lines per ERC and DRC. Nothing is filtered; a
+    `FONTCONFIG_FILE` in the environment wins.
+  - The scaffold writes `android-upload-keystore` and the `ANDROID_KEY*` rows into `secrets.schema` for app-flutter;
+    `make audit` warns when `<part>_STORE` is set and the tag job does not pass it with `confirm: production`.
+  Update from 1.9: refresh the managed files (with `make/bin/store-ios.sh`) and move the `uses:` lines to `@v1.10`.
+  Store uploads stay off until a project sets `<part>_STORE` and the job's `store:` and `confirm: production`.
 
 - **1.9** (2026-11-24): app-flutter builds on the project's Flutter and checks only its own Dart files. `make/VERSION`,
   the managed headers and the workflows' `@v1.9` say 1.9; `mayankgautam-me/ci-templates` gets the tag `v1.9` and keeps

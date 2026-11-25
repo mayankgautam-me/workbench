@@ -1,8 +1,10 @@
-# project-standard ci-templates v1.9: app-flutter (a Flutter app; Linux files per architecture, store upload by hand (TARGET from the input)).
+# project-standard ci-templates v1.10: app-flutter (a Flutter app; Linux files per architecture; store uploads on the part's tag
+# when the caller passes store (1.10): android to the Play internal track from Linux, ios to TestFlight from a GitHub-hosted
+# macOS runner, never a public release; and by hand with confirm (TARGET from the input)).
 # Flutter is the project's (1.9): the flutter_version input (the scaffold writes <part>_FLUTTER_VERSION from make/project.mk),
 # else the part's .fvmrc, else the latest stable; installed on the runner by subosito/flutter-action, not a container image
 # (the newest cirruslabs image is 3.44). The build and publish jobs use the runner's Android SDK, or set one up.
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/app-flutter.yml@v1.9.
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/app-flutter.yml@v1.10.
 
 on:
   workflow_call:
@@ -15,6 +17,8 @@ on:
       confirm: { type: string, default: '' }
       target: { type: string, default: '' }
       flutter_version: { type: string, default: '' }
+      # the stores a tag uploads to (1.10): '' (none), 'android', 'ios' or 'android ios'; needs confirm: production
+      store: { type: string, default: '' }
     secrets:
       SECRETS_DEPLOY_KEY:
         required: false
@@ -586,7 +590,8 @@ jobs:
         run: make "$PART-github-release"
 
   publish:
-    if: ${{ inputs.confirm == 'production' && !failure() && !cancelled() }}
+    # by hand (release.yml run with part and confirm); a tag uploads through store-android and store-ios instead (1.10)
+    if: ${{ inputs.confirm == 'production' && !inputs.run_release && !failure() && !cancelled() }}
     needs: [check, build]
     runs-on: ${{ vars.STD_RUNNER || 'ubuntu-24.04' }}
     env:
@@ -718,3 +723,270 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
+  store-android:
+    # the part's tag with store containing android: the upload-key-signed bundle to the Play internal track (1.10)
+    if: ${{ inputs.run_release && inputs.confirm == 'production' && contains(inputs.store, 'android') && !failure() && !cancelled() }}
+    needs: [check, build]
+    runs-on: ${{ vars.STD_RUNNER || 'ubuntu-24.04' }}
+    env:
+      PART: ${{ inputs.part }}
+      PART_DIR: ${{ inputs.part_dir }}
+      STD_APT_PACKAGES: ${{ vars.STD_APT_PACKAGES }}
+      TARGET: appbundle
+    steps:
+      - name: Export the workspace paths
+        shell: bash
+        run: |
+          echo "SECRETS_DIR=$GITHUB_WORKSPACE/.ci/secrets" >> "$GITHUB_ENV"
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Get the Flutter version (the flutter_version input, else the part's .fvmrc, else the latest stable)
+        id: flutter-version
+        shell: bash
+        env:
+          WANT: ${{ inputs.flutter_version }}
+          PART_DIR: ${{ inputs.part_dir }}
+        run: |
+          set -euo pipefail
+          v="$WANT"
+          if [ -z "$v" ] && [ -f "$PART_DIR/.fvmrc" ]; then v="$(jq -r '.flutter // empty' "$PART_DIR/.fvmrc")"; fi
+          channel=stable
+          case "$v" in stable | beta) channel="$v"; v="" ;; esac
+          [ -n "$v" ] || echo "::notice::$PART_DIR: no Flutter version set (<part>_FLUTTER_VERSION in make/project.mk, or .fvmrc); using the latest $channel"
+          # Flutter publishes no Linux arm64 archive: there the action clones the SDK from git at the release tag, so an
+          # empty version becomes the current release of the channel first.
+          if [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ARCH" = ARM64 ]; then
+            if [ -z "$v" ]; then
+              v="$(curl -fsSL --retry 5 https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json |
+                jq -r --arg c "$channel" '.current_release[$c] as $h | [.releases[] | select(.hash == $h)][0].version')"
+            fi
+            channel=main
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: ${{ steps.flutter-version.outputs.channel }}
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
+          cache: true
+      - name: Get whether the runner has an Android SDK
+        id: android
+        shell: bash
+        run: |
+          if [ -n "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}" ] && [ -d "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}" ]; then echo "missing=false"; else echo "missing=true"; fi >> "$GITHUB_OUTPUT"
+      - name: Install the Android SDK (a runner without one)
+        if: ${{ steps.android.outputs.missing == 'true' }}
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
+      - name: Check out the secrets repo (sparse, for decryption)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ vars.SECRETS_REPO }}
+          ssh-key: ${{ secrets.SECRETS_DEPLOY_KEY }}
+          path: .ci/secrets
+          sparse-checkout: |
+            /${{ github.event.repository.name }}/
+            /recipients/
+          sparse-checkout-cone-mode: false
+      - name: Install mise and the project's tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Explicit setup, carried over from the v8 .std-mise helper. Linux: make, git, curl and jq from apt when one is missing,
+          # and STD_APT_PACKAGES. mise comes from its pinned release tarball, sha256 checked (not curl | sh). Change the
+          # version and all four digests together.
+          if [ "$(uname -s)" = Linux ] && command -v apt-get >/dev/null 2>&1; then
+            sudo_cmd=""; [ "$(id -u)" = 0 ] || sudo_cmd=sudo
+            need=""; for t in make git curl jq; do command -v "$t" >/dev/null 2>&1 || need="$need $t"; done
+            if [ -n "$need" ] || { [ -n "${STD_APT_PACKAGES:-}" ] && ! dpkg -s ${STD_APT_PACKAGES:-} >/dev/null 2>&1; }; then
+              $sudo_cmd apt-get update -qq
+              $sudo_cmd apt-get install -y -qq --no-upgrade $need ca-certificates ${STD_APT_PACKAGES:-}
+            fi
+          fi
+          if ! command -v mise >/dev/null 2>&1; then
+            mise_v=v2026.11.3
+            case "$(uname -s)-$(uname -m)" in
+              Linux-x86_64) mise_os=linux-x64; mise_sha=837acae6defb8c9ad74823f6e38856633bacb04c65c1ac67d952749847543bd9; sha_cmd="sha256sum" ;;
+              Linux-aarch64) mise_os=linux-arm64; mise_sha=13547a80d1dc2d5f81bb183023732f4981486e894d060e30993cc4364b4af51d; sha_cmd="sha256sum" ;;
+              Darwin-arm64) mise_os=macos-arm64; mise_sha=de9a54330fee4edede51a3cf6196bbf522f01c5e3fd981e0bebea33f561a0431; sha_cmd="shasum -a 256" ;;
+              Darwin-x86_64) mise_os=macos-x64; mise_sha=88389a4a624a7279ec8d2d06e5c0fbd874ce4f5de791767883b32f62f4e1d62c; sha_cmd="shasum -a 256" ;;
+              *) echo "mise: unsupported platform $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+            esac
+            mise_d="$(mktemp -d)"
+            curl -fsSL -o "$mise_d/mise.tar.gz" "https://github.com/jdx/mise/releases/download/$mise_v/mise-$mise_v-$mise_os.tar.gz"
+            echo "$mise_sha  $mise_d/mise.tar.gz" | $sha_cmd -c -
+            tar -xzf "$mise_d/mise.tar.gz" -C "$mise_d" mise/bin/mise
+            mkdir -p "$HOME/.local/bin"
+            install -m 755 "$mise_d/mise/bin/mise" "$HOME/.local/bin/mise"
+            rm -rf "$mise_d"
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+          mise install
+      - name: Get fastlane (the runner image may have none)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if command -v fastlane >/dev/null 2>&1; then exit 0; fi
+          gem install --user-install --no-document fastlane
+          echo "$(ruby -e 'print Gem.user_dir')/bin" >> "$GITHUB_PATH"
+      - name: Install sops and age
+        shell: bash
+        run: command -v sops >/dev/null 2>&1 && command -v age >/dev/null 2>&1 || mise use -g --yes sops@3 age@1
+      - name: Get the pub cache key before anything builds
+        id: pub-key
+        shell: bash
+        env:
+          KEY: ${{ runner.os }}-pub-${{ hashFiles(format('{0}/pubspec.lock', inputs.part_dir)) }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
+      - name: Keep the pub cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.pub-cache
+          key: ${{ steps.pub-key.outputs.key }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+      - name: Install dependencies (no CI key)
+        run: env -u SOPS_AGE_KEY make "$PART-setup"
+      - name: Upload to the Play internal track (production keys)
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: make "$PART-release" TARGET=appbundle TRACK=internal CONFIRM=production
+      - name: Keep unlinked
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.part }}-play-bundle
+          path: |
+            ${{ inputs.part_dir }}/build/app/outputs/bundle/release/*.aab
+            ${{ inputs.part_dir }}/build/app/outputs/mapping/release/mapping.txt
+          retention-days: 7
+          if-no-files-found: ignore
+
+  store-ios:
+    # the part's tag with store containing ios: archive, sign (Xcode automatic signing with the App Store Connect key: no
+    # certificate or profile on the runner) and upload to TestFlight, on a GitHub-hosted macOS runner (1.10). The store
+    # input is the opt-in, so this job does not also need MACOS_CI.
+    if: ${{ inputs.run_release && inputs.confirm == 'production' && contains(inputs.store, 'ios') && !failure() && !cancelled() }}
+    needs: [check, build]
+    runs-on: ${{ vars.STD_RUNNER_MACOS || 'macos-latest' }}
+    env:
+      PART: ${{ inputs.part }}
+      PART_DIR: ${{ inputs.part_dir }}
+      STD_APT_PACKAGES: ${{ vars.STD_APT_PACKAGES }}
+      TARGET: ios
+    steps:
+      - name: Export the workspace paths
+        shell: bash
+        run: |
+          echo "SECRETS_DIR=$GITHUB_WORKSPACE/.ci/secrets" >> "$GITHUB_ENV"
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Get the Flutter version (the flutter_version input, else the part's .fvmrc, else the latest stable)
+        id: flutter-version
+        shell: bash
+        env:
+          WANT: ${{ inputs.flutter_version }}
+          PART_DIR: ${{ inputs.part_dir }}
+        run: |
+          set -euo pipefail
+          v="$WANT"
+          if [ -z "$v" ] && [ -f "$PART_DIR/.fvmrc" ]; then v="$(jq -r '.flutter // empty' "$PART_DIR/.fvmrc")"; fi
+          channel=stable
+          case "$v" in stable | beta) channel="$v"; v="" ;; esac
+          [ -n "$v" ] || echo "::notice::$PART_DIR: no Flutter version set (<part>_FLUTTER_VERSION in make/project.mk, or .fvmrc); using the latest $channel"
+          # Flutter publishes no Linux arm64 archive: there the action clones the SDK from git at the release tag, so an
+          # empty version becomes the current release of the channel first.
+          if [ "$RUNNER_OS" = Linux ] && [ "$RUNNER_ARCH" = ARM64 ]; then
+            if [ -z "$v" ]; then
+              v="$(curl -fsSL --retry 5 https://storage.googleapis.com/flutter_infra_release/releases/releases_linux.json |
+                jq -r --arg c "$channel" '.current_release[$c] as $h | [.releases[] | select(.hash == $h)][0].version')"
+            fi
+            channel=main
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2.23.0
+        with:
+          channel: ${{ steps.flutter-version.outputs.channel }}
+          flutter-version: ${{ steps.flutter-version.outputs.version }}
+          cache: true
+      - name: Check out the secrets repo (sparse, for decryption)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ vars.SECRETS_REPO }}
+          ssh-key: ${{ secrets.SECRETS_DEPLOY_KEY }}
+          path: .ci/secrets
+          sparse-checkout: |
+            /${{ github.event.repository.name }}/
+            /recipients/
+          sparse-checkout-cone-mode: false
+      - name: Install mise and the project's tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Explicit setup, carried over from the v8 .std-mise helper. Linux: make, git, curl and jq from apt when one is missing,
+          # and STD_APT_PACKAGES. mise comes from its pinned release tarball, sha256 checked (not curl | sh). Change the
+          # version and all four digests together.
+          if [ "$(uname -s)" = Linux ] && command -v apt-get >/dev/null 2>&1; then
+            sudo_cmd=""; [ "$(id -u)" = 0 ] || sudo_cmd=sudo
+            need=""; for t in make git curl jq; do command -v "$t" >/dev/null 2>&1 || need="$need $t"; done
+            if [ -n "$need" ] || { [ -n "${STD_APT_PACKAGES:-}" ] && ! dpkg -s ${STD_APT_PACKAGES:-} >/dev/null 2>&1; }; then
+              $sudo_cmd apt-get update -qq
+              $sudo_cmd apt-get install -y -qq --no-upgrade $need ca-certificates ${STD_APT_PACKAGES:-}
+            fi
+          fi
+          if ! command -v mise >/dev/null 2>&1; then
+            mise_v=v2026.11.3
+            case "$(uname -s)-$(uname -m)" in
+              Linux-x86_64) mise_os=linux-x64; mise_sha=837acae6defb8c9ad74823f6e38856633bacb04c65c1ac67d952749847543bd9; sha_cmd="sha256sum" ;;
+              Linux-aarch64) mise_os=linux-arm64; mise_sha=13547a80d1dc2d5f81bb183023732f4981486e894d060e30993cc4364b4af51d; sha_cmd="sha256sum" ;;
+              Darwin-arm64) mise_os=macos-arm64; mise_sha=de9a54330fee4edede51a3cf6196bbf522f01c5e3fd981e0bebea33f561a0431; sha_cmd="shasum -a 256" ;;
+              Darwin-x86_64) mise_os=macos-x64; mise_sha=88389a4a624a7279ec8d2d06e5c0fbd874ce4f5de791767883b32f62f4e1d62c; sha_cmd="shasum -a 256" ;;
+              *) echo "mise: unsupported platform $(uname -s)-$(uname -m)" >&2; exit 1 ;;
+            esac
+            mise_d="$(mktemp -d)"
+            curl -fsSL -o "$mise_d/mise.tar.gz" "https://github.com/jdx/mise/releases/download/$mise_v/mise-$mise_v-$mise_os.tar.gz"
+            echo "$mise_sha  $mise_d/mise.tar.gz" | $sha_cmd -c -
+            tar -xzf "$mise_d/mise.tar.gz" -C "$mise_d" mise/bin/mise
+            mkdir -p "$HOME/.local/bin"
+            install -m 755 "$mise_d/mise/bin/mise" "$HOME/.local/bin/mise"
+            rm -rf "$mise_d"
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "$HOME/.local/share/mise/shims" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+          mise install
+      - name: Install sops and age
+        shell: bash
+        run: command -v sops >/dev/null 2>&1 && command -v age >/dev/null 2>&1 || mise use -g --yes sops@3 age@1
+      - name: Get the pub cache key before anything builds
+        id: pub-key
+        shell: bash
+        env:
+          KEY: ${{ runner.os }}-pub-${{ hashFiles(format('{0}/pubspec.lock', inputs.part_dir)) }}
+        run: echo "key=$KEY" >> "$GITHUB_OUTPUT"
+      - name: Keep the pub cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.pub-cache
+          key: ${{ steps.pub-key.outputs.key }}
+          restore-keys: |
+            ${{ runner.os }}-pub-
+      - name: Install dependencies (no CI key)
+        run: env -u SOPS_AGE_KEY make "$PART-setup"
+      - name: Upload to TestFlight (production keys)
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: make "$PART-release" TARGET=ios CONFIRM=production
+      - name: Keep unlinked
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.part }}-testflight-ipa
+          path: |
+            ${{ inputs.part_dir }}/build/ios/ipa/*.ipa
+          retention-days: 7
+          if-no-files-found: ignore

@@ -32,7 +32,7 @@
 # the project owns (project.mk, local.mk, README.md, PLAN.md, ...) are kept when they exist.
 set -euo pipefail
 
-readonly STD_VERSION=1.9
+readonly STD_VERSION=1.10
 SKILL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 readonly SKILL_DIR
 readonly TPL_MAKE="$SKILL_DIR/templates/make"
@@ -1524,6 +1524,14 @@ project_mk_value() {
   sed -n "s/^[[:space:]]*${1}[[:space:]]*[:?]*=[[:space:]]*\\([^[:space:]#]*\\).*/\\1/p" "$pm" | tail -n 1
 }
 
+# project_mk_words NAME: the whole value of NAME in the project's make/project.mk (every word, up to a # comment),
+# spaces squeezed; empty when unset. For list settings such as <part>_STORE (1.10).
+project_mk_words() {
+  local pm="$DEST/make/project.mk"
+  [[ -f $pm ]] || return 0
+  sed -n "s/^[[:space:]]*${1}[[:space:]]*[:?]*=\\([^#]*\\).*/\\1/p" "$pm" | tail -n 1 | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//'
+}
+
 # ci_project: the repository of the reusable workflows (owner/name), independent of GITHUB_OWNER: CI_TEMPLATES_REPO
 # from make/project.mk, else from the environment or the user config, else CI_TEMPLATES_DEFAULT.
 ci_project() {
@@ -1655,6 +1663,12 @@ ci_job() {
   # workflow takes the part's .fvmrc, else the latest stable)
   if [[ $k == app-flutter && -n $(project_mk_value "${p}_FLUTTER_VERSION") ]]; then
     printf "      flutter_version: '%s'\\n" "$(project_mk_value "${p}_FLUTTER_VERSION")"
+  fi
+  # a Flutter part with <part>_STORE (android, ios or both): its tag uploads to the Play internal track and TestFlight,
+  # with the production keys, so the tag job passes confirm too (1.10). Without it a tag uploads nothing.
+  if [[ $mode == release && $k == app-flutter && -n $(project_mk_words "${p}_STORE") ]]; then
+    printf '      confirm: production\n'
+    printf "      store: '%s'\\n" "$(project_mk_words "${p}_STORE")"
   fi
   # a push to main deploys staging (a production-only part: nothing)
   if [[ $mode == ci ]]; then
@@ -2330,8 +2344,9 @@ schema_row() { printf '%-22s %-26s %-14s %-5s %s\n' "$@"; }
 #   APPLE_SIGNING_IDENTITY, APPLE_API_KEY, APPLE_API_ISSUER   app-tauri (macOS signing and notarisation, std_apple_prefix)
 #   appstore-api-key        app-tauri (notarisation, TestFlight), app-flutter and app-xcode (TestFlight / App Store)
 #   play-service-account    app-tauri, app-flutter, app-android (CHANNEL=play / TARGET=appbundle uploads)
-#   android-keystore, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD   app-android (its release build;
-#                           Flutter and Tauri Android are not signed by the helper)
+#   android-keystore        app-android (its release build)
+#   android-upload-keystore app-flutter (the Play bundle of make <part>-release, 1.10; Tauri Android is not signed by the helper)
+#   ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD   app-android and app-flutter
 #   windows-codesign, WINDOWS_CERT_PASSWORD   app-tauri (sign-windows.sh in the CI Windows job)
 app_secret_rows() {
   local asc
@@ -2350,9 +2365,15 @@ app_secret_rows() {
   fi
   if has_kind app-android; then
     schema_row android-keystore keys app no "optional: the Android release keystore, handed over as a temp file (ANDROID_KEYSTORE_FILE); unsigned without it"
-    schema_row ANDROID_KEYSTORE_PASSWORD production app no "optional: password of android-keystore (read by build.gradle.kts)"
-    schema_row ANDROID_KEY_ALIAS production app no "optional: the key alias in android-keystore (read by build.gradle.kts)"
-    schema_row ANDROID_KEY_PASSWORD production app no "optional: password of the key in android-keystore (read by build.gradle.kts)"
+  fi
+  # 1.10: a Flutter part's Play bundle is signed with the upload key (make <part>-release TARGET=appbundle, CI store-android)
+  if has_kind app-flutter; then
+    schema_row android-upload-keystore keys app no "optional: the Play upload keystore of the Flutter app, handed over as a temp file (ANDROID_KEYSTORE_FILE); without it Gradle signs on its own"
+  fi
+  if has_kind app-android app-flutter; then
+    schema_row ANDROID_KEYSTORE_PASSWORD production app no "optional: password of the Android keystore (read by build.gradle.kts)"
+    schema_row ANDROID_KEY_ALIAS production app no "optional: the key alias in the Android keystore (read by build.gradle.kts)"
+    schema_row ANDROID_KEY_PASSWORD production app no "optional: password of the key in the Android keystore (read by build.gradle.kts)"
   fi
   if has_kind app-tauri; then
     schema_row windows-codesign keys ci no "optional: the Windows code-signing certificate (PFX); the Windows build is unsigned without it"

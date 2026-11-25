@@ -1,3 +1,3 @@
-# project-standard v1.9 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 include make/project.mk
 include make/common.mk

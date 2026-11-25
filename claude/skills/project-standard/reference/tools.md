@@ -196,7 +196,7 @@ never what is meant.
 | doctor | Checks kicad-cli, the library path variables (or, with `<part>_LIBRARY := local`, the board's own tables) and iBOM, and prints `KICAD_LIBRARY_PROJECT`; warns when KiCad has the board open |
 | setup | Checks KiCad's library tables and path variables against `KICAD_LIBRARY_DIR` (unset: the library KiCad's `<prefix>_LIB_DIR` points at, from the `kicad_common.json` of the installed major); `APPLY=1` adds what is missing (after a backup). `<part>_LIBRARY := local`: checks that every entry of the board's `sym-lib-table` and `fp-lib-table` is inside the project (`${KIPRJMOD}`) and present, and writes nothing |
 | new *extra* | Starts a board from the template, `NAME=`, `LAYERS=2\|4`, with JLCPCB design rules and stackup |
-| check | ERC, and DRC with schematic parity; fails on violations. No `*.kicad_pro` yet: `> <part>: not started yet (no *.kicad_pro in <dir>): check skipped`, exit 0 |
+| check | ERC, and DRC with schematic parity; fails on violations. On macOS kicad-cli runs with a minimal `FONTCONFIG_FILE` (no Homebrew `Fontconfig warning` lines, 1.10). No `*.kicad_pro` yet: `> <part>: not started yet (no *.kicad_pro in <dir>): check skipped`, exit 0 |
 | build | Gerbers, drill, positions, BOM, schematic PDF, STEP, WRL and the iBOM into `outputs/`. No `*.kicad_pro` yet: skipped the same way; release refuses |
 | ibom *extra* | Interactive HTML BOM into `outputs/` |
 | render *extra* | 3D renders of top and bottom into `outputs/` |
@@ -319,7 +319,8 @@ Vite, `<dir>/out` for Next, `<dir>` for a static site. Package binaries run thro
 | dev | `flutter run` with hot reload on `DEVICE` |
 | check / test / format | `dart format` check, `flutter analyze`, `flutter test` / `dart format`; only the part's own Dart files (git: tracked and new, not ignored), never `build/` or `.dart_tool/` (1.9) |
 | build | `TARGET=apk\|appbundle\|ios\|macos\|linux\|web`, release mode |
-| release | `TARGET=ios` to TestFlight, or the app bundle to the Play track `TRACK`; signing keys from the secrets repo (`CONFIRM=production`) |
+| release | `TARGET=ios`: `flutter build ios --config-only` then `make/bin/store-ios.sh` (`xcodebuild archive` and `-exportArchive` with `-allowProvisioningUpdates` and the App Store Connect key: automatic signing, no certificates set up by hand) and `altool --upload-app` to TestFlight; `TARGET=appbundle`: the bundle signed with `keys/android-upload-keystore` when the secrets hold it, `fastlane supply` to the Play track `TRACK` (internal) without metadata. Both add `<part>_STORE_ARGS` (dart-defines). Signing keys from the secrets repo (`CONFIRM=production`). In CI on the part's tag with `<part>_STORE` (1.10) |
+| android-sdk *extra* | `android sdk install` of `<part>_ANDROID_PACKAGES` (default `platform-tools`) into `ANDROID_HOME`, else the deprecated `sdkmanager`; `flutter config --android-sdk` (1.10) |
 | logs | App log from the Android device or the iOS simulator |
 | version / clean / distclean | From `pubspec.yaml`; `flutter clean` |
 
@@ -356,6 +357,7 @@ Vite, `<dir>/out` for Next, `<dir>` for a static site. Package binaries run thro
 | check / test | Gradle lint / local unit tests |
 | build | Assembles the APK for `BUILD_TYPE` |
 | release | Signed release to the R2 OTA channel (APK and `latest.json`) or to Play, by `CHANNEL` (`CONFIRM=production`) |
+| android-sdk *extra* | `android sdk install` of `<part>_ANDROID_PACKAGES` (default `platform-tools`) into `ANDROID_HOME`, else the deprecated `sdkmanager` (1.10) |
 | devices / pair *extra* | Lists devices / pairs a phone over wireless debugging |
 | logs / version / clean / distclean | adb logcat for the app; `versionName`; Gradle clean and caches |
 

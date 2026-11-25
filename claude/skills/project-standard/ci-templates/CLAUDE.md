@@ -2,7 +2,7 @@
 
 Reusable GitHub Actions workflows of the project standard, one per part kind, at
 `.github/workflows/<kind>.yml`, each with only `on: workflow_call`. Projects call them from their own
-`checks.yml` and `release.yml` with `uses: mayankgautam-me/ci-templates/.github/workflows/<kind>.yml@v1.9`.
+`checks.yml` and `release.yml` with `uses: mayankgautam-me/ci-templates/.github/workflows/<kind>.yml@v1.10`.
 README.md shows the calls.
 
 ## Where to change things
@@ -11,8 +11,8 @@ README.md shows the calls.
   `~/.workbench/claude/skills/project-standard/ci-templates/` in the workbench repository. Change the files
   there, never here; a change made only here is lost at the next publish.
 - Publishing a version: copy the source over this clone (`rsync -a --delete --exclude .git <source>/ ./`), commit it
-  on `main` as "v<version>", tag it `v<version>` (the skill's `templates/project/make/VERSION`, now `v1.9`) and push
-  `main` and the tag. A published tag is never moved: projects on an older version (`@v1.8`, `@v1.7`, `@v1.6`, `@v1.5`, `@v1.4`, `@v1.3`, `@v1.2`, `@v1.1`, `@v1.0`) keep calling it until
+  on `main` as "v<version>", tag it `v<version>` (the skill's `templates/project/make/VERSION`, now `v1.10`) and push
+  `main` and the tag. A published tag is never moved: projects on an older version (`@v1.9`, `@v1.8`, `@v1.7`, `@v1.6`, `@v1.5`, `@v1.4`, `@v1.3`, `@v1.2`, `@v1.1`, `@v1.0`) keep calling it until
   the skill's update mode moves their `uses:` lines to the new tag (`reference/standard.md` section 10).
 
 ## Rules for the workflows
@@ -23,7 +23,7 @@ README.md shows the calls.
   `ALTIUM_LIBRARY_DEPLOY_KEY` (the Altium library submodule).
 - Repository variables read (each optional, with a default in the workflow): `SECRETS_REPO`,
   `KICAD_LIBRARY_REPO`, `KICAD_LIB_PREFIX`, `ALTIUM_LIBRARY_REPO`, `STD_APT_PACKAGES`, `STD_IBOM_COMMIT`, `MACOS_CI` (macOS jobs run
-  only when it is `true`), and `STD_RUNNER`, `STD_RUNNER_LINUX_ARM`, `STD_RUNNER_MACOS`, `STD_RUNNER_WINDOWS`
+  only when it is `true`; app-flutter's `store-ios` is gated by its `store` input instead, 1.10), and `STD_RUNNER`, `STD_RUNNER_LINUX_ARM`, `STD_RUNNER_MACOS`, `STD_RUNNER_WINDOWS`
   (a runner label; without one the job runs on a GitHub-hosted runner).
 - Organisation variables do not reach private repositories on GitHub Free, so a project sets these on the
   repository (`make ci-setup` sets `SECRETS_REPO`, `KICAD_LIBRARY_REPO` and `ALTIUM_LIBRARY_REPO`).

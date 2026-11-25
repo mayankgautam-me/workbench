@@ -262,6 +262,21 @@ Read-only until the user says yes.
    repository the audit names (`CI_TEMPLATES_REPO`, default `mayankgautam-me/ci-templates`, independent of
    `GITHUB_OWNER`; a line on the pre-1.7 `<owner>/ci-templates` is reported outdated) and the current version tag
    (`v` + `make/VERSION`); and add jobs for kinds that were added.
+   From v1.9 to v1.10: re-copy the managed files (a new one, `make/bin/store-ios.sh`) and set every `uses:` line to
+   `@v1.10`. Nothing else is required: `make deploy` now checks and builds only the parts that deploy, kicad-cli runs
+   without Homebrew's fontconfig warnings on macOS, and `make <part>-android-sdk` (app-flutter, app-android) installs
+   SDK packages with the `android` CLI (sdkmanager as fallback); a project's own SDK target in `make/local.mk` can call
+   it or be dropped. To upload a Flutter part to the stores on its tag (opt-in, internal track and TestFlight only):
+   in `make/project.mk` set `<part>_STORE := android ios` (or one of them), `<part>_APP_ID` (the Play package name),
+   `<part>_ASC_KEY_ID` and `<part>_ASC_ISSUER`, and `<part>_STORE_ARGS` (in `make/local.mk` when it uses its
+   variables, such as the app's `--dart-define` flags of the production API); add `store: '<value>'` and
+   `confirm: production` under `with:` of the part's job in `release.yml` (the audit says so; `scaffold.sh --force`
+   writes them into a new file); keep `keys/android-upload-keystore`, `keys/play-service-account`,
+   `keys/appstore-api-key` and the production values `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`,
+   `ANDROID_KEY_PASSWORD` in the secrets repo, and have `android/app/build.gradle(.kts)` read `ANDROID_KEYSTORE_FILE`
+   and the three values. The App Store Connect key needs the Admin role (Xcode creates the signing certificate and
+   profile with it). The Mac flow is the same command: `make <part>-release TARGET=appbundle|ios CONFIRM=production`,
+   so a project's own store targets in `make/local.mk` can become calls of it.
    From v1.8 to v1.9: re-copy the managed files and set every `uses:` line to `@v1.9`. A Flutter part gets
    `<part>_FLUTTER_VERSION := <x.y.z>` in `make/project.mk` (the version its `pubspec.yaml` needs; `flutter --version`)
    and `flutter_version: '<x.y.z>'` under `with:` of its jobs in `checks.yml` and `release.yml`: CI installs that

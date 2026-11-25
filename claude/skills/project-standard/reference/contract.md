@@ -29,7 +29,7 @@ make/bin/lib.sh          managed: shared shell helpers (colours, die, confirm, l
 make/bin/release.sh      managed: versions, release notes and GitHub Releases
 make/bin/toolchain.sh    managed: usage record, installed ledger, make teardown and make prune (since v17)
 make/bin/ghcr.sh         managed: the docker kind's ghcr.io login, write:packages check and prune-images (1.1)
-make/bin/secret-patterns.sh, sign-windows.sh   managed: the secret file patterns; the Tauri Windows signing helper
+make/bin/secret-patterns.sh, sign-windows.sh, store-ios.sh   managed: the secret file patterns; the Tauri Windows signing helper; the Flutter iOS store build and TestFlight upload (1.10)
 make/local.mk            the project's own targets, documented with `## ` comments
 make/VERSION             the standard version the managed files came from: `1.3`
 ```

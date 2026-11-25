@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+bats_require_minimum_version 1.5.0
 # Hardware kind (KiCad through kicad-cli) against a stub kicad-cli that records its argv, a temp copy of
 # KiCad's preferences (never the real ~/Library/Preferences/kicad) and a stub gh. One test runs the
 # real kicad-cli on a board made from the template when KiCad is installed.
@@ -59,6 +60,22 @@ mkprefs() {
   [[ "$a" == *"$P/hardware/Board.kicad_sch"* ]]
   [[ "$a" == *$'pcb\ndrc\n--schematic-parity\n--exit-code-violations\n--severity-error'* ]]
   [[ "$a" == *"$P/hardware/Board.kicad_pcb"* ]]
+}
+
+@test "hardware-check runs kicad-cli with the minimal fontconfig on macOS; a FONTCONFIG_FILE given wins (1.10)" {
+  [ "$(uname -s)" = Darwin ] || skip "the fontconfig file is set on macOS only"
+  stub_cmd kicad-cli 'echo "FONTCONFIG_FILE=${FONTCONFIG_FILE:-unset} $1 $2" >>"$STUB_LOG/fc.log"'
+  hwproject
+  mkboard
+  run make hardware-check
+  [ "$status" -eq 0 ]
+  grep -q "^FONTCONFIG_FILE=$TMPDIR/project-standard-kicad-fonts.conf sch erc" "$STUB_LOG/fc.log"
+  grep -q "^FONTCONFIG_FILE=$TMPDIR/project-standard-kicad-fonts.conf pcb drc" "$STUB_LOG/fc.log"
+  grep -q '<dir>/System/Library/Fonts</dir>' "$TMPDIR/project-standard-kicad-fonts.conf"
+  run ! grep -q 'homebrew' "$TMPDIR/project-standard-kicad-fonts.conf"
+  : >"$STUB_LOG/fc.log"
+  FONTCONFIG_FILE=/custom/fonts.conf run make hardware-check
+  grep -q '^FONTCONFIG_FILE=/custom/fonts.conf sch erc' "$STUB_LOG/fc.log"
 }
 
 @test "hardware-check fails when kicad-cli reports violations, after running both checks" {
@@ -295,8 +312,11 @@ mkoutputs() {
   [ "$status" -eq 0 ]
   run make hardware-check
   [ "$status" -eq 0 ]
+  # 1.10: KiCad's fontconfig does not read Homebrew's conf.d (no "Fontconfig warning" lines on macOS)
+  [[ "$output" != *"Fontconfig warning"* ]]
   run make hardware-build
   [ "$status" -eq 0 ]
+  [[ "$output" != *"Fontconfig warning"* ]]
   [ -f hardware/outputs/gerbers/Real-F_Cu.gtl ]
   [ -f hardware/outputs/gerbers/Real.drl ]
   [ -f hardware/outputs/Real.step ]

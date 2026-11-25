@@ -1,10 +1,11 @@
-# project-standard v1.9 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind app-android: a native Android app built with Gradle (Kotlin or Java, Compose or Views).
 #
 # make/project.mk declares it as   <name>:app-android:<dir>   and may set, per part:
 #   <name>_APP_ID       application id, used by dev and logs       (required for dev)
 #   <name>_OTA_URL      public URL prefix of the R2 OTA objects     (release CHANNEL=ota)
+#   <name>_ANDROID_PACKAGES  the SDK packages android-sdk installs (default platform-tools; sdkmanager or android CLI names)
 #
 # Command line:  BUILD_TYPE=Debug|Release (build, default Debug)   CHANNEL=ota|play (release, default ota)
 #                TRACK=internal (play)   TEST=name   DEVICE=<adb serial>   PAIR=host:port (pair)
@@ -37,7 +38,8 @@ app_android_release_assets = set -euo pipefail; $(call std_rel_begin,$(1),app-an
 
 define kind_app-android
 $(1)_SEC := $(CURDIR)/$(STD_BIN)/secrets.sh
-.PHONY: $(1)-setup $(1)-devices $(1)-pair $(1)-dev $(1)-check $(1)-test $(1)-build $(1)-release $(1)-logs $(1)-version $(1)-clean $(1)-distclean
+$(1)_ANDROID_PACKAGES ?= platform-tools
+.PHONY: $(1)-android-sdk $(1)-setup $(1)-devices $(1)-pair $(1)-dev $(1)-check $(1)-test $(1)-build $(1)-release $(1)-logs $(1)-version $(1)-clean $(1)-distclean
 
 $(call std_verb,$(1),setup,setup,Check the Gradle wrapper and fetch the Gradle dependencies)
 $(1)-setup:
@@ -82,6 +84,10 @@ $(1)-release:
 	  $$(call std_confirm,production) && $$($(1)_SEC) exec --env production -- npx --no-install wrangler r2 object put "$(OTA_BUCKET)/$(1)/latest.json" --file "$$$$json" --remote --content-type application/json; \
 	  echo "$(1): $$$$ver published to the OTA channel"; \
 	fi
+
+$(call std_extra,$(1),android-sdk,setup,Install the Android SDK packages of $(1)_ANDROID_PACKAGES with the android CLI or sdkmanager)
+$(1)-android-sdk:
+	@$$(call std_android_sdk,$$($(1)_ANDROID_PACKAGES)); echo "$(1): the Android SDK is at $$$$sdk (Gradle reads ANDROID_HOME or local.properties sdk.dir)"
 
 $(call std_extra,$(1),devices,dev,List the attached Android devices and running emulators)
 $(1)-devices:

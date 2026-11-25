@@ -1,4 +1,4 @@
-# project-standard v1.9 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.10 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind docker: a container image built with buildx, and optionally a compose stack for local development.
 #

@@ -1,6 +1,6 @@
 # ci-templates
 
-The source of the reusable GitHub Actions workflows in `mayankgautam-me/ci-templates`, tagged `v1.9` (`v1.8`, `v1.7`, `v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay,
+The source of the reusable GitHub Actions workflows in `mayankgautam-me/ci-templates`, tagged `v1.10` (`v1.9`, `v1.8`, `v1.7`, `v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay,
 for the projects not updated yet). Each file here is one part kind, at `.github/workflows/<kind>.yml`, and it has
 only `on: workflow_call`. A project's `.github/workflows/checks.yml` (pushes and pull requests) and `release.yml`
 (tags) call them with `uses:`. Every script line calls `make`, so CI runs what a developer runs locally. The v8
@@ -17,7 +17,7 @@ on:
   pull_request:
 jobs:
   cloud-api:
-    uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.9
+    uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.10
     with:
       part: cloud-api
       part_dir: cloud/api
@@ -39,7 +39,7 @@ jobs:
   firmware:
     needs: tag
     if: needs.tag.outputs.part == 'firmware'
-    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.9
+    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.10
     with:
       part: firmware
       part_dir: firmware
@@ -66,7 +66,7 @@ permissions:
   contents: write
 jobs:
   firmware:
-    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.9
+    uses: mayankgautam-me/ci-templates/.github/workflows/zephyr.yml@v1.10
     with:
       part: firmware
       part_dir: firmware
@@ -98,6 +98,7 @@ not in these files: the project's `checks.yml` decides which parts run, with `pa
 | `production_only` | boolean, `false` | cloud-worker, web-pages: the part has no staging, so `deploy-staging` is skipped. Production deploys the same way either way. |
 | `target` | string, `''` | app-flutter: the store target (`appbundle` by default, or `ios`). |
 | `flutter_version` | string, `''` | app-flutter: the Flutter release to install (`3.50.0`; the scaffold writes `<part>_FLUTTER_VERSION`). Empty: the part's `.fvmrc`, else the latest stable (1.9). |
+| `store` | string, `''` | app-flutter (1.10): the stores the part's tag uploads to, `android`, `ios` or `android ios` (the scaffold writes `<part>_STORE`, with `confirm: production` on the tag job). `android`: the bundle signed with the upload key to the Play **internal** track (`store-android`, Linux); `ios`: the IPA, signed by Xcode's automatic signing with the App Store Connect key, to **TestFlight** (`store-ios`, a GitHub-hosted macOS runner, or `STD_RUNNER_MACOS`; the input is its opt-in, it does not also need `MACOS_CI`). Never a public release. Empty: no upload. |
 | `library` | string, `shared` | hardware: `shared` checks out the KiCad library (`KICAD_LIBRARY_REPO`) for the 3D models; `local` checks out none, for a board whose own `sym-lib-table` and `fp-lib-table` are its library (`<part>_LIBRARY := local`; the scaffold writes `library: local` on its jobs). |
 
 ## Secrets
@@ -162,7 +163,7 @@ Labels used, all listed for private repositories on the GitHub-hosted runner pag
 | `ubuntu-24.04-arm` | the linux-arm64 release jobs |
 | `windows-2025` | Windows x64 release (app-tauri) |
 | `windows-11-arm` | Windows arm64 release (app-tauri) |
-| `macos-latest` | macOS jobs (app-xcode, app-tauri macOS and iOS), gated by `MACOS_CI` |
+| `macos-latest` | macOS jobs (app-xcode, app-tauri macOS and iOS), gated by `MACOS_CI`; app-flutter `store-ios`, gated by its `store` input (1.10) |
 
 The page lists these labels for private repositories but states no plan limit for them. Re-check the arm64 and
 Windows arm64 labels on a real run before relying on them; the Windows arm64 image's Visual Studio components are
@@ -186,7 +187,7 @@ as unconfirmed and check the usage report after the first arm64 run.
 | `altium` | check | Altium runs on Windows only, so CI checks the layout, the documents and the Git LFS pointers (no LFS pull); `run_build` and `run_release` do nothing. The Release is made where the OutJob's outputs are: `make <part>-github-release FORCE=1` |
 | `mechanical` | check, build, release | FreeCAD from Ubuntu 24.04 (0.21, not pinned): open and recompute every model, export STEP and STL; release attaches the exports and the models |
 | `app-tauri` | check, build, release-linux-amd64, release-linux-arm64, release-windows-x64, release-windows-arm64, release-macos (MACOS_CI), publish-ios (MACOS_CI, production), publish-android (production) | arm64 Windows builds NSIS only (make decides); `.aab`/mapping kept as artifacts for 7 days |
-| `app-flutter` | check, build, release-linux-amd64, release-linux-arm64, publish (production) | `publish` takes `target`; on the runner, no image (1.9): Flutter at `flutter_version` from `subosito/flutter-action` (Linux arm64: from git at the release tag), the runner's Android SDK for build and publish, else `android-actions/setup-android` |
+| `app-flutter` | check, build, release-linux-amd64, release-linux-arm64, store-android and store-ios (the tag, with `store` and `confirm`, 1.10), publish (production, by hand) | `publish` takes `target` and runs only from a manual run (not a tag, 1.10); on the runner, no image (1.9): Flutter at `flutter_version` from `subosito/flutter-action` (Linux arm64: from git at the release tag), the runner's Android SDK for build, publish and store-android, else `android-actions/setup-android` |
 | `app-xcode` | check, build, release-macos, publish (production) | all macOS, all gated by `MACOS_CI` |
 | `app-android` | check, build, publish (production) | no release job: the release files are made on the Mac (`make <part>-github-release FORCE=1 PLATFORM=android`), as in v8 |
 

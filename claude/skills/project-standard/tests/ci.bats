@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 bats_require_minimum_version 1.5.0
-# The reusable GitHub workflows in ci-templates/.github/workflows/ (v1.9). Parsed with PyYAML and checked on the raw
+# The reusable GitHub workflows in ci-templates/.github/workflows/ (v1.10). Parsed with PyYAML and checked on the raw
 # text, so the comments count too. Nothing here runs a workflow: a real run needs the repo, the secrets and the runners.
 
 WF="$BATS_TEST_DIRNAME/../ci-templates/.github/workflows"
@@ -79,10 +79,10 @@ def check_names():
     for f in files:
         first = open(f).readline()
         kind = os.path.basename(f)[:-4]
-        if f"project-standard ci-templates v1.9: {kind}" not in first:
-            fails.append(f"{kind}.yml: header line does not name v1.9 and the kind")
-        if f"workflows/{kind}.yml@v1.9" not in open(f).read():
-            fails.append(f"{kind}.yml: header has no uses: line with @v1.9")
+        if f"project-standard ci-templates v1.10: {kind}" not in first:
+            fails.append(f"{kind}.yml: header line does not name v1.10 and the kind")
+        if f"workflows/{kind}.yml@v1.10" not in open(f).read():
+            fails.append(f"{kind}.yml: header has no uses: line with @v1.10")
 
 
 def check_uses():
@@ -184,7 +184,8 @@ def check_gates():
                     fails.append(f"{os.path.basename(f)} {jid}: release job lacks contents: write")
                 if not {"check", "build"} <= set(needs_list(job)):
                     fails.append(f"{os.path.basename(f)} {jid}: release job does not need check and build")
-            if str(job.get("runs-on", "")).startswith("macos") and "vars.MACOS_CI == 'true'" not in cond:
+            # a store upload is gated by its own store input instead (app-flutter store-ios, 1.10)
+            if str(job.get("runs-on", "")).startswith("macos") and "vars.MACOS_CI == 'true'" not in cond and "contains(inputs.store, 'ios')" not in cond:
                 fails.append(f"{os.path.basename(f)} {jid}: macOS job is not gated by MACOS_CI")
 
 
@@ -249,7 +250,7 @@ PY
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
 
-@test "there is one workflow per kind, named for the kind, with the v1.9 header and the uses: line" {
+@test "there is one workflow per kind, named for the kind, with the v1.10 header and the uses: line" {
   run check names
   [ "$status" -eq 0 ] || { echo "$output"; false; }
 }
@@ -371,19 +372,19 @@ PY
 
 @test "the README and the workflows name the public mayankgautam-me/ci-templates, with no Access step for it (1.7)" {
   README="$BATS_TEST_DIRNAME/../ci-templates/README.md"
-  grep -q 'uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.9' "$README"
+  grep -q 'uses: mayankgautam-me/ci-templates/.github/workflows/cloud-worker.yml@v1.10' "$README"
   [ "$(grep -c '<owner>/ci-templates' "$README")" -eq 0 ]
   [ "$(grep -c 'Accessible from repositories owned by the same user' "$README")" -eq 0 ]
   grep -q 'This repository is public' "$README"
   for f in "$WF"/*.yml; do
-    grep -q "uses: mayankgautam-me/ci-templates/.github/workflows/$(basename "$f")@v1.9" "$f" ||
+    grep -q "uses: mayankgautam-me/ci-templates/.github/workflows/$(basename "$f")@v1.10" "$f" ||
       { echo "$f does not name mayankgautam-me/ci-templates"; false; }
   done
 }
 
-@test "the README documents the v1.9 call shape, the inputs, the secrets and the four variables" {
+@test "the README documents the v1.10 call shape, the inputs, the secrets and the four variables" {
   README="$BATS_TEST_DIRNAME/../ci-templates/README.md"
-  grep -q 'workflows/cloud-worker.yml@v1.9' "$README"
+  grep -q 'workflows/cloud-worker.yml@v1.10' "$README"
   for v in SECRETS_REPO KICAD_LIBRARY_REPO STD_APT_PACKAGES MACOS_CI SECRETS_DEPLOY_KEY SOPS_AGE_KEY KICAD_LIBRARY_DEPLOY_KEY; do
     grep -q "$v" "$README" || { echo "README does not mention $v"; false; }
   done
@@ -440,6 +441,44 @@ sys.exit(1 if fails else 0)
 PY
 }
 
+@test "app-flutter store uploads (1.10): only on the tag with confirm and store, internal track and TestFlight, publish by hand only" {
+  python3 - "$WF/app-flutter.yml" <<'PY'
+import sys, yaml
+d = yaml.safe_load(open(sys.argv[1]))
+fails = []
+ins = d.get("on", d.get(True))["workflow_call"]["inputs"]
+if ins.get("store", {}).get("type") != "string" or ins["store"].get("default") != "":
+    fails.append("no store string input defaulting to ''")
+jobs = d["jobs"]
+def runs(j): return [str(s.get("run", "")) for s in jobs[j]["steps"]]
+for jid, plat, make in (("store-android", "android", "TARGET=appbundle TRACK=internal CONFIRM=production"), ("store-ios", "ios", "TARGET=ios CONFIRM=production")):
+    j = jobs.get(jid)
+    if not j:
+        fails.append(f"no {jid} job"); continue
+    cond = str(j["if"])
+    for want in ("inputs.run_release", "inputs.confirm == 'production'", f"contains(inputs.store, '{plat}')", "!failure()"):
+        if want not in cond:
+            fails.append(f"{jid}: if lacks {want}")
+    if set(j["needs"]) != {"check", "build"}:
+        fails.append(f"{jid}: needs {j['needs']}")
+    if not any(f'make "$PART-release" {make}' in r for r in runs(jid)):
+        fails.append(f"{jid}: does not run make <part>-release {make}")
+    if not any("secrets repo" in s.get("name", "") for s in j["steps"]):
+        fails.append(f"{jid}: no secrets checkout")
+if "macos" not in str(jobs["store-ios"]["runs-on"]) or "STD_RUNNER_MACOS" not in str(jobs["store-ios"]["runs-on"]):
+    fails.append("store-ios: not on a macOS runner")
+if "!inputs.run_release" not in str(jobs["publish"]["if"]):
+    fails.append("publish also runs on a tag")
+for jid, j in jobs.items():
+    for r in runs(jid):
+        if "TRACK=" in r and "TRACK=internal" not in r:
+            fails.append(f"{jid}: a track other than internal")
+for s in fails:
+    print(s)
+sys.exit(1 if fails else 0)
+PY
+}
+
 @test "app-flutter installs the project's Flutter on the runner (1.9): no 3.44 image, flutter_version input, Android SDK for build and publish" {
   python3 - "$WF/app-flutter.yml" <<'PY'
 import sys, yaml
@@ -468,7 +507,7 @@ for jid, job in d["jobs"].items():
     if not setup or setup[0] < fl[0]:
         fails.append(f"{jid}: Flutter is installed after make setup")
     android = any(u.startswith("android-actions/setup-android@") for u in uses)
-    if android != (jid in ("build", "publish")):
+    if android != (jid in ("build", "publish", "store-android")):
         fails.append(f"{jid}: Android SDK step {'missing' if not android else 'unexpected'}")
 for s in fails:
     print(s)

@@ -29,7 +29,8 @@ std_dir  = $(or $(word 3,$(subst :, ,$(1))),$(word 1,$(subst :, ,$(1))))
 $(foreach p,$(PARTS),$(eval $(call kind_$(call std_kind,$(p)),$(call std_name,$(p)),$(call std_dir,$(p)))))
 MK
   # the real guards, ahead of the kinds that use them
-  { grep -E '^(STD_BIN|STD_LIB|std_refuse|std_confirm|std_production_guard|std_remote_guard) [:?]?=' "$BATS_TEST_DIRNAME/../templates/make/common.mk"; cat "$1"; } > "$1.new"
+  # (with their continuation lines: std_android_sdk spans several)
+  { awk '/^(STD_BIN|STD_LIB|STD_ANDROID_HOME|std_refuse|std_confirm|std_production_guard|std_remote_guard|std_android_sdk) [:?]?=/ { on = 1 } on { print; if ($0 !~ /\\$/) on = 0 }' "$BATS_TEST_DIRNAME/../templates/make/common.mk"; cat "$1"; } > "$1.new"
   mv "$1.new" "$1"
 }
 
@@ -53,6 +54,14 @@ SH
   cat > "$t/xcodebuild" <<'SH'
 #!/usr/bin/env bash
 echo "xcodebuild $*" >> "$STUB_LOG"
+# the export makes the ipa in -exportPath; -authenticationKeyPath must name a readable key file
+prev=""; out=""; for a in "$@"; do
+  [ "$prev" != -exportPath ] || out=$a
+  if [ "$prev" = -authenticationKeyPath ] && [ -f "$a" ]; then echo "xcodebuild key file $(basename "$a") present" >> "$STUB_LOG"; fi
+  prev=$a
+done
+case " $* " in *" -exportArchive "*) mkdir -p "$out"; : > "$out/Runner.ipa" ;; esac
+exit 0
 SH
   cat > "$t/xcrun" <<'SH'
 #!/usr/bin/env bash
@@ -100,7 +109,7 @@ case "$cmd" in
     dir="$(mktemp -d)"; chmod 700 "$dir"
     f="$dir/value"; umask 077; printf '%s' "TOPSECRETVALUE" > "$f"
     args=()
-    for a in "$@"; do if [ "$a" = "{}" ]; then args+=("$f"); else args+=("$a"); fi; done
+    for a in "$@"; do args+=("${a//\{\}/$f}"); done
     rc=0; "${args[@]}" || rc=$?
     rm -rf "$dir"; exit "$rc" ;;
   *) echo "secrets $cmd" >> "$STUB_LOG"; exit 0 ;;
@@ -129,6 +138,8 @@ MK
   write_stub_common "$P/make/common.mk"
   write_stub_bin "$P"
   cp "$BATS_TEST_DIRNAME/../templates/make/bin/lib.sh" "$P/make/bin/lib.sh"
+  cp "$BATS_TEST_DIRNAME/../templates/make/bin/store-ios.sh" "$P/make/bin/store-ios.sh"
+  mkdir -p "$P/app/fl/ios/Runner.xcworkspace"
   write_stub_tools
   cat > "$P/app/an/gradlew" <<'SH'
 #!/usr/bin/env bash
@@ -207,11 +218,16 @@ SH
 }
 
 @test "flutter release TARGET=ios hands the App Store key over as a temp file, never as a value" {
-  run make -C "$P" fl-release TARGET=ios CONFIRM=production
+  [ "$(uname -s)" = Darwin ] || skip "the iOS store build runs on a Mac"
+  run make -C "$P" fl-release TARGET=ios CONFIRM=production fl_STORE_ARGS=--dart-define=API=https://api.example.test
   [ "$status" -eq 0 ]
   grep -q '^secrets with-file appstore-api-key' "$STUB_LOG"
-  grep -q '^flutter build ipa --release --export-options-plist=ios/ExportOptions.plist' "$STUB_LOG"
-  grep -q "^xcrun altool --upload-app" "$STUB_LOG"
+  # 1.10: the defines go into Generated.xcconfig, then xcodebuild archives and exports with automatic signing by the key
+  grep -q '^flutter build ios --config-only --release --dart-define=API=https://api.example.test' "$STUB_LOG"
+  grep -q '^xcodebuild -workspace ios/Runner.xcworkspace -scheme Runner -configuration Release .* -allowProvisioningUpdates -authenticationKeyPath .*AuthKey_KEYID123.p8 -authenticationKeyID KEYID123 -authenticationKeyIssuerID 11111111-2222-3333 archive' "$STUB_LOG"
+  grep -q '^xcodebuild -exportArchive .*-exportOptionsPlist .*ExportOptions.plist -allowProvisioningUpdates' "$STUB_LOG"
+  grep -q 'xcodebuild key file AuthKey_KEYID123.p8 present' "$STUB_LOG"
+  grep -q "^xcrun altool --upload-app --type ios -f build/ios/ipa/Runner.ipa --apiKey KEYID123" "$STUB_LOG"
   grep -q 'altool key file AuthKey_KEYID123.p8 present' "$STUB_LOG"
   run ! grep -q 'TOPSECRETVALUE' "$STUB_LOG"
   [[ "$output" != *TOPSECRETVALUE* ]]
@@ -228,8 +244,58 @@ SH
   run make -C "$P" fl-release TARGET=appbundle CONFIRM=production
   [ "$status" -eq 0 ]
   grep -q '^secrets with-file play-service-account' "$STUB_LOG"
-  grep -q '^fastlane supply --json_key /.* --package_name com.example.fl --track internal --aab ' "$STUB_LOG"
+  grep -q '^fastlane supply --json_key /.* --package_name com.example.fl --track internal --aab .* --skip_upload_metadata' "$STUB_LOG"
   run ! grep -q 'TOPSECRETVALUE' "$STUB_LOG"
+  # no upload key in the secrets: Gradle signs on its own, and make says so
+  [[ "$output" == *"no keys/android-upload-keystore"* ]]
+  run ! grep -q 'android-upload-keystore' "$STUB_LOG"
+}
+
+@test "flutter release TARGET=appbundle signs with the upload key and the store args when the secrets hold it (1.10)" {
+  export SECRETS_DIR="$BATS_TEST_TMPDIR/secrets"
+  mkdir -p "$SECRETS_DIR/demo/keys"
+  : > "$SECRETS_DIR/demo/keys/android-upload-keystore.sops"
+  cat > "$BATS_TEST_TMPDIR/bin/env" <<'SH'
+#!/usr/bin/env bash
+for a in "$@"; do case "$a" in ANDROID_KEYSTORE_FILE=*) [ -f "${a#*=}" ] && echo "env keystore file present" >> "$STUB_LOG" ;; esac; done
+exec /usr/bin/env "$@"
+SH
+  chmod +x "$BATS_TEST_TMPDIR/bin/env"
+  run make -C "$P" fl-release TARGET=appbundle CONFIRM=production 'fl_STORE_ARGS=--dart-define=A=1 --dart-define=B=2'
+  [ "$status" -eq 0 ]
+  grep -q '^secrets exec --env production' "$STUB_LOG"
+  grep -q '^secrets with-file android-upload-keystore' "$STUB_LOG"
+  grep -q '^env keystore file present' "$STUB_LOG"
+  grep -q '^flutter build appbundle --release --dart-define=A=1 --dart-define=B=2' "$STUB_LOG"
+  grep -q '^fastlane supply ' "$STUB_LOG"
+  run ! grep -q 'TOPSECRETVALUE' "$STUB_LOG"
+}
+
+@test "android-sdk installs with the android CLI, in its package names, and falls back to sdkmanager (1.10)" {
+  export ANDROID_HOME="$BATS_TEST_TMPDIR/sdk"
+  cat > "$BATS_TEST_TMPDIR/bin/android" <<'SH'
+#!/usr/bin/env bash
+case " $* " in *" --help "*) echo "Installs SDK packages"; exit 0 ;; esac
+echo "android $*" >> "$STUB_LOG"
+SH
+  chmod +x "$BATS_TEST_TMPDIR/bin/android"
+  run make -C "$P" fl-android-sdk 'fl_ANDROID_PACKAGES=platform-tools platforms;android-36 build-tools;36.0.0'
+  [ "$status" -eq 0 ] || { echo "$output"; false; }
+  grep -q "^android --no-metrics --sdk=$ANDROID_HOME sdk install platform-tools platforms/android-36 build-tools/36.0.0" "$STUB_LOG"
+  grep -q "^flutter config --android-sdk $ANDROID_HOME" "$STUB_LOG"
+  # an android that is not the new CLI (the old SDK tool, or none): sdkmanager with its own names, licences first
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$BATS_TEST_TMPDIR/bin/android"
+  cat > "$BATS_TEST_TMPDIR/bin/sdkmanager" <<'SH'
+#!/usr/bin/env bash
+echo "sdkmanager $*" >> "$STUB_LOG"
+SH
+  chmod +x "$BATS_TEST_TMPDIR/bin/sdkmanager"
+  : > "$STUB_LOG"
+  run make -C "$P" an-android-sdk 'an_ANDROID_PACKAGES=platform-tools platforms/android-36'
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"deprecated sdkmanager"* ]]
+  grep -q "^sdkmanager --sdk_root=$ANDROID_HOME --licenses" "$STUB_LOG"
+  grep -q "^sdkmanager --sdk_root=$ANDROID_HOME platform-tools platforms;android-36" "$STUB_LOG"
 }
 
 @test "android check runs the Gradle lint" {

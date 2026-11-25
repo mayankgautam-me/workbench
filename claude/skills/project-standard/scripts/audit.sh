@@ -1180,6 +1180,20 @@ if [[ -d $WF ]]; then
       # 1.9: CI installs the Flutter of flutter_version (from <part>_FLUTTER_VERSION), else the part's .fvmrc, else the
       # latest stable (no pin is no finding); a pinned version that the jobs do not pass is not the one CI builds with
       app-flutter)
+        # 1.10: <part>_STORE (android, ios or both) is what the tag uploads; the tag job must pass it as store, with
+        # confirm: production, or the tag uploads nothing
+        stv=''
+        [[ ! -f "$DIR/make/project.mk" ]] || stv=$(make_var "$DIR/make/project.mk" "${pn}_STORE" | tr -s '[:space:]' ' ' | sed 's/^ //; s/ $//')
+        f="$WF/release.yml"
+        if [[ -n $stv && -f $f ]] && ! awk -v job="  $pn-release:" -v want="$stv" '
+            $0 == job { in_job = 1; next }
+            in_job && /^  [^ #]/ { exit }
+            in_job && /^[[:space:]]+confirm:[[:space:]]+production[[:space:]]*$/ { conf = 1 }
+            in_job && /^[[:space:]]+store:/ { v = $0; sub(/^[^:]*:[[:space:]]*/, "", v); gsub(/["\047]/, "", v); gsub(/[[:space:]]+/, " ", v); sub(/^ /, "", v); sub(/ $/, "", v); st = (v == want) }
+            END { exit !(conf && st) }' "$f"; then
+          add warn ci .github/workflows/release.yml "job $pn-release does not pass ${pn}_STORE ($stv) with confirm: production, so its tag uploads to no store" \
+            "add store: '$stv' and confirm: production under with: of job $pn-release"
+        fi
         flv=''
         [[ ! -f "$DIR/make/project.mk" ]] || flv=$(make_var "$DIR/make/project.mk" "${pn}_FLUTTER_VERSION")
         [[ -n $flv ]] || continue

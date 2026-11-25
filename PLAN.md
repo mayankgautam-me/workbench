@@ -333,6 +333,11 @@ needs: [instructions, detect, bootstrap]
 - [x] 1.9: app-flutter CI installs the project's Flutter (flutter_version from <part>_FLUTTER_VERSION, subosito/flutter-action on the runner; no 3.44 image) {#std-1-9-flutter-ci}
 - [x] 1.9: app-flutter check/format only the part's own Dart files, never build/ or .dart_tool/ {#std-1-9-flutter-format}
 - [x] 1.9: tests, publish ci-templates v1.9 tag {#std-1-9-publish}
+- [x] 1.10: make deploy checks and builds only the parts that deploy {#std-1-10-deploy-parts}
+- [x] 1.10: app-flutter store uploads on an app tag (Play internal from Linux, TestFlight from a GitHub macOS runner), opt-in {#std-1-10-store-ci}
+- [x] 1.10: <part>-android-sdk installs SDK packages with the android CLI, sdkmanager as fallback {#std-1-10-android-sdk}
+- [x] 1.10: hardware kind runs kicad-cli with a minimal fontconfig on macOS (no Homebrew conf.d warnings) {#std-1-10-kicad-fontconfig}
+- [x] 1.10: version, docs, tests, publish ci-templates v1.10 tag {#std-1-10-publish}
 
 ## Workbench {#workbench}
 tech: zsh, Brewfile, defaults, symlinks

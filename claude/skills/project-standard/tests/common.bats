@@ -188,9 +188,48 @@ EOF
 @test "deploy to production with the right CONFIRM runs check, build, deploy, smoke" {
   run make deploy ENV=production CONFIRM=production
   [ "$status" -eq 0 ]
-  [[ "$output" == *"BUILD fw-a ENV=production"* ]]
-  [[ "$output" == *"DEPLOY cloud-api ENV=production DIR=cloud/api"* ]]
+  [[ "$output" == *"BUILD cloud-api"*"BUILD cloud-web"*"DEPLOY cloud-api ENV=production DIR=cloud/api"* ]]
   [[ "$output" == *"DEPLOY cloud-web ENV=production DIR=cloud/web"* ]]
+}
+
+@test "deploy checks and builds only the parts that deploy, keeps PART= and the root check prerequisites (1.10)" {
+  mkkind "$P" fake 'define kind_fake
+$(call std_verb,$(1),build,firmware,Build $(1))
+$(call std_verb,$(1),check,test,Check $(1))
+$(1)-build:
+	@echo BUILD $(1)
+$(1)-check:
+	@echo CHECK $(1)
+endef'
+  mkkind "$P" cloud-worker 'define kind_cloud-worker
+$(call std_verb,$(1),deploy,deploy,Deploy $(1))
+$(call std_verb,$(1),build,deploy,Build $(1))
+$(call std_verb,$(1),check,test,Check $(1))
+$(1)-deploy:
+	@echo DEPLOY $(1)
+$(1)-build:
+	@echo BUILD $(1)
+$(1)-check:
+	@echo CHECK $(1)
+endef'
+  printf 'check: local-lint\n.PHONY: local-lint\nlocal-lint:\n\t@echo LOCAL-LINT\n' >"$P/make/local.mk"
+  run make deploy ENV=staging
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"LOCAL-LINT"*"CHECK cloud-api"*"CHECK cloud-web"*"BUILD cloud-api"*"BUILD cloud-web"*"DEPLOY cloud-api"*"DEPLOY cloud-web"* ]]
+  [[ "$output" != *"fw-a"* ]]
+  [[ "$output" != *"fw-b"* ]]
+  run make deploy ENV=staging PART=cloud-web
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"CHECK cloud-web"*"BUILD cloud-web"*"DEPLOY cloud-web"* ]]
+  [[ "$output" != *"cloud-api"* ]]
+  # make check and make build alone still cover every part
+  run make build
+  [[ "$output" == *"BUILD fw-a"*"BUILD fw-b"*"BUILD cloud-api"* ]]
+  # a part with no deploy: deploy says so, and checks and builds nothing
+  run make deploy ENV=staging PART=fw-a
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no part has 'deploy'"* ]]
+  [[ "$output" != *"BUILD"* ]]
 }
 
 @test "deploy to staging needs no CONFIRM" {
