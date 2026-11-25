@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.12 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Archives, signs and exports the iOS app of a Flutter part and uploads it to App Store Connect (TestFlight), signed with
 # Xcode's automatic signing through the App Store Connect API key: xcodebuild -allowProvisioningUpdates with the key

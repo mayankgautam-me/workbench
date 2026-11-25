@@ -58,6 +58,13 @@ defines). Each kind's way in: espidf idf.py `-D STD_ENV_DEFINES=<list>` plus the
 `CXX`. The build writes `std-env` (the env and its defines) into its build folder: a build for other defines is
 made again from scratch, and `flash` / `release` with `NOBUILD=1` refuse one (`standard.md` 4.9).
 
+One run per build folder (1.12): build, flash and release hold a lock on the build folder (a second run waits
+`STD_FW_LOCK_WAIT=10` seconds, then stops naming the other run's pid; the lock of a run that was killed is taken
+over). The build records its images' sha256 in `std-env.sha256`, and flash and release check them right before use.
+A project's own OTA or upload target in `make/local.mk` calls, in its upload line before the upload,
+`$(STD_FW_SH) $(call std_fw_image_check,<part>,$(<part>_BUILD),$(<part>_BUILD)/<app>.bin)`: the lock, the env check
+and the image check; it sets `$$image_sha` (`standard.md` 4.9).
+
 ### zephyr: Zephyr / nRF Connect SDK (west)
 
 | Target | What it does |

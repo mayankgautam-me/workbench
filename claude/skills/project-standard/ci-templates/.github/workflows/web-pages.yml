@@ -1,6 +1,6 @@
-# project-standard ci-templates v1.11: web-pages (a static site on Cloudflare Pages; a push to main deploys staging, the part's
+# project-standard ci-templates v1.12: web-pages (a static site on Cloudflare Pages; a push to main deploys staging, the part's
 # tag deploys production, then makes its GitHub Release with the CHANGELOG notes only).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/web-pages.yml@v1.11.
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/web-pages.yml@v1.12.
 
 on:
   workflow_call:

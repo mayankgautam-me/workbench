@@ -1,10 +1,10 @@
-# project-standard ci-templates v1.11: app-flutter (a Flutter app; Linux files per architecture; store uploads on the part's tag
+# project-standard ci-templates v1.12: app-flutter (a Flutter app; Linux files per architecture; store uploads on the part's tag
 # when the caller passes store (1.10): android to the Play internal track from Linux, ios to TestFlight from a GitHub-hosted
 # macOS runner, never a public release; and by hand with confirm (TARGET from the input)).
 # Flutter is the project's (1.9): the flutter_version input (the scaffold writes <part>_FLUTTER_VERSION from make/project.mk),
 # else the part's .fvmrc, else the latest stable; installed on the runner by subosito/flutter-action, not a container image
 # (the newest cirruslabs image is 3.44). The build and publish jobs use the runner's Android SDK, or set one up.
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/app-flutter.yml@v1.11.
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/app-flutter.yml@v1.12.
 
 on:
   workflow_call:

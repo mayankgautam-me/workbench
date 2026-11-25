@@ -589,9 +589,9 @@ How each kind passes them:
 
 | Kind | How |
 |---|---|
-| espidf | idf.py `-D STD_ENV_DEFINES=<A=1;B="x">` (a CMake list, so no `;` in a value), applied by a block in the part's top `CMakeLists.txt` (below). The build stops when a define is set and the file never names `STD_ENV_DEFINES`; `make audit` warns with the block. |
+| espidf | idf.py `-D STD_ENV_DEFINES=<A=1;B="x">` (a CMake list, so no `;` in a value), applied by a block in the part's top `CMakeLists.txt` (below). The build stops when a define is set and the file never names `STD_ENV_DEFINES`; `make audit` warns with the block. A `CMakeLists.txt` with the block gets it on every build, `-D STD_ENV_DEFINES=` (empty) for an env without defines: it is a CMake cache variable, kept until it is set again (1.12). |
 | pio | `PLATFORMIO_BUILD_FLAGS` (each define a single-quoted `'-DNAME=value'`, which PlatformIO splits like a shell), on top of `build_flags` and of a `PLATFORMIO_BUILD_FLAGS` already in the environment; for every pio command, so an upload builds what build built. |
-| zephyr | west build `-- -D<APP>_EXTRA_CPPFLAGS=<flags>` with sysbuild (the app image only, MCUboot is built without them), `-DEXTRA_CPPFLAGS=<flags>` without. Zephyr splits it as a shell would. |
+| zephyr | west build `-- -D<APP>_EXTRA_CPPFLAGS=<flags>` with sysbuild (the app image only, MCUboot is built without them), `-DEXTRA_CPPFLAGS=<flags>` without. Zephyr splits it as a shell would. Passed on every build, empty for an env without defines (a cache variable, 1.12). |
 | arm-gcc | A CMake project: `CFLAGS` and `CXXFLAGS` when CMake configures the build folder (a new one whenever the defines change). A Makefile project: `STD_ENV_CFLAGS` in its environment, which its `Makefile` must use: `CFLAGS += $(STD_ENV_CFLAGS)` (and `CXXFLAGS` for C++); the build stops when the Makefile never names it, and `make audit` warns. |
 | silabs | Appended to `CC` and `CXX` on the generated makefile's make line, as `check` adds `-Werror` (the generated makefile has no variable of its own for extra defines). |
 | circuitpython | None: the code is Python, copied as it is, with no compile step. Per-env settings go in the code's own files (`settings.toml`); `make audit` warns about a setting. |
@@ -612,11 +612,48 @@ scratch first (the build folder removed; an arm-gcc Makefile's `clean` target), 
 makefiles would keep the old ones. A flash or release with `NOBUILD=1` (no build first) refuses a build whose
 defines differ from `ENV`'s: `the build in <dir> was made for ENV=staging, and <part>_ENV_DEFINES_production
 differs: build it again with ENV=production`. Only the defines are compared: two envs with the same defines (or
-none) share a build. A build without a stamp (from before 1.8) counts as one without defines. In CI, the build job
+none) share a build. A build without a stamp (from before 1.8) counts as one without defines when it is checked, and
+a build folder that holds files but no stamp is made again from scratch before a build (1.12). In CI, the build job
 builds with `ENV=production` when the run releases (`run_release` on a tag, or `confirm` `production`) and with
 `ENV=local` otherwise, so the publish job's `NOBUILD=1` release ships a production build; the stamp travels in the
 build artifact (it is not a dot file, which `upload-artifact` would leave out). The GitHub Release files
 (`release-assets`) are the build's files whatever `ENV` says.
+
+**One run per build folder, the image checked before it is used (1.12).** Two runs for different envs in one build
+folder at once (`make <part>-release ENV=staging` and `ENV=production` in two terminals) once shipped staging's image
+as production's: the staging run rebuilt the folder while the production run built and uploaded from it. Now:
+
+- Every build, flash and release holds the build folder's lock from before its env check to its stamp, flash or
+  upload. A second run waits up to `STD_FW_LOCK_WAIT` seconds (10), then stops: `<dir> is in use by another run: pid
+  <n> (make <part>-build ENV=staging)`. The lock is a directory in `TMPDIR` named after the folder's path
+  (`std-fw-lock-<cksum>`) holding the pid of the shell that holds it; it goes when that shell exits, also on Ctrl-C.
+  A lock whose pid is gone (a run killed with `kill -9`) is taken over with a warning; a live one never is (the
+  message names the directory to remove when no such process runs). A make started inside the holding shell
+  (`$(MAKE) ...` in the same recipe line) shares it.
+- The build also writes `std-env.sha256`: `<sha256>  <path>` for each image it made (espidf: the app, bootloader and
+  partition table; zephyr: `merged.hex`, `dfu_application.zip`, the `zephyr.hex`/`.bin`/`.signed.*` images; pio:
+  `firmware.bin`/`.hex`/`.uf2`/`.elf`; arm-gcc: the elf and bin; silabs: `.hex`, `.out`, `.rps`, `-signed.rps`). A
+  build removes it first and writes it last, so a build that fails or still runs has none.
+- A flash and a release check, under the lock and right before they use the folder, that the build was made for
+  `ENV`'s defines and that every recorded image is still the file there (`<image> is not the image the build for
+  ENV=staging made (another build changed it)`); a release also needs the image it uploads to be recorded (a build
+  from before 1.12 is refused: build it again), and the upload compares the file's sha256 with the record once more.
+
+A project's own OTA or upload target (in `make/local.mk`) does the same with `std_fw_image_check`, in the recipe line
+that uploads, before the upload:
+
+```make
+<part>-ota: $(if $(NOBUILD),,<part>-build)
+	@$(STD_FW_SH) $(call std_fw_image_check,<part>,$(<part>_BUILD),$(<part>_BUILD)/<app>.bin) \
+	  say "uploading sha256 $$image_sha"; <the upload of $(<part>_BUILD)/<app>.bin>
+```
+
+It takes the folder's lock for the rest of that shell (no build can replace the image until the upload is done; a
+`trap ... EXIT` set after it must call `std_fw_unlock`), refuses a build made for another env's defines, a changed
+image and a build with no record of the image, and sets `$$image_sha` to the image's sha256. The image is a path in
+the build folder (or relative to it); `<part>_BUILD` is the folder for espidf (`<dir>/build/<target>`), zephyr and
+silabs; pio's is `<dir>/.pio/build/<env>`, arm-gcc's `<part>_OUT`. The build target stays a prerequisite (a separate
+run); only the check and the upload share the recipe line.
 
 ### 4.10 Hardware (KiCad 10, Altium) and mechanical (FreeCAD)
 
@@ -1082,10 +1119,10 @@ of the project's repository (from stdin, never on a command line), adds the publ
 ## 6. CI/CD
 
 The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/name`, default
-`mayankgautam-me/ci-templates`), tagged `v1.11` (`v1.10`, `v1.9`, `v1.8`, `v1.7`, `v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
+`mayankgautam-me/ci-templates`), tagged `v1.12` (`v1.11`, `v1.10`, `v1.9`, `v1.8`, `v1.7`, `v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
 own, independent of the project's `GITHUB_OWNER`: projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.11`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.12`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -1403,6 +1440,29 @@ the project's owner's, 5.1), `STD_CONFIG` (default `~/.config/project-standard`)
 Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) and the number in a project's `make/VERSION`, its managed
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
+
+- **1.12** (2026-11-25): one firmware build per folder, images checked before use. `make/VERSION`, the managed headers
+  and the workflows' `@v1.12` say 1.12; `mayankgautam-me/ci-templates` gets the tag `v1.12` (its workflows change only
+  in the version) and keeps `v1.11` to `v1.0`.
+  - What happened: `make <part>-release ENV=staging` and `ENV=production` ran at once on one espidf build folder. The
+    staging run wiped it and rebuilt it with its `CLOUD_URL` while the production run built there; production has no
+    `_ENV_DEFINES_production`, so its idf.py run passed no `STD_ENV_DEFINES`, kept staging's from the CMake cache,
+    stamped the folder `env=production` and uploaded staging's image.
+  - The defines reach the build on every build, an empty set too: espidf `-D STD_ENV_DEFINES=` (when the
+    `CMakeLists.txt` applies it), zephyr `-D<APP>_EXTRA_CPPFLAGS=`. A build folder that holds files but no `std-env`
+    stamp is made again from scratch (a CMake cache in it may hold any defines). arm-gcc (`STD_ENV_CFLAGS`, always
+    exported), silabs (`CC` on the make line) and pio (`PLATFORMIO_BUILD_FLAGS`) already passed theirs on every build;
+    what their compiled objects or an arm-gcc CMake cache keep is handled by the stamp, as before.
+  - Every build, flash and release of zephyr, espidf, pio, arm-gcc and silabs holds a lock on its build folder
+    (`std_fw_lock`; a directory in `TMPDIR` with the holder's pid): a second run waits `STD_FW_LOCK_WAIT` seconds
+    (10), then stops naming the other run's pid and target. A lock whose pid is gone is taken over.
+  - The build records the sha256 of its images in `<build dir>/std-env.sha256` (removed when a build starts, written
+    when it ends); flash and release check them, and the release the image it uploads, right before use.
+    `std_fw_image_check` gives a project's own OTA or upload target the same check (4.9).
+  Update from 1.11: refresh the managed files and move the `uses:` lines to `@v1.12`. A project with its own OTA or
+  upload target in `make/local.mk` calls `std_fw_image_check` in its upload line (4.9). The first build of each folder
+  after the update is made from scratch when the folder has no stamp; a `NOBUILD=1` release of a build made by 1.11
+  is refused until it is built again.
 
 - **1.11** (2026-11-25): secrets fixes. `make/VERSION`, the managed headers and the workflows' `@v1.11` say 1.11;
   `mayankgautam-me/ci-templates` gets the tag `v1.11` (its workflows change only in the version) and keeps `v1.10` to

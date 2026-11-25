@@ -262,6 +262,16 @@ Read-only until the user says yes.
    repository the audit names (`CI_TEMPLATES_REPO`, default `mayankgautam-me/ci-templates`, independent of
    `GITHUB_OWNER`; a line on the pre-1.7 `<owner>/ci-templates` is reported outdated) and the current version tag
    (`v` + `make/VERSION`); and add jobs for kinds that were added.
+   From v1.11 to v1.12: re-copy the managed files and set every `uses:` line to `@v1.12`. Firmware builds now lock
+   their build folder (a second run of the same folder waits, then stops), always pass the env's defines (an empty
+   set clears a cached one) and record their images' sha256 (`std-env.sha256`), which flash and release check right
+   before use. A project with its own OTA or upload target in `make/local.mk` (firmware uploaded to a server, a
+   bucket or a fleet tool outside `make <part>-release`) must call the check in the recipe line that uploads, before
+   the upload, so it ships only the image the build for that `ENV` made:
+   `@$(STD_FW_SH) $(call std_fw_image_check,<part>,$(<part>_BUILD),$(<part>_BUILD)/<app>.bin) <upload ...>`
+   (keep `<part>-build` a prerequisite; the check takes the lock for the rest of that line and sets `$$image_sha`;
+   pio's folder is `<dir>/.pio/build/<env>`, arm-gcc's `$(<part>_OUT)`; `reference/standard.md` 4.9). Expect the
+   first build of each folder to start from scratch, and rebuild before a `NOBUILD=1` release.
    From v1.10 to v1.11: re-copy the managed files and set every `uses:` line to `@v1.11`. Nothing else is required:
    `make secrets-import NAME= FILE= FORCE=1` now replaces an existing key (refused without `FORCE=1`), and
    `make secrets-list` no longer shows false `not in schema` rows.

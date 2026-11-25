@@ -93,6 +93,17 @@ zephyr_built() {
   mkdir -p "$B"
   echo hex >"$B/merged.hex"
   echo zip >"$B/dfu_application.zip"
+  fw_stamp "$B" merged.hex dfu_application.zip
+}
+
+# fw_stamp DIR FILE...: what a 1.12 build leaves in DIR for images the test made by hand: std-env (ENV local, no
+# defines) unless there is one, and std-env.sha256 with the sha256 of each FILE (relative to DIR)
+fw_stamp() {
+  local d="$1" f
+  shift
+  [ -f "$d/std-env" ] || printf 'env=local\n\n' >"$d/std-env"
+  : >"$d/std-env.sha256"
+  for f in "$@"; do printf '%s  %s\n' "$(shasum -a 256 "$d/$f" | cut -d' ' -f1)" "$f" >>"$d/std-env.sha256"; done
 }
 
 # --- zephyr ----------------------------------------------------------------------------------
@@ -1085,17 +1096,20 @@ firmware_ENV_DEFINES_production := $ENV_PRODUCTION"
   [ "$(head -n 1 "$P/firmware/build/check-nrf9151dk_nrf9151_ns/std-env")" = "env=production" ]
 }
 
-@test "1.8: no ENV_DEFINES for ENV passes nothing (the code's defaults), in every firmware kind" {
+@test "1.8: no ENV_DEFINES for ENV defines nothing (the code's defaults), in every firmware kind; 1.12: an empty set clears a cached one" {
   envdef_zephyr
   run make firmware-build
   [ "$status" -eq 0 ]
-  if argv west | grep -q 'EXTRA_CPPFLAGS'; then false; fi
+  # 1.12: the empty set goes to the build, so a CMake cache that kept another ENV's defines loses them
+  [ "$(argv west | grep -c 'EXTRA_CPPFLAGS')" = 1 ]
+  argv west | grep -qx -- '-Dfirmware_EXTRA_CPPFLAGS='
   [[ "$output" != *"defines for ENV"* ]] || false
   [ "$(cat "$B/std-env")" = "env=local" ]
 
   fwproject 'esp:espidf' 'esp_ENV_DEFINES_production := N=1'
   run make esp-build
   [ "$status" -eq 0 ]
+  # a CMakeLists.txt that does not apply STD_ENV_DEFINES gets none (CMake would warn of an unused variable)
   if argv idf.py | grep -q 'STD_ENV_DEFINES'; then false; fi
 
   fwproject 'fw:pio' 'fw_PIO_ENV := esp32dev
@@ -1128,6 +1142,7 @@ fw_ENV_DEFINES_staging := N=1'
   [ "$status" -eq 0 ]
   echo zip >"$B/dfu_application.zip"
   echo hex >"$B/merged.hex"
+  fw_stamp "$B" merged.hex dfu_application.zip
   run make firmware-release ENV=production CONFIRM=production NOBUILD=1
   [ "$status" -ne 0 ]
   [[ "$output" == *"was made for ENV=staging, and firmware_ENV_DEFINES_production differs: build it again with ENV=production"* ]] || false
@@ -1157,13 +1172,19 @@ fw_ENV_DEFINES_staging := N=1'
   [[ "$(argv npx)" == *"demo/firmware/production/1.4.2/dfu_application.zip"* ]] || false
 }
 
-@test "1.8: a build from before 1.8 (no stamp) counts as one without defines" {
+@test "1.8: a build from before 1.8 (no stamp) counts as one without defines; 1.12: without a record of its images it is not released" {
   envdef_zephyr
   zephyr_built
+  rm -f "$B/std-env" "$B/std-env.sha256"
   run make firmware-release ENV=staging NOBUILD=1
   [ "$status" -ne 0 ]
   [[ "$output" == *"was made for ENV=unknown"* ]] || false
   printf 'firmware_ENV_DEFINES_staging :=\n' >>make/project.mk
+  run make firmware-release ENV=staging NOBUILD=1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"has no record of its images (std-env.sha256; a build from before 1.12"* ]] || false
+  [ ! -f "$STUB_LOG/npx.argv" ]
+  fw_stamp "$B" dfu_application.zip
   run make firmware-release ENV=staging NOBUILD=1
   [ "$status" -eq 0 ]
 }
@@ -1299,4 +1320,220 @@ iface_ENV_DEFINES_production := $ENV_PRODUCTION"
   for k in zephyr pio arm-gcc circuitpython silabs; do
     [ "$(awk '/^ifndef STD_FW_HELPERS/,/^endif/' "$STD_TEMPLATES/kinds/$k.mk")" = "$ref" ] || { echo "differs: $k"; false; }
   done
+}
+
+# --- one build per folder, images checked before use (1.12) ---------------------------------------
+# Two runs of different ENVs in one build folder once shipped staging's image as production's: the folder is locked
+# from the ENV check to the stamp, flash or upload; an empty define set clears a cached one; the stamp records the
+# images' sha256 and a flash, release or a project's own OTA target checks them right before use.
+
+# the top CMakeLists.txt block that applies STD_ENV_DEFINES (reference/standard.md 4.9)
+esp_cmakelists() {
+  cat >esp/CMakeLists.txt <<'EOF'
+cmake_minimum_required(VERSION 3.16)
+include($ENV{IDF_PATH}/tools/cmake/project.cmake)
+foreach(std_define IN LISTS STD_ENV_DEFINES)
+  idf_build_set_property(COMPILE_DEFINITIONS "${std_define}" APPEND)
+endforeach()
+project(esp)
+EOF
+}
+
+# An idf.py that behaves like CMake's cache: -D STD_ENV_DEFINES=... is kept in the build folder's CMakeCache.txt
+# until it is passed again, and the app image says which defines it was built with. With IDF_HOLD set to a file, it
+# says it started (IDF_HOLD.in) and waits while the file is there.
+fake_idf() {
+  stub_cmd idf.py 'printf "%s\n" "$@" >>"$STUB_LOG/idf.py.argv"
+b=; p=; def=unset
+for a in "$@"; do
+  [ "$p" = -B ] && b="$a"
+  if [ "$p" = -D ]; then case "$a" in STD_ENV_DEFINES=*) def="${a#STD_ENV_DEFINES=}" ;; esac; fi
+  p="$a"
+done
+mkdir -p "$b/bootloader"
+[ "$def" = unset ] || printf "%s\n" "$def" >"$b/CMakeCache.txt"
+if [ -n "${IDF_HOLD:-}" ]; then : >"$IDF_HOLD.in"; while [ -e "$IDF_HOLD" ]; do sleep 0.1; done; fi
+printf "app built with [%s]\n" "$(cat "$b/CMakeCache.txt" 2>/dev/null)" >"$b/esp.bin"
+echo boot >"$b/bootloader/bootloader.bin"
+printf "{\"app_bin\": \"esp.bin\"}\n" >"$b/project_description.json"'
+}
+
+# the lock directory of a build folder, as std_fw_lock names it
+fw_lockdir() { printf '%s/std-fw-lock-%s' "${TMPDIR%/}" "$(printf '%s' "$1" | cksum | tr ' ' -)"; }
+
+@test "1.12 espidf: a build for an ENV without defines clears the defines the CMake cache kept" {
+  esp_proj 'esp_ENV_DEFINES_staging := CLOUD_URL="wss://api-staging.example.com/d/ws"'
+  esp_cmakelists
+  fake_idf
+  E="$P/esp/build/esp32c6"
+  run make esp-build ENV=staging
+  [ "$status" -eq 0 ]
+  [ "$(cat "$E/esp.bin")" = 'app built with [CLOUD_URL="wss://api-staging.example.com/d/ws"]' ]
+  # what the race of 1.11 left: a stamp saying production's (empty) set over a cache holding staging's
+  printf 'env=production\n\n' >"$E/std-env"
+  : >"$E/marker"
+  run make esp-build ENV=production
+  [ "$status" -eq 0 ]
+  [ -f "$E/marker" ]
+  # the empty set is passed, so the cache loses staging's defines (1.11 passed nothing and built staging's image)
+  [ "$(argv idf.py | grep -c '^STD_ENV_DEFINES=$')" = 1 ]
+  [ "$(cat "$E/esp.bin")" = 'app built with []' ]
+  [ "$(head -n 1 "$E/std-env")" = env=production ]
+  grep -qx "$(shasum -a 256 "$E/esp.bin" | cut -d' ' -f1)  esp.bin" "$E/std-env.sha256"
+  grep -q '  bootloader/bootloader.bin$' "$E/std-env.sha256"
+  # the lock is gone after the run
+  [ ! -e "$(fw_lockdir "$E")" ]
+}
+
+@test "1.12: a build folder that holds files but no stamp is made again from scratch; an empty one is kept" {
+  esp_proj
+  fake_idf
+  E="$P/esp/build/esp32c6"
+  mkdir -p "$E"
+  echo 'CLOUD_URL="wss://old"' >"$E/CMakeCache.txt"
+  run make esp-build
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"the build in $E has no ENV stamp (std-env): building it again from scratch"* ]] || false
+  [ "$(cat "$E/esp.bin")" = 'app built with []' ]
+  [ "$(cat "$E/std-env")" = env=local ]
+  # an iface/build an arm-gcc Makefile expects stays when it is empty
+  fwproject 'iface:arm-gcc' ''
+  mkdir -p iface/build
+  printf '.PHONY: build\nbuild:\n\t@touch build/iface.elf\n' >iface/Makefile
+  run make iface-build
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"no ENV stamp"* ]] || false
+  grep -q '  iface.bin$' iface/build/std-env.sha256
+}
+
+@test "1.12: two runs never use one build folder at once: the second waits, then stops naming the first" {
+  esp_proj 'esp_ENV_DEFINES_staging := CLOUD_URL="wss://api-staging.example.com/d/ws"'
+  esp_cmakelists
+  fake_idf
+  E="$P/esp/build/esp32c6"
+  : >"$PORTS_DIR/cu.usbmodem1"
+  export IDF_HOLD="$BATS_TEST_TMPDIR/hold"
+  : >"$IDF_HOLD"
+  make esp-build ENV=staging >"$BATS_TEST_TMPDIR/first.log" 2>&1 3>&- &
+  first=$!
+  for _ in $(seq 1 100); do [ -e "$IDF_HOLD.in" ] && break; sleep 0.1; done
+  [ -e "$IDF_HOLD.in" ]
+  STD_FW_LOCK_WAIT=1 run make esp-build ENV=production
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"$E is in use by pid "*" (make esp-build ENV=staging): waiting up to 1s"* ]] || false
+  [[ "$output" == *"$E is in use by another run: pid "*" (make esp-build ENV=staging). Two builds or uploads in one build folder at once mix their images"* ]] || false
+  # the second run never reached idf.py
+  [ "$(argv idf.py | grep -c '^build$')" = 1 ]
+  # a flash and a release of the folder wait for it too
+  STD_FW_LOCK_WAIT=0 run make esp-flash ENV=staging NOBUILD=1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"is in use by another run"* ]] || false
+  [[ "$(argv idf.py)" != *$'\nflash'* ]] || false
+  STD_FW_LOCK_WAIT=0 run make esp-release ENV=staging NOBUILD=1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"is in use by another run"* ]] || false
+  [ ! -f "$STUB_LOG/npx.argv" ]
+  # once the first one is done, a run that waits goes on
+  (sleep 1; rm -f "$IDF_HOLD") 3>&- &
+  STD_FW_LOCK_WAIT=30 run make esp-build ENV=production
+  [ "$status" -eq 0 ]
+  wait "$first"
+  grep -q "built $E" "$BATS_TEST_TMPDIR/first.log"
+  [ "$(argv idf.py | grep -c '^build$')" = 2 ]
+  [ "$(head -n 1 "$E/std-env")" = env=production ]
+  [ "$(cat "$E/esp.bin")" = 'app built with []' ]
+  [ ! -e "$(fw_lockdir "$E")" ]
+}
+
+@test "1.12: a lock whose run is gone is taken over; a live one is not; a failed build lets go of its lock" {
+  esp_proj
+  fake_idf
+  E="$P/esp/build/esp32c6"
+  L="$(fw_lockdir "$E")"
+  sh -c 'exit 0' &
+  dead=$!
+  wait "$dead"
+  mkdir "$L"
+  echo "$dead" >"$L/pid"
+  echo 'make esp-build ENV=staging' >"$L/what"
+  STD_FW_LOCK_WAIT=0 run make esp-build
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"$E: taking over the lock of pid $dead, which is gone (a run that was stopped)"* ]] || false
+  [ ! -e "$L" ]
+  sleep 30 3>&- &
+  live=$!
+  mkdir "$L"
+  echo "$live" >"$L/pid"
+  echo 'make esp-release ENV=production' >"$L/what"
+  STD_FW_LOCK_WAIT=0 run make esp-build
+  kill "$live"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"in use by another run: pid $live (make esp-release ENV=production)"*"If no process $live is running, remove $L"* ]] || false
+  [ -d "$L" ]
+  rm -rf "$L"
+  stub_cmd idf.py 'exit 2'
+  run make esp-build
+  [ "$status" -ne 0 ]
+  [ ! -e "$L" ]
+}
+
+@test "1.12: std_fw_image_check in a project's own OTA target: the image of ENV's build, unchanged, under the lock" {
+  esp_proj 'esp_ENV_DEFINES_staging := CLOUD_URL="wss://api-staging.example.com/d/ws"'
+  esp_cmakelists
+  fake_idf
+  E="$P/esp/build/esp32c6"
+  cat >make/local.mk <<'EOF'
+.PHONY: esp-ota
+esp-ota: $(if $(NOBUILD),,esp-build)
+	@$(STD_FW_SH) $(call std_fw_image_check,esp,$(esp_BUILD),$(esp_BUILD)/esp.bin) say "upload sha256 $$image_sha"; echo "$(ENV) $$image_sha" >>"$$STUB_LOG/ota.log"
+EOF
+  run make esp-ota ENV=staging
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_LOG/ota.log")" = "staging $(shasum -a 256 "$E/esp.bin" | cut -d' ' -f1)" ]
+  rm -f "$STUB_LOG/ota.log"
+  # staging's build uploaded as production
+  run make esp-ota ENV=production NOBUILD=1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the build in $E was made for ENV=staging, and esp_ENV_DEFINES_production differs"* ]] || false
+  # the image changed after the build that recorded it (another build, say)
+  echo 'app built with [CLOUD_URL="wss://other"]' >"$E/esp.bin"
+  run make esp-ota ENV=staging NOBUILD=1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"$E/esp.bin is not the image the build for ENV=staging made (another build changed it)"* ]] || false
+  # a build with no record of its images (one that failed or still runs, or one from before 1.12)
+  rm -f "$E/std-env.sha256"
+  run make esp-ota ENV=staging NOBUILD=1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"the build in $E has no record of its images"* ]] || false
+  [ ! -f "$STUB_LOG/ota.log" ]
+  # the lock: while another run holds the folder the upload does not start
+  run make esp-ota ENV=staging
+  [ "$status" -eq 0 ]
+  rm -f "$STUB_LOG/ota.log"
+  sleep 30 3>&- &
+  live=$!
+  mkdir "$(fw_lockdir "$E")"
+  echo "$live" >"$(fw_lockdir "$E")/pid"
+  STD_FW_LOCK_WAIT=0 run make esp-ota ENV=staging NOBUILD=1
+  kill "$live"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"in use by another run: pid $live"* ]] || false
+  [ ! -f "$STUB_LOG/ota.log" ]
+}
+
+@test "1.12: a release checks the recorded image right before the upload and uploads only that one" {
+  envdef_zephyr
+  stub_cmd west 'printf "%s\n" "$@" >>"$STUB_LOG/west.argv"; d=; p=; for a in "$@"; do [ "$p" = -d ] && d="$a"; p="$a"; done; [ -z "$d" ] || { mkdir -p "$d"; echo "zip for $*" >"$d/dfu_application.zip"; }'
+  run make firmware-build ENV=staging
+  [ "$status" -eq 0 ]
+  grep -q '  dfu_application.zip$' "$B/std-env.sha256"
+  run make firmware-release ENV=staging NOBUILD=1
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"sha256 $(shasum -a 256 "$B/dfu_application.zip" | cut -d' ' -f1)"* ]] || false
+  rm -f "$STUB_LOG/npx.argv"
+  echo other >"$B/dfu_application.zip"
+  run make firmware-release ENV=staging NOBUILD=1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"$B/dfu_application.zip is not the image the build for ENV=staging made"* ]] || false
+  [ ! -f "$STUB_LOG/npx.argv" ]
 }

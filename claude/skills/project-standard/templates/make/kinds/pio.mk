@@ -1,4 +1,4 @@
-# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.12 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind pio: a PlatformIO firmware part (platformio.ini in the part dir).
 #
@@ -117,6 +117,7 @@ std_fw_release = $(call std_fw_version_sh,$(2)) \
   set -- "$$bucket/$$key" "$$bucket/$$pfx/latest/$(3)"; \
   if [ "$(PROMOTE)" = 1 ]; then set -- "$$@" "$$bucket/$$pfx/stable/$(3)"; fi; \
   sha=$$({ sha256sum "$$f" 2>/dev/null || shasum -a 256 "$$f"; } | cut -d' ' -f1); \
+  [ -z "$${image_sha:-}" ] || [ "$$sha" = "$$image_sha" ] || die "$$f is not the image its check passed (sha256 $$sha, the build recorded $$image_sha): nothing was uploaded"; \
   say "release $(1) $$ver to $$bucket/$$pfx ($(ENV)), sha256 $$sha"; \
   $(std_fw_secrets) exec --env $(ENV) -- bash -c 'set -euo pipefail; f="$$1"; shift; for k in "$$@"; do $($(1)_WRANGLER) r2 object put "$$k" --file "$$f" --remote; done' _ "$$f" "$$@"; \
   for k in "$$@"; do ok "uploaded $$k"; done; \
@@ -147,6 +148,10 @@ std_fw_hook_missing = die "$(3): set $(2) in make/project.mk to the command that
 # its quotes, so it is a C string literal. No setting for ENV: no defines, the code's own defaults apply. A build
 # records them in <build dir>/std-env (env=<ENV>, then one define per line): a build whose stamp differs from ENV's
 # defines is made again from scratch, and a flash or release of such a build (NOBUILD=1) refuses.
+# 1.12: a build folder that has no stamp is made again from scratch too, and the defines reach the build tool on every
+# build, an empty set included (it clears a set a cache such as CMakeCache.txt kept). The build also records the sha256
+# of the images it made (<build dir>/std-env.sha256), and std_fw_env_check compares them right before a flash or upload,
+# so an image another build replaced is never shipped. Every build, flash and release holds the build folder's lock.
 std_fw_env_defs = $(strip $($(1)_ENV_DEFINES_$(ENV)))
 # $(call std_fw_env_sh,part): sets $$envdefs (one define per line, empty without a setting), $$envflags (each define as
 # a single-quoted shell word '-DNAME=value', for a compiler run through a shell, a CMake UNIX_COMMAND list and
@@ -167,15 +172,77 @@ std_fw_env_sh = envraw='$(subst ','\'',$(call std_fw_env_defs,$(1)))'; \
 std_fw_env_say = [ -z "$$envdefs" ] || say "$(1): defines for ENV=$(ENV): $$(printf '%s\n' "$$envdefs" | paste -sd ' ' -)";
 # $(call std_fw_env_old,build-dir): $$old (the defines its stamp records, empty without one) and $$oldenv (its ENV).
 std_fw_env_old = old=; oldenv=; if [ -f "$(1)/std-env" ]; then old=$$(tail -n +2 "$(1)/std-env"); oldenv=$$(sed -n '1s/^env=//p' "$(1)/std-env"); fi;
-# $(call std_fw_env_fresh,part,build-dir,wipe), after std_fw_env_sh and before a build: when the build in build-dir was
-# made with other defines (or has no stamp while ENV has defines), runs the shell command wipe, so it is made again.
-std_fw_env_fresh = $(call std_fw_env_old,$(2)) \
-  if [ "$$old" != "$$envdefs" ]; then [ ! -e "$(2)" ] || say "$(1): the build in $(2) was made for ENV=$${oldenv:-unknown}, ENV=$(ENV) has other defines: building it again from scratch"; $(3); fi;
-# $(call std_fw_env_stamp,build-dir), after a build: the ENV and the defines it was made with.
-std_fw_env_stamp = mkdir -p "$(1)"; printf 'env=%s\n%s\n' "$(ENV)" "$$envdefs" > "$(1)/std-env";
-# $(call std_fw_env_check,part,build-dir): a flash or release refuses a build made with other defines than ENV's.
+# $(call std_fw_env_fresh,part,build-dir,wipe), after std_fw_env_sh and std_fw_lock, before a build: when the build in
+# build-dir was made with other defines, or the folder holds files but no stamp (a cache in it may hold any defines),
+# runs the shell command wipe, so it is made again. Then forgets the images it recorded: until the new build stamps
+# them, a check refuses the folder (a build that fails or is stopped leaves none it would pass).
+std_fw_env_fresh = $(call std_fw_env_old,$(2)) std_files=$$(ls -A "$(2)" 2>/dev/null || true); \
+  if [ "$$old" != "$$envdefs" ] || { [ -n "$$std_files" ] && [ ! -f "$(2)/std-env" ]; }; then \
+    if [ -f "$(2)/std-env" ]; then say "$(1): the build in $(2) was made for ENV=$${oldenv:-unknown}, ENV=$(ENV) has other defines: building it again from scratch"; \
+    elif [ -n "$$std_files" ]; then say "$(1): the build in $(2) has no ENV stamp (std-env): building it again from scratch"; fi; $(3); fi; \
+  rm -f "$(2)/std-env.sha256";
+# Defines std_sha FILE: its sha256 (sha256sum, else shasum).
+std_fw_sha_fn = std_sha() { { sha256sum "$$1" 2>/dev/null || shasum -a 256 "$$1"; } | cut -d' ' -f1; };
+# $(call std_fw_env_stamp,build-dir,images), after a build and its signing: std-env (the ENV and its defines) and
+# std-env.sha256, a line "<sha256>  <path>" for each of images (shell words, relative to build-dir or absolute) that is
+# there. std-env.sha256 is written last, so a folder with one holds a finished build.
+std_fw_env_stamp = mkdir -p "$(1)"; $(std_fw_sha_fn) std_dir="$(1)"; : > "$$std_dir/std-env.sha256.tmp"; \
+  for std_img in $(2); do case "$$std_img" in /*) std_f="$$std_img";; *) std_f="$$std_dir/$$std_img";; esac; \
+    if [ -f "$$std_f" ]; then printf '%s  %s\n' "$$(std_sha "$$std_f")" "$${std_img\#"$$std_dir/"}" >> "$$std_dir/std-env.sha256.tmp"; fi; done; \
+  printf 'env=%s\n%s\n' "$(ENV)" "$$envdefs" > "$$std_dir/std-env"; mv "$$std_dir/std-env.sha256.tmp" "$$std_dir/std-env.sha256";
+# $(call std_fw_env_check,part,build-dir[,image]): right before a flash or an upload, after std_fw_lock on build-dir (in
+# the same shell as the flash or upload, so no build can change the folder in between). Refuses a build made with other
+# defines than ENV's, and one whose recorded images are not the files there now (another build replaced them). With
+# image (a file of the build, relative to build-dir or absolute), the build must have recorded it: a build from before
+# 1.12, or one that failed or still runs, has no record and is refused. Sets $$image_sha to the image's sha256, which
+# std_fw_release compares with what it uploads. A project's own OTA or upload target calls it the same way (SKILL.md).
 std_fw_env_check = $(call std_fw_env_sh,$(1)) $(call std_fw_env_old,$(2)) \
-  [ "$$old" = "$$envdefs" ] || die "the build in $(2) was made for ENV=$${oldenv:-unknown}, and $(1)_ENV_DEFINES_$(ENV) differs: build it again with ENV=$(ENV) (without NOBUILD=1)";
+  [ "$$old" = "$$envdefs" ] || die "the build in $(2) was made for ENV=$${oldenv:-unknown}, and $(1)_ENV_DEFINES_$(ENV) differs: build it again with ENV=$(ENV) (without NOBUILD=1)"; \
+  $(std_fw_sha_fn) std_dir="$(2)"; std_rec="$$std_dir/std-env.sha256"; image_sha=; \
+  $(if $(3),[ -f "$$std_rec" ] || die "the build in $(2) has no record of its images (std-env.sha256; a build from before 1.12 or one that failed or is still running): build it again with ENV=$(ENV) (without NOBUILD=1)";) \
+  if [ -f "$$std_rec" ]; then while read -r std_h std_p; do [ -n "$$std_p" ] || continue; \
+    case "$$std_p" in /*) std_f="$$std_p";; *) std_f="$$std_dir/$$std_p";; esac; \
+    [ -f "$$std_f" ] || die "$$std_f is gone since the build that recorded it: build it again with ENV=$(ENV)"; \
+    [ "$$(std_sha "$$std_f")" = "$$std_h" ] || die "$$std_f is not the image the build for ENV=$${oldenv:-unknown} made (another build changed it): build it again with ENV=$(ENV), one build per folder at a time"; \
+  done < "$$std_rec"; fi; \
+  $(if $(3),std_img="$(3)"; std_img="$${std_img\#"$$std_dir/"}"; image_sha=$$(awk -v p="$$std_img" '{ h = $$1; sub(/^[^ ]+  /, "") } $$0 == p { print h; exit }' "$$std_rec"); \
+    [ -n "$$image_sha" ] || die "$(3) is not an image the build in $(2) recorded: build it again with ENV=$(ENV)";)
+
+# Build-folder locks (1.12). A build, flash or release holds a lock on its build folder from before its ENV check to
+# its stamp, flash or upload, so two runs never use one folder at once (two ENVs into one folder once shipped one ENV's
+# image as the other's). A second run waits up to STD_FW_LOCK_WAIT seconds, then stops and names the run that holds it.
+# The lock is a directory in TMPDIR named after the folder's path, with the pid of the shell holding it; it goes when
+# that shell exits, and one whose pid is gone (a run that was killed) is taken over. A make run started inside the
+# holding shell shares it (STD_FW_LOCKED, exported).
+STD_FW_LOCK_WAIT ?= 10
+# Defines std_fw_lock_take DIR WHAT, std_fw_unlock (all the locks the shell holds) and std_fw_alive PID.
+STD_FW_LOCK_FN = std_fw_unlock() { for std_l in $${std_fw_lockdirs[@]+"$${std_fw_lockdirs[@]}"}; do rm -rf "$$std_l"; done; std_fw_lockdirs=(); }; \
+  std_fw_alive() { std_e=$$(kill -0 "$$1" 2>&1) && return 0; case "$$std_e" in *ermitted*) return 0;; esac; return 1; }; \
+  std_fw_lock_take() { std_d="$$1"; case "$$std_d" in /*) ;; *) std_d="$$PWD/$$std_d";; esac; std_d="$${std_d%/}"; \
+    case ":$${STD_FW_LOCKED:-}:" in *":$$std_d:"*) return 0;; esac; \
+    std_l="$${TMPDIR:-/tmp}"; std_l="$${std_l%/}/std-fw-lock-$$(printf '%s' "$$std_d" | cksum | tr ' ' -)"; std_w=0; \
+    while ! mkdir "$$std_l" 2>/dev/null; do \
+      std_p=$$(cat "$$std_l/pid" 2>/dev/null || true); \
+      if [ -n "$$std_p" ] && ! std_fw_alive "$$std_p"; then \
+        if mv "$$std_l" "$$std_l.stale.$$$$" 2>/dev/null; then \
+          if [ "$$(cat "$$std_l.stale.$$$$/pid" 2>/dev/null || true)" = "$$std_p" ]; then warn "$$std_d: taking over the lock of pid $$std_p, which is gone (a run that was stopped)"; rm -rf "$$std_l.stale.$$$$"; \
+          else mv "$$std_l.stale.$$$$" "$$std_l" 2>/dev/null || rm -rf "$$std_l.stale.$$$$"; fi; fi; continue; fi; \
+      if [ -z "$$std_p" ] && [ "$$std_w" -ge 2 ]; then warn "$$std_d: taking over a lock that holds no pid ($$std_l)"; rm -rf "$$std_l"; continue; fi; \
+      [ "$$std_w" -lt "$(STD_FW_LOCK_WAIT)" ] || die "$$std_d is in use by another run: pid $${std_p:-unknown} ($$(cat "$$std_l/what" 2>/dev/null || echo unknown)). Two builds or uploads in one build folder at once mix their images: wait for it to finish, then run this again. If no process $${std_p:-} is running, remove $$std_l"; \
+      [ "$$std_w" -gt 0 ] || say "$$std_d is in use by pid $${std_p:-unknown} ($$(cat "$$std_l/what" 2>/dev/null || echo unknown)): waiting up to $(STD_FW_LOCK_WAIT)s"; \
+      sleep 1; std_w=$$((std_w + 1)); \
+    done; \
+    printf '%s\n' "$$$$" > "$$std_l/pid"; printf '%s\n' "$$2" > "$$std_l/what"; \
+    std_fw_lockdirs+=("$$std_l"); export STD_FW_LOCKED="$${STD_FW_LOCKED:+$$STD_FW_LOCKED:}$$std_d"; \
+    trap 'std_fw_unlock' EXIT; trap 'std_fw_unlock; exit 130' INT; trap 'std_fw_unlock; exit 143' TERM HUP; };
+# $(call std_fw_lock,build-dir,what): takes build-dir's lock for the rest of the shell; what (make <target> ENV=...) is
+# shown to a run that has to wait. A trap on EXIT set after it replaces its own: such a trap calls std_fw_unlock.
+std_fw_lock = $(STD_FW_LOCK_FN) std_fw_lock_take "$(1)" "$(2) ENV=$(ENV)";
+# $(call std_fw_image_check,part,build-dir,image): for a project's own OTA or upload target (make/local.mk). In the
+# recipe line that uploads, after $(STD_FW_SH) and before the upload: takes build-dir's lock for the rest of that shell
+# (std_fw_lock: no build can replace the image until the upload is done), then std_fw_env_check with image: the build
+# was made for ENV's defines and image is the file it recorded. Sets $$image_sha (its sha256).
+std_fw_image_check = $(call std_fw_lock,$(2),make $(or $(MAKECMDGOALS),$(1) upload)) $(call std_fw_env_check,$(1),$(2),$(3))
 
 endif
 
@@ -187,8 +254,12 @@ endif
 pio_need = have pio || die "pio not found: PlatformIO comes from mise (mise.toml pins platformio; run make setup)"; \
   $(call std_fw_env_sh,$(1)) [ -z "$$envflags" ] || export PLATFORMIO_BUILD_FLAGS="$${PLATFORMIO_BUILD_FLAGS:+$$PLATFORMIO_BUILD_FLAGS }$$envflags";
 pio_e = $(if $($(1)_E),-e $($(1)_E))
-# $(call pio_stamp,part,dir,env...): after a build, the ENV stamp (std-env) in .pio/build/<env> of each env built.
-pio_stamp = for e in $(3); do bd="$(CURDIR)/$(2)/.pio/build/$$e"; if [ -d "$$bd" ]; then $(call std_fw_env_stamp,$$bd) fi; done;
+# $(call pio_stamp,part,dir,env...): after a build, the ENV stamp (std-env, std-env.sha256 of its images) in
+# .pio/build/<env> of each env built.
+pio_stamp = for e in $(3); do bd="$(CURDIR)/$(2)/.pio/build/$$e"; if [ -d "$$bd" ]; then $(call std_fw_env_stamp,$$bd,firmware.bin firmware.hex firmware.uf2 firmware.elf $($(1)_IMAGE)) fi; done;
+# $(call pio_lock,part,dir,env...,target): before a build or upload, the lock (std_fw_lock) of .pio/build/<env> of each
+# env it builds, then forgets the images recorded there until the new build stamps them.
+pio_lock = for e in $(3); do bd="$(CURDIR)/$(2)/.pio/build/$$e"; $(call std_fw_lock,$$bd,make $(1)-$(4)) rm -f "$$bd/std-env.sha256"; done;
 
 # $(call pio_build_envs,part,dir): sets $$envs to the envs a build makes, one per line: PIO_ENV (or <part>_PIO_ENV),
 # else PLATFORMIO_DEFAULT_ENVS, else the default_envs of platformio.ini, else its [env:*] sections.
@@ -238,9 +309,10 @@ pio_port = up="$(PORT)"; if [ -z "$$up" ]; then list=$$(ports); n=$$(printf '%s'
 pio_sdkconfig = $(if $($(1)_E),sd="$(CURDIR)/$(2)/sdkconfig.$($(1)_E)"; dflt="$(CURDIR)/$(2)/sdkconfig.defaults"; \
   if [ -f "$$sd" ] && [ -f "$$dflt" ] && [ "$$dflt" -nt "$$sd" ]; then warn "sdkconfig.defaults changed: removing sdkconfig.$($(1)_E) so it is regenerated"; rm -f "$$sd"; fi;)
 
-pio_build = $(STD_FW_SH) $(pio_need) $(call pio_sdkconfig,$(1),$(2)) say "pio run $(1)$(if $($(1)_E), -e $($(1)_E))"; $(std_fw_env_say) \
+pio_build = $(STD_FW_SH) $(pio_need) $(call pio_sdkconfig,$(1),$(2)) $(call pio_build_envs,$(1),$(2)) $(call pio_lock,$(1),$(2),$$envs,build) \
+  say "pio run $(1)$(if $($(1)_E), -e $($(1)_E))"; $(std_fw_env_say) \
   pio run -d "$(CURDIR)/$(2)" $(call pio_e,$(1)); \
-  $(call pio_build_envs,$(1),$(2)) $(call pio_stamp,$(1),$(2),$$envs) ok "built $(1)"
+  $(call pio_stamp,$(1),$(2),$$envs) ok "built $(1)"
 
 pio_has_test_env = grep -q '^\[env:$($(1)_TEST_ENV)\]' "$(CURDIR)/$(2)/platformio.ini" 2>/dev/null
 
@@ -268,7 +340,7 @@ pio_doctor = $(STD_FW_SH) say "$(1): pio$(if $($(1)_E), env $($(1)_E))"; \
   $(std_fw_ports_check) \
   $(call std_fw_doctor_end,$(1))
 
-pio_flash = $(STD_FW_SH) $(pio_need) $(call pio_one_env,$(1),$(2),$(1)-flash) $(pio_port) \
+pio_flash = $(STD_FW_SH) $(pio_need) $(call pio_one_env,$(1),$(2),$(1)-flash) $(pio_port) $(call pio_lock,$(1),$(2),"$$pio_env",flash) \
   case "$($(1)_P)" in pio|esptool) ;; *) die "PROBE=$($(1)_P): pio uploads with the upload_protocol of platformio.ini (PROBE=pio)";; esac; \
   $(std_fw_env_say) pio run -d "$(CURDIR)/$(2)" -e "$$pio_env" -t upload $$( [ -z "$$up" ] || printf -- '--upload-port %s' "$$up" ); \
   $(call pio_stamp,$(1),$(2),"$$pio_env") ok "uploaded $(1)"
@@ -279,7 +351,7 @@ pio_monitor = $(STD_FW_SH) $(pio_need) $(call pio_one_env,$(1),$(2),$(1)-monitor
 # Provision runs for one env too: it is exported as PIO_ENV to <part>_PROVISION and to the flash it falls back to.
 pio_provision = $(STD_FW_SH) $(call pio_one_env,$(1),$(2),$(1)-provision) export PIO_ENV="$$pio_env"; $(call std_fw_provision,$(1))
 
-pio_release = $(STD_FW_SH) $(call std_fw_env_check,$(1),$(CURDIR)/$(2)/.pio/build/$($(1)_E)) f="$(CURDIR)/$(2)/.pio/build/$($(1)_E)/$($(1)_IMAGE)"; $(call std_fw_release,$(1),$(2),$(or $($(1)_E),firmware)-$($(1)_IMAGE))
+pio_release = $(STD_FW_SH) $(call std_fw_lock,$(CURDIR)/$(2)/.pio/build/$($(1)_E),make $(1)-release) $(call std_fw_env_check,$(1),$(CURDIR)/$(2)/.pio/build/$($(1)_E),$(CURDIR)/$(2)/.pio/build/$($(1)_E)/$($(1)_IMAGE)) f="$(CURDIR)/$(2)/.pio/build/$($(1)_E)/$($(1)_IMAGE)"; $(call std_fw_release,$(1),$(2),$(or $($(1)_E),firmware)-$($(1)_IMAGE))
 
 # GitHub Release assets: one set per env the build makes (PIO_ENV, else default_envs, else every [env:*]), each
 # file prefixed with its env: <env>-firmware.bin / .hex / .uf2 (at least one) and <env>-firmware.elf.

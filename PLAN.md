@@ -342,6 +342,11 @@ needs: [instructions, detect, bootstrap]
 - [x] 1.11: no `producer | grep -q` under pipefail (false "not in schema" rows in secrets-list, hook and cf.sh checks) {#std-1-11-grep-q}
 - [x] 1.11: bats tests for both {#std-1-11-tests}
 - [x] 1.11: version, docs, full bats suite, publish ci-templates v1.11 tag {#std-1-11-publish}
+- [x] 1.12: firmware builds always pass ENV defines (empty clears a cached set); a build folder without a stamp is rebuilt {#std-1-12-defines}
+- [x] 1.12: per-build-folder lock (build, flash, release; stale lock of a gone pid recovered) {#std-1-12-lock}
+- [x] 1.12: stamp records image sha256; std_fw_env_check verifies env and image for project OTA targets {#std-1-12-check}
+- [x] 1.12: bats tests (empty defines, concurrent builds, stale lock, check helper) {#std-1-12-tests}
+- [x] 1.12: version, docs, full bats suite, publish ci-templates v1.12 tag {#std-1-12-publish}
 
 ## Workbench {#workbench}
 tech: zsh, Brewfile, defaults, symlinks

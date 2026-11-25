@@ -1,5 +1,5 @@
-# project-standard ci-templates v1.11: python (a uv-managed Python project; uv comes from mise.toml on the pinned slim image).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/python.yml@v1.11.
+# project-standard ci-templates v1.12: python (a uv-managed Python project; uv comes from mise.toml on the pinned slim image).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/python.yml@v1.12.
 
 on:
   workflow_call:

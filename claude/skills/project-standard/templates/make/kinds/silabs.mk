@@ -1,4 +1,4 @@
-# project-standard v1.11 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.12 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind silabs: a Silicon Labs firmware part built from an slc project (*.slcp) on the Simplicity SDK and
 # WiseConnect 3, for SiWx917 / SiWG917 (Cortex-M4 SoC mode).
@@ -141,6 +141,7 @@ std_fw_release = $(call std_fw_version_sh,$(2)) \
   set -- "$$bucket/$$key" "$$bucket/$$pfx/latest/$(3)"; \
   if [ "$(PROMOTE)" = 1 ]; then set -- "$$@" "$$bucket/$$pfx/stable/$(3)"; fi; \
   sha=$$({ sha256sum "$$f" 2>/dev/null || shasum -a 256 "$$f"; } | cut -d' ' -f1); \
+  [ -z "$${image_sha:-}" ] || [ "$$sha" = "$$image_sha" ] || die "$$f is not the image its check passed (sha256 $$sha, the build recorded $$image_sha): nothing was uploaded"; \
   say "release $(1) $$ver to $$bucket/$$pfx ($(ENV)), sha256 $$sha"; \
   $(std_fw_secrets) exec --env $(ENV) -- bash -c 'set -euo pipefail; f="$$1"; shift; for k in "$$@"; do $($(1)_WRANGLER) r2 object put "$$k" --file "$$f" --remote; done' _ "$$f" "$$@"; \
   for k in "$$@"; do ok "uploaded $$k"; done; \
@@ -171,6 +172,10 @@ std_fw_hook_missing = die "$(3): set $(2) in make/project.mk to the command that
 # its quotes, so it is a C string literal. No setting for ENV: no defines, the code's own defaults apply. A build
 # records them in <build dir>/std-env (env=<ENV>, then one define per line): a build whose stamp differs from ENV's
 # defines is made again from scratch, and a flash or release of such a build (NOBUILD=1) refuses.
+# 1.12: a build folder that has no stamp is made again from scratch too, and the defines reach the build tool on every
+# build, an empty set included (it clears a set a cache such as CMakeCache.txt kept). The build also records the sha256
+# of the images it made (<build dir>/std-env.sha256), and std_fw_env_check compares them right before a flash or upload,
+# so an image another build replaced is never shipped. Every build, flash and release holds the build folder's lock.
 std_fw_env_defs = $(strip $($(1)_ENV_DEFINES_$(ENV)))
 # $(call std_fw_env_sh,part): sets $$envdefs (one define per line, empty without a setting), $$envflags (each define as
 # a single-quoted shell word '-DNAME=value', for a compiler run through a shell, a CMake UNIX_COMMAND list and
@@ -191,15 +196,77 @@ std_fw_env_sh = envraw='$(subst ','\'',$(call std_fw_env_defs,$(1)))'; \
 std_fw_env_say = [ -z "$$envdefs" ] || say "$(1): defines for ENV=$(ENV): $$(printf '%s\n' "$$envdefs" | paste -sd ' ' -)";
 # $(call std_fw_env_old,build-dir): $$old (the defines its stamp records, empty without one) and $$oldenv (its ENV).
 std_fw_env_old = old=; oldenv=; if [ -f "$(1)/std-env" ]; then old=$$(tail -n +2 "$(1)/std-env"); oldenv=$$(sed -n '1s/^env=//p' "$(1)/std-env"); fi;
-# $(call std_fw_env_fresh,part,build-dir,wipe), after std_fw_env_sh and before a build: when the build in build-dir was
-# made with other defines (or has no stamp while ENV has defines), runs the shell command wipe, so it is made again.
-std_fw_env_fresh = $(call std_fw_env_old,$(2)) \
-  if [ "$$old" != "$$envdefs" ]; then [ ! -e "$(2)" ] || say "$(1): the build in $(2) was made for ENV=$${oldenv:-unknown}, ENV=$(ENV) has other defines: building it again from scratch"; $(3); fi;
-# $(call std_fw_env_stamp,build-dir), after a build: the ENV and the defines it was made with.
-std_fw_env_stamp = mkdir -p "$(1)"; printf 'env=%s\n%s\n' "$(ENV)" "$$envdefs" > "$(1)/std-env";
-# $(call std_fw_env_check,part,build-dir): a flash or release refuses a build made with other defines than ENV's.
+# $(call std_fw_env_fresh,part,build-dir,wipe), after std_fw_env_sh and std_fw_lock, before a build: when the build in
+# build-dir was made with other defines, or the folder holds files but no stamp (a cache in it may hold any defines),
+# runs the shell command wipe, so it is made again. Then forgets the images it recorded: until the new build stamps
+# them, a check refuses the folder (a build that fails or is stopped leaves none it would pass).
+std_fw_env_fresh = $(call std_fw_env_old,$(2)) std_files=$$(ls -A "$(2)" 2>/dev/null || true); \
+  if [ "$$old" != "$$envdefs" ] || { [ -n "$$std_files" ] && [ ! -f "$(2)/std-env" ]; }; then \
+    if [ -f "$(2)/std-env" ]; then say "$(1): the build in $(2) was made for ENV=$${oldenv:-unknown}, ENV=$(ENV) has other defines: building it again from scratch"; \
+    elif [ -n "$$std_files" ]; then say "$(1): the build in $(2) has no ENV stamp (std-env): building it again from scratch"; fi; $(3); fi; \
+  rm -f "$(2)/std-env.sha256";
+# Defines std_sha FILE: its sha256 (sha256sum, else shasum).
+std_fw_sha_fn = std_sha() { { sha256sum "$$1" 2>/dev/null || shasum -a 256 "$$1"; } | cut -d' ' -f1; };
+# $(call std_fw_env_stamp,build-dir,images), after a build and its signing: std-env (the ENV and its defines) and
+# std-env.sha256, a line "<sha256>  <path>" for each of images (shell words, relative to build-dir or absolute) that is
+# there. std-env.sha256 is written last, so a folder with one holds a finished build.
+std_fw_env_stamp = mkdir -p "$(1)"; $(std_fw_sha_fn) std_dir="$(1)"; : > "$$std_dir/std-env.sha256.tmp"; \
+  for std_img in $(2); do case "$$std_img" in /*) std_f="$$std_img";; *) std_f="$$std_dir/$$std_img";; esac; \
+    if [ -f "$$std_f" ]; then printf '%s  %s\n' "$$(std_sha "$$std_f")" "$${std_img\#"$$std_dir/"}" >> "$$std_dir/std-env.sha256.tmp"; fi; done; \
+  printf 'env=%s\n%s\n' "$(ENV)" "$$envdefs" > "$$std_dir/std-env"; mv "$$std_dir/std-env.sha256.tmp" "$$std_dir/std-env.sha256";
+# $(call std_fw_env_check,part,build-dir[,image]): right before a flash or an upload, after std_fw_lock on build-dir (in
+# the same shell as the flash or upload, so no build can change the folder in between). Refuses a build made with other
+# defines than ENV's, and one whose recorded images are not the files there now (another build replaced them). With
+# image (a file of the build, relative to build-dir or absolute), the build must have recorded it: a build from before
+# 1.12, or one that failed or still runs, has no record and is refused. Sets $$image_sha to the image's sha256, which
+# std_fw_release compares with what it uploads. A project's own OTA or upload target calls it the same way (SKILL.md).
 std_fw_env_check = $(call std_fw_env_sh,$(1)) $(call std_fw_env_old,$(2)) \
-  [ "$$old" = "$$envdefs" ] || die "the build in $(2) was made for ENV=$${oldenv:-unknown}, and $(1)_ENV_DEFINES_$(ENV) differs: build it again with ENV=$(ENV) (without NOBUILD=1)";
+  [ "$$old" = "$$envdefs" ] || die "the build in $(2) was made for ENV=$${oldenv:-unknown}, and $(1)_ENV_DEFINES_$(ENV) differs: build it again with ENV=$(ENV) (without NOBUILD=1)"; \
+  $(std_fw_sha_fn) std_dir="$(2)"; std_rec="$$std_dir/std-env.sha256"; image_sha=; \
+  $(if $(3),[ -f "$$std_rec" ] || die "the build in $(2) has no record of its images (std-env.sha256; a build from before 1.12 or one that failed or is still running): build it again with ENV=$(ENV) (without NOBUILD=1)";) \
+  if [ -f "$$std_rec" ]; then while read -r std_h std_p; do [ -n "$$std_p" ] || continue; \
+    case "$$std_p" in /*) std_f="$$std_p";; *) std_f="$$std_dir/$$std_p";; esac; \
+    [ -f "$$std_f" ] || die "$$std_f is gone since the build that recorded it: build it again with ENV=$(ENV)"; \
+    [ "$$(std_sha "$$std_f")" = "$$std_h" ] || die "$$std_f is not the image the build for ENV=$${oldenv:-unknown} made (another build changed it): build it again with ENV=$(ENV), one build per folder at a time"; \
+  done < "$$std_rec"; fi; \
+  $(if $(3),std_img="$(3)"; std_img="$${std_img\#"$$std_dir/"}"; image_sha=$$(awk -v p="$$std_img" '{ h = $$1; sub(/^[^ ]+  /, "") } $$0 == p { print h; exit }' "$$std_rec"); \
+    [ -n "$$image_sha" ] || die "$(3) is not an image the build in $(2) recorded: build it again with ENV=$(ENV)";)
+
+# Build-folder locks (1.12). A build, flash or release holds a lock on its build folder from before its ENV check to
+# its stamp, flash or upload, so two runs never use one folder at once (two ENVs into one folder once shipped one ENV's
+# image as the other's). A second run waits up to STD_FW_LOCK_WAIT seconds, then stops and names the run that holds it.
+# The lock is a directory in TMPDIR named after the folder's path, with the pid of the shell holding it; it goes when
+# that shell exits, and one whose pid is gone (a run that was killed) is taken over. A make run started inside the
+# holding shell shares it (STD_FW_LOCKED, exported).
+STD_FW_LOCK_WAIT ?= 10
+# Defines std_fw_lock_take DIR WHAT, std_fw_unlock (all the locks the shell holds) and std_fw_alive PID.
+STD_FW_LOCK_FN = std_fw_unlock() { for std_l in $${std_fw_lockdirs[@]+"$${std_fw_lockdirs[@]}"}; do rm -rf "$$std_l"; done; std_fw_lockdirs=(); }; \
+  std_fw_alive() { std_e=$$(kill -0 "$$1" 2>&1) && return 0; case "$$std_e" in *ermitted*) return 0;; esac; return 1; }; \
+  std_fw_lock_take() { std_d="$$1"; case "$$std_d" in /*) ;; *) std_d="$$PWD/$$std_d";; esac; std_d="$${std_d%/}"; \
+    case ":$${STD_FW_LOCKED:-}:" in *":$$std_d:"*) return 0;; esac; \
+    std_l="$${TMPDIR:-/tmp}"; std_l="$${std_l%/}/std-fw-lock-$$(printf '%s' "$$std_d" | cksum | tr ' ' -)"; std_w=0; \
+    while ! mkdir "$$std_l" 2>/dev/null; do \
+      std_p=$$(cat "$$std_l/pid" 2>/dev/null || true); \
+      if [ -n "$$std_p" ] && ! std_fw_alive "$$std_p"; then \
+        if mv "$$std_l" "$$std_l.stale.$$$$" 2>/dev/null; then \
+          if [ "$$(cat "$$std_l.stale.$$$$/pid" 2>/dev/null || true)" = "$$std_p" ]; then warn "$$std_d: taking over the lock of pid $$std_p, which is gone (a run that was stopped)"; rm -rf "$$std_l.stale.$$$$"; \
+          else mv "$$std_l.stale.$$$$" "$$std_l" 2>/dev/null || rm -rf "$$std_l.stale.$$$$"; fi; fi; continue; fi; \
+      if [ -z "$$std_p" ] && [ "$$std_w" -ge 2 ]; then warn "$$std_d: taking over a lock that holds no pid ($$std_l)"; rm -rf "$$std_l"; continue; fi; \
+      [ "$$std_w" -lt "$(STD_FW_LOCK_WAIT)" ] || die "$$std_d is in use by another run: pid $${std_p:-unknown} ($$(cat "$$std_l/what" 2>/dev/null || echo unknown)). Two builds or uploads in one build folder at once mix their images: wait for it to finish, then run this again. If no process $${std_p:-} is running, remove $$std_l"; \
+      [ "$$std_w" -gt 0 ] || say "$$std_d is in use by pid $${std_p:-unknown} ($$(cat "$$std_l/what" 2>/dev/null || echo unknown)): waiting up to $(STD_FW_LOCK_WAIT)s"; \
+      sleep 1; std_w=$$((std_w + 1)); \
+    done; \
+    printf '%s\n' "$$$$" > "$$std_l/pid"; printf '%s\n' "$$2" > "$$std_l/what"; \
+    std_fw_lockdirs+=("$$std_l"); export STD_FW_LOCKED="$${STD_FW_LOCKED:+$$STD_FW_LOCKED:}$$std_d"; \
+    trap 'std_fw_unlock' EXIT; trap 'std_fw_unlock; exit 130' INT; trap 'std_fw_unlock; exit 143' TERM HUP; };
+# $(call std_fw_lock,build-dir,what): takes build-dir's lock for the rest of the shell; what (make <target> ENV=...) is
+# shown to a run that has to wait. A trap on EXIT set after it replaces its own: such a trap calls std_fw_unlock.
+std_fw_lock = $(STD_FW_LOCK_FN) std_fw_lock_take "$(1)" "$(2) ENV=$(ENV)";
+# $(call std_fw_image_check,part,build-dir,image): for a project's own OTA or upload target (make/local.mk). In the
+# recipe line that uploads, after $(STD_FW_SH) and before the upload: takes build-dir's lock for the rest of that shell
+# (std_fw_lock: no build can replace the image until the upload is done), then std_fw_env_check with image: the build
+# was made for ENV's defines and image is the file it recorded. Sets $$image_sha (its sha256).
+std_fw_image_check = $(call std_fw_lock,$(2),make $(or $(MAKECMDGOALS),$(1) upload)) $(call std_fw_env_check,$(1),$(2),$(3))
 
 endif
 
@@ -372,7 +439,7 @@ silabs_update = $(STD_FW_SH) \
 # would be replaced, not added to); a change of them makes build-dir again from scratch (the env stamp).
 silabs_build = $(STD_FW_SH) $(call silabs_find,$(1),$(2)) $(silabs_postbuild) $(call silabs_tools,$(1)) $(call silabs_need_tools,$(1)) \
   board="$($(1)_B)"; [ -n "$$board" ] || die "no board: set $(1)_BOARD in make/project.mk or pass BOARD=... (for example brd4338a)"; \
-  $(call std_fw_env_sh,$(1)) $(call std_fw_env_fresh,$(1),$(3),rm -rf "$(3)") $(std_fw_env_say) \
+  $(call std_fw_env_sh,$(1)) $(call std_fw_lock,$(3),make $(1)-$(if $(5),check,build)) $(call std_fw_env_fresh,$(1),$(3),rm -rf "$(3)") $(std_fw_env_say) \
   b="$(3)"; mkdir -p "$$b"; ARM_GCC_DIR=$$(dirname "$$gccdir"); export PATH="$${java:+$$java:}$$gccdir:$$PATH" ARM_GCC_DIR; \
   $(call silabs_cmdr,$(1)) pbexe=; \
   if [ -z "$$pb" ]; then say "no post_build in $$(basename "$$slcp"): no .rps (release needs one: $(silabs_pb_lines))"; \
@@ -392,7 +459,7 @@ silabs_build = $(STD_FW_SH) $(call silabs_find,$(1),$(2)) $(silabs_postbuild) $(
   o="$$b/$($(1)_OUT)"; [ -f "$$o/$$name.hex" ] || [ -f "$$o/$$name.out" ] || die "the build made no $$name.hex or $$name.out in $$o"; \
   if [ -n "$$pb" ] && [ "$$pbexe" != true ]; then [ -f "$$o/$$name.rps" ] || die "the post_build $$pb ran but made no $$name.rps in $$o"; ok "$$o/$$name.rps"; fi; \
   $(if $(4),$(if $(filter 1,$($(1)_SIGN)),$(call silabs_sign,$(1)))) \
-  $(call std_fw_env_stamp,$$b) \
+  $(call std_fw_env_stamp,$$b,"$($(1)_OUT)/$$name.hex" "$($(1)_OUT)/$$name.out" "$($(1)_OUT)/$$name.rps" "$($(1)_OUT)/$$name-signed.rps") \
   ok "built $$o"
 
 # Image signing for SiWx917 M4 secure boot, run when SIGN=1 (default 0: a board whose secure boot is not provisioned
@@ -408,18 +475,19 @@ silabs_sign = rps="$$o/$$name.rps"; [ -f "$$rps" ] || die "no $$name.rps to sign
 
 # Sets b, o, name and img (the image to flash and to publish: <name>-signed.rps with SIGN=1, else <name>.hex for flash).
 silabs_need_build = $(call silabs_find,$(1),$(2)) b="$($(1)_BUILD)"; o="$$b/$($(1)_OUT)"; [ -d "$$o" ] || die "no build in $$o: run make $(1)-build";
-# a flash or OTA release of a build made with other defines than ENV's refuses (std_fw_env_check)
-silabs_need_env = $(call silabs_need_build,$(1),$(2)) $(call std_fw_env_check,$(1),$$b)
+# $(call silabs_need_env,part,dir,target): the lock of the build folder (std_fw_lock), then a flash or OTA release of a
+# build made with other defines than ENV's, or whose images changed since, refuses (std_fw_env_check)
+silabs_need_env = $(call silabs_need_build,$(1),$(2)) $(call std_fw_lock,$$b,make $(1)-$(3)) $(call std_fw_env_check,$(1),$$b)
 
 silabs_sel = $(if $($(1)_DEVICE),--device "$($(1)_DEVICE)") $(if $($(1)_PROBE_ID),--serialno "$($(1)_PROBE_ID)")
 
-silabs_flash = $(STD_FW_SH) $(call silabs_need_env,$(1),$(2)) \
+silabs_flash = $(STD_FW_SH) $(call silabs_need_env,$(1),$(2),flash) \
   if [ "$($(1)_SIGN)" = 1 ]; then img="$$o/$$name-signed.rps"; else img="$$o/$$name.hex"; fi; [ -f "$$img" ] || die "$$img not found: run make $(1)-build"; \
   case "$($(1)_P)" in \
     commander) $(call silabs_need_cmdr,$(1)) say "commander flash $$(basename "$$img")"; "$$cmdr" flash "$$img" $(call silabs_sel,$(1));; \
     jlink) have JLinkExe || die "JLinkExe not found: brew install --cask segger-jlink"; \
       [ -n "$($(1)_JLINK_DEVICE)" ] || die "PROBE=jlink needs $(1)_JLINK_DEVICE in make/project.mk (SiWx917 flash goes through its ROM bootloader: use PROBE=commander there)"; \
-      cmd=$$(mktemp); trap 'rm -f "$$cmd"' EXIT; printf 'r\nh\nloadfile %s\nr\ng\nexit\n' "$$o/$$name.hex" > "$$cmd"; \
+      cmd=$$(mktemp); trap 'rm -f "$$cmd"; std_fw_unlock' EXIT; printf 'r\nh\nloadfile %s\nr\ng\nexit\n' "$$o/$$name.hex" > "$$cmd"; \
       JLinkExe -device "$($(1)_JLINK_DEVICE)" -if SWD -speed 4000 -autoconnect 1 $(if $($(1)_PROBE_ID),-SelectEmuBySN "$($(1)_PROBE_ID)") -CommandFile "$$cmd";; \
     *) die "PROBE=$($(1)_P): silabs flashes with commander or jlink";; \
   esac; \
@@ -470,13 +538,13 @@ silabs_power_avg = $(STD_FW_SH) $(call silabs_need_cmdr,$(1)) \
   say "AEM average over $($(1)_AEM_WINDOW) ms"; "$$cmdr" aem measure --windowlength "$($(1)_AEM_WINDOW)" $(if $($(1)_PROBE_ID),--serialno "$($(1)_PROBE_ID)")
 
 # OTA: the .rps image (signed with SIGN=1) to the OTA bucket as <part>.rps.
-silabs_release = $(STD_FW_SH) $(call silabs_need_env,$(1),$(2)) $(silabs_postbuild) \
+silabs_release = $(STD_FW_SH) $(call silabs_need_env,$(1),$(2),release) $(silabs_postbuild) \
   if [ ! -f "$$o/$$name.rps" ]; then \
     if [ -z "$$pb" ]; then die "no $$name.rps in $$o: $$(basename "$$slcp") has no post_build, so the build makes none. $(silabs_pb_lines) (WiseConnect's .rps step, run by Simplicity Commander), then make $(1)-build. Nothing was uploaded"; \
     else die "no $$name.rps in $$o: the post_build $$pb of $$(basename "$$slcp") makes it with Simplicity Commander (make $(1)-doctor checks it); make $(1)-build. Nothing was uploaded"; fi; \
   fi; \
   if [ "$($(1)_SIGN)" = 1 ]; then f="$$o/$$name-signed.rps"; else f="$$o/$$name.rps"; warn "$(1)_SIGN is not 1: publishing an unsigned image"; fi; \
-  $(call std_fw_release,$(1),$(2),$(1).rps)
+  $(call std_fw_env_check,$(1),$$b,$$f) $(call std_fw_release,$(1),$(2),$(1).rps)
 
 # GitHub Release assets: the hex (factory programming), the .rps images (OTA; signed with SIGN=1), the .out (ELF,
 # debug symbols), the map, and the .s37 and .bin when the build made them.
