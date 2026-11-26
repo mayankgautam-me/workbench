@@ -1,4 +1,4 @@
-# project-standard v1.12 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.13 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind espidf: an ESP-IDF firmware part (idf.py, one build per chip target).
 #
@@ -264,12 +264,18 @@ espidf_app_bin = app=$$(sed -nE 's/.*"app_bin":[[:space:]]*"([^"]*)".*/\1/p' "$$
 
 # Secure boot v2: the build leaves the bootloader and app unsigned
 # (CONFIG_SECURE_BOOT_BUILD_SIGNED_BINARIES=n) and they are signed here with the key from the
-# secrets repo. An image that already carries a signature is left alone.
+# secrets repo. An image is left alone only when its signature verifies with that key; anything else is
+# signed, and the build stops unless every image then verifies. `espsecure signature_info_v2` cannot be
+# the test: from esptool 4.x it exits 0 for an image with no signature block, so every image passed as
+# signed and went out unsigned, which a secure-boot device refuses at the end of an OTA (1.13).
 espidf_sign = $(call espidf_app_bin,$(1)) set -- "$$b/bootloader/bootloader.bin" "$$b/$$app"; \
   say "signing $$* with $(if $(SIGNING_KEY),$(SIGNING_KEY),$($(1)_KEY)) (secure boot v2)"; \
   $(call std_fw_with_key,$($(1)_KEY)) bash -c 'set -euo pipefail; key="$$0"; for f in "$$@"; do \
-    if python -m espsecure signature_info_v2 "$$f" >/dev/null 2>&1; then echo "  already signed: $$f"; continue; fi; \
-    python -m espsecure sign_data --version 2 --keyfile "$$key" --output "$$f.signed" "$$f"; mv "$$f.signed" "$$f"; done' "$(std_fw_keyarg)" "$$@";
+    if python -m espsecure verify_signature --version 2 --keyfile "$$key" "$$f" >/dev/null 2>&1; then echo "  signed with this key: $$f"; continue; fi; \
+    python -m espsecure sign_data --version 2 --keyfile "$$key" --output "$$f.signed" "$$f"; mv "$$f.signed" "$$f"; \
+    python -m espsecure verify_signature --version 2 --keyfile "$$key" "$$f" >/dev/null 2>&1 \
+      || { echo "error: $$f does not verify with the signing key after signing: not using this build" >&2; exit 1; }; \
+    echo "  signed and verified: $$f"; done' "$(std_fw_keyarg)" "$$@";
 
 # The defines of ENV (std_fw_env_sh) reach idf.py as the CMake list STD_ENV_DEFINES, which the project's top
 # CMakeLists.txt applies before project() (reference/standard.md 4.9): idf.py has no option for a C define. Sets

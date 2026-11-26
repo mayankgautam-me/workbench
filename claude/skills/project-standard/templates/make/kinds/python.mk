@@ -1,4 +1,4 @@
-# project-standard v1.12 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.13 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Kind python: a Python project managed by uv (pyproject.toml, uv.lock), with ruff and pytest.
 #

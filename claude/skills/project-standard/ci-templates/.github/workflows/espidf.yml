@@ -1,5 +1,5 @@
-# project-standard ci-templates v1.12: espidf (ESP-IDF firmware, the image pinned to the v5.5 IDF).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/espidf.yml@v1.12.
+# project-standard ci-templates v1.13: espidf (ESP-IDF firmware, the image pinned to the v5.5 IDF).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/espidf.yml@v1.13.
 # build: ENV=production when the run releases (run_release, or confirm production), else local, so the image has that
 # ENV's <part>_ENV_DEFINES (1.8); a release or publish of a build made for other defines (its std-env stamp) refuses.
 

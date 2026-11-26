@@ -1122,7 +1122,7 @@ The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/
 `mayankgautam-me/ci-templates`), tagged `v1.12` (`v1.11`, `v1.10`, `v1.9`, `v1.8`, `v1.7`, `v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
 own, independent of the project's `GITHUB_OWNER`: projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.12`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.13`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -1440,6 +1440,18 @@ the project's owner's, 5.1), `STD_CONFIG` (default `~/.config/project-standard`)
 Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) and the number in a project's `make/VERSION`, its managed
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
+
+- **1.13** (2026-11-26): espidf images are signed whenever their signature does not verify with the project's key.
+  `make/VERSION`, the managed headers and the workflows' `@v1.13` say 1.13; `mayankgautam-me/ci-templates` gets the tag
+  `v1.13` (its workflows change only in the version) and keeps `v1.12` to `v1.0`.
+  - What happened: an OTA to a secure-boot ESP32-C6 failed at `esp_ota_end`. The build skipped signing any image that
+    `espsecure signature_info_v2` accepted, and from esptool 4.x that command exits 0 for an image with no signature
+    block, so every app and bootloader image went out unsigned.
+  - `espidf_sign` leaves an image alone only when `espsecure verify_signature --version 2` passes with the signing key;
+    anything else is signed, and the build stops unless every image verifies afterwards.
+  - Update from 1.12: refresh the managed files and move the `uses:` lines to `@v1.13`. Rebuild every espidf part with
+    secure boot on (the next `make <part>-build` signs again); images built and released since the esptool change are
+    unsigned and should be replaced, not promoted.
 
 - **1.12** (2026-11-25): one firmware build per folder, images checked before use. `make/VERSION`, the managed headers
   and the workflows' `@v1.12` say 1.12; `mayankgautam-me/ci-templates` gets the tag `v1.12` (its workflows change only
