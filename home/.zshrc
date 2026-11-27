@@ -13,6 +13,7 @@ export EDITOR=nvim VISUAL=nvim
 export PATH="$HOME/.local/bin:$HOME/go/bin:$PATH"   # ~/go/bin: tools from `go install`
 export PATH="$HOME/.cargo/bin:/opt/homebrew/opt/rustup/bin:$PATH"   # Rust: cargo-installed tools, rustup toolchain
 export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools   # Android SDK (brew android-commandlinetools), for Gradle builds
+export PATH="$ANDROID_HOME/platform-tools:$PATH"   # adb and fastboot from that SDK
 
 # --- Colours (Tokyo Night) -------------------------------------------------
 export LS_COLORS="$(vivid generate tokyonight-night)"   # file-type colours for eza & completion
