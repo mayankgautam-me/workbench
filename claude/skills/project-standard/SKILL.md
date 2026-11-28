@@ -417,7 +417,9 @@ mention that when the list holds one. `make setup` puts back what a teardown rem
 - `make help` lists only what the parts use; `make help ALL=1` lists every command.
 - Releasing a part (since v7, `reference/standard.md` 4.12): its changes under `## [Unreleased]` in its `CHANGELOG.md`, then
   `make <part>-bump LEVEL=patch|minor|major` (or `VERSION=x.y.z`): the kind's version file, the CHANGELOG moved under the
-  version, a commit `<part>: release <version>` and the tag `<part>-v<version>`; nothing pushed. The user pushes the branch
+  version, a commit `<part>: release <version>` and the tag `<part>-v<version>`; nothing pushed. A board (hardware,
+  altium, mechanical) bumps with no `LEVEL` to its next revision, a number (`2` -> `3`) or, since 1.14, a letter
+  (`VERSION=B` sets one, then `B` -> `C`, `Z` -> `AA`; tag `hardware-vB`). The user pushes the branch
   and the tags with `make release-push` (ask first): the branch, then each new release tag in its own push, because GitHub
   starts no workflow for the tags of a push that carries more than three. GitHub marks only one Release of the repository
   Latest: since v20 that is the Release `latest`, which holds the newest files of every part under names without the

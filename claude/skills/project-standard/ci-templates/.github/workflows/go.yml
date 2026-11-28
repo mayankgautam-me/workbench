@@ -1,5 +1,5 @@
-# project-standard ci-templates v1.13: go (a Go service or CLI; the toolchain comes from mise.toml on top of the pinned image).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.13.
+# project-standard ci-templates v1.14: go (a Go service or CLI; the toolchain comes from mise.toml on top of the pinned image).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/go.yml@v1.14.
 
 on:
   workflow_call:

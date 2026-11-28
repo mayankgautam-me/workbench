@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# project-standard v1.13 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.14 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # Versions, release notes and GitHub Releases of one part. make runs it from the project root.
 #
 #   release.sh version --part P --kind K [--part-dir D] [--platform X]   print the part's version (from the kind's own source)
 #   release.sh bump    --part P --kind K [--part-dir D] (--level patch|minor|major | --version V) [--force]
-#                      set the version, move the CHANGELOG's Unreleased section under it, commit the version
+#                      (a board kind: no --level is the next revision; --version the current, untagged version
+#                      releases it) set the version, move the CHANGELOG's Unreleased section under it, commit the version
 #                      file(s) and the CHANGELOG (by name) as "<part>: release <version>", tag <part>-v<version>
 #                      (annotated); never pushes
 #   release.sh notes   --part P --version V [--part-dir D]   print the CHANGELOG section of V (error when missing)
@@ -119,10 +120,34 @@ host_platform() {
 need_kind() { [[ -n $OPT_KIND ]] || die "--kind is required"; }
 need_version() {
   [[ -n $OPT_VERSION ]] || die "--version is required"
-  valid_version "$OPT_VERSION" || die "version '$OPT_VERSION': use 1 to 3 numbers with dots and an optional -prerelease (1.4.0, 2, 1.5.0-rc1)"
+  valid_version "$OPT_VERSION" || die "version '$OPT_VERSION': $VERSION_FORMS"
 }
 
-valid_version() { [[ $1 =~ ^[0-9]+(\.[0-9]+){0,2}(-[0-9A-Za-z][0-9A-Za-z.]*)?$ ]]; }
+VERSION_FORMS="use 1 to 3 numbers with dots and an optional -prerelease (1.4.0, 2, 1.5.0-rc1), or for a board a revision letter (B, AA, C-proto1)"
+
+# valid_version V: x[.y[.z]][-pre], or a letter revision (letter_rev).
+valid_version() { [[ $1 =~ ^[0-9]+(\.[0-9]+){0,2}(-[0-9A-Za-z][0-9A-Za-z.]*)?$ ]] || letter_rev "$1"; }
+
+# letter_rev V (since 1.14): a board revision named by letter: A to Z, then AA to ZZ, uppercase, with an optional
+# -prerelease (C-proto1). Only the board kinds (is_board_kind) take one; their tag is <part>-v<letter> (hardware-vB).
+letter_rev() { [[ $1 =~ ^[A-Z]{1,2}(-[0-9A-Za-z][0-9A-Za-z.]*)?$ ]]; }
+
+# next_letter REV: the revision after REV (A -> B, Z -> AA, AZ -> BA); fails after ZZ.
+next_letter() {
+  local L=ABCDEFGHIJKLMNOPQRSTUVWXYZ r=$1 hi lo i
+  if ((${#r} == 1)); then hi='' lo=$r; else hi=${r:0:1} lo=${r:1:1}; fi
+  i=${L%%"$lo"*}
+  i=${#i}
+  if ((i < 25)); then
+    printf '%s%s\n' "$hi" "${L:i+1:1}"
+    return 0
+  fi
+  [[ -n $hi ]] || { printf 'AA\n'; return 0; }
+  [[ $hi != Z ]] || return 1
+  i=${L%%"$hi"*}
+  i=${#i}
+  printf '%sA\n' "${L:i+1:1}"
+}
 
 # replace_file FILE: move FILE.new over FILE (keeps the mode of FILE).
 replace_file() {
@@ -300,7 +325,8 @@ xcode_version() {
 }
 
 # is_board_kind: the kind versions a physical revision (hardware, altium, mechanical): a first bump starts at a plain
-# number (1, 2, ...), and each major revision keeps its own files in the latest Release.
+# number (1, 2, ...), and each major revision keeps its own files in the latest Release. A board may instead be named by
+# letter (since 1.14): VERSION=B sets one, and from a letter every bump is the next letter (B -> C, Z -> AA).
 is_board_kind() {
   case $OPT_KIND in hardware | altium | mechanical) return 0 ;; esac
   return 1
@@ -362,12 +388,21 @@ split_version() {
 }
 
 # next_version CURRENT LEVEL: patch/minor/major, keeping the number of components (a hardware rev "2" is
-# bumped to "3" whatever the level). A pre-release (1.5.0-rc1) is released as 1.5.0 by patch.
+# bumped to "3" whatever the level, a letter rev "B" to "C"). A pre-release (1.5.0-rc1, C-proto1) is released as
+# 1.5.0 (C) by patch.
 next_version() {
   local cur=$1 level=$2 base pre n a b c
   base=${cur%%-*}
   pre=''
   [[ $base == "$cur" ]] || pre=${cur#*-}
+  if letter_rev "$cur"; then
+    if [[ -n $pre && $level == patch ]]; then
+      printf '%s\n' "$base"
+    else
+      next_letter "$base" || die "$OPT_PART: no revision after $base"
+    fi
+    return 0
+  fi
   split_version "$base"
   n=1
   [[ -z ${b:-} ]] || n=2
@@ -592,9 +627,14 @@ cmd_bump() {
   git rev-parse --git-dir >/dev/null 2>&1 || die "$OPT_PART: not a git repository: a release is a commit and a tag"
   cur=$(current_version)
   if [[ -n $OPT_VERSION ]]; then
-    valid_version "$OPT_VERSION" || die "VERSION=$OPT_VERSION: use 1 to 3 numbers with dots and an optional -prerelease (1.4.0, 2, 1.5.0-rc1)"
+    valid_version "$OPT_VERSION" || die "VERSION=$OPT_VERSION: $VERSION_FORMS"
+    if letter_rev "$OPT_VERSION" && ! is_board_kind; then
+      die "VERSION=$OPT_VERSION: a revision letter is for a board (hardware, altium, mechanical); $OPT_PART ($OPT_KIND) takes x.y.z"
+    fi
     new=$OPT_VERSION
   else
+    # a board's plain bump is its next revision
+    [[ -n $OPT_LEVEL ]] || ! is_board_kind || OPT_LEVEL=major
     case $OPT_LEVEL in
       patch | minor | major) ;;
       '') die "LEVEL=patch, minor or major (or VERSION=x.y.z) is required" ;;
@@ -603,13 +643,20 @@ cmd_bump() {
     if [[ -z $cur ]]; then
       if is_board_kind; then cur=0; else cur=0.0.0; fi
     else
-      valid_version "$cur" || die "$OPT_PART: the current version '$cur' is not x.y.z: give the new one with VERSION="
+      valid_version "$cur" || die "$OPT_PART: the current version '$cur' is not x.y.z$(if is_board_kind; then printf ' or a revision letter'; fi): give the new one with VERSION="
+      if letter_rev "$cur" && ! is_board_kind; then
+        die "$OPT_PART: the current version '$cur' is a revision letter, which only a board takes: give x.y.z with VERSION="
+      fi
     fi
     new=$(next_version "$cur" "$OPT_LEVEL")
   fi
-  [[ $new != "$cur" ]] || die "$OPT_PART is already at $new"
   tag="$OPT_PART-v$new"
   ! git rev-parse -q --verify "refs/tags/$tag" >/dev/null 2>&1 || die "tag $tag exists already: pick another version"
+  # (since 1.14) VERSION= the version the file already has, never tagged (a board's Rev B written by hand): release it
+  if [[ $new == "$cur" ]]; then
+    [[ -n $OPT_VERSION ]] || die "$OPT_PART is already at $new"
+    log_info "$OPT_PART: $new is already in $(where_version) and has no tag $tag: releasing it as it is"
+  fi
 
   cl=$(changelog)
   [[ -f $cl ]] || die "$OPT_PART: no $cl: the release notes come from it (the project-standard skill writes it)"
@@ -703,7 +750,7 @@ cmd_gate() {
   if in_ci; then
     if [[ ${GITHUB_REF_TYPE:-} == tag && -n ${GITHUB_REF_NAME:-} ]]; then
       case $GITHUB_REF_NAME in
-        "$OPT_PART"-v[0-9]*) ;;
+        "$OPT_PART"-v[0-9]* | "$OPT_PART"-v[A-Z] | "$OPT_PART"-v[A-Z][A-Z] | "$OPT_PART"-v[A-Z]-* | "$OPT_PART"-v[A-Z][A-Z]-*) ;;
         *)
           log_info "$OPT_PART: tag $GITHUB_REF_NAME is not a $OPT_PART release, nothing to do"
           exit 3
@@ -885,15 +932,23 @@ cmd_create() {
 #   the version is taken out of the name (app-1.0.0-linux-amd64.deb -> app-linux-amd64.deb) and the group is put in
 #   front when the name does not start with it (rev4-firmware.bin -> firmware-rev4-firmware.bin).
 # A group is the part, or for a hardware, altium or mechanical part the part and its major version (hardware-v3,
-# hardware-v4): each board revision keeps its own files. The part's SHA256SUMS files are left out; <group>-SHA256SUMS checks the group's files
+# hardware-v4, or by letter hardware-vB): each board revision keeps its own files. The part's SHA256SUMS files are left out; <group>-SHA256SUMS checks the group's files
 # under their new names. The Release body is a table of the groups, and one line per group that this script reads back:
 #   <!-- latest GROUP VERSION DATE TAG URL FILE... -->
 
 LATEST_TAG=latest
 
-# ver_lt A B: version A is older than B (numeric, component by component; a missing component is 0).
+# ver_lt A B: version A is older than B (numeric, component by component; a missing component is 0). Letter revisions
+# compare as A < Z < AA, and every number is older than every letter (a board that moved to letters).
 ver_lt() {
-  local a b c a1 b1 c1
+  local a b c a1 b1 c1 x=${1%%-*} y=${2%%-*}
+  if letter_rev "$x" || letter_rev "$y"; then
+    letter_rev "$y" || return 1
+    letter_rev "$x" || return 0
+    ((${#x} != ${#y})) && { ((${#x} < ${#y})); return; }
+    [[ $x < "$y" ]]
+    return
+  fi
   split_version "$1"
   a1=$a b1=${b:-0} c1=${c:-0}
   split_version "$2"
@@ -911,12 +966,17 @@ latest_group() {
   fi
 }
 
-# latest_name FILE GROUP: the file's name in the latest Release.
+# latest_name FILE GROUP: the file's name in the latest Release. A letter revision is taken out only after v or rev and
+# before a character that is not a letter or digit (Board_vB.zip -> Board.zip), never from a word (Board-BOM.csv).
 latest_name() {
   local n=$1 v=$OPT_VERSION p
-  for p in "-v$v" "_v$v" "-$v" "_$v" ".v$v" ".$v"; do
-    n=${n//"$p"/}
-  done
+  if letter_rev "$v"; then
+    n=$(printf '%s\n' "$n" | sed -E "s/[-_.]([vV]|[Rr]ev|REV)$v([^A-Za-z0-9]|\$)/\\2/g")
+  else
+    for p in "-v$v" "_v$v" "-$v" "_$v" ".v$v" ".$v"; do
+      n=${n//"$p"/}
+    done
+  fi
   [[ $n == "$2"-* ]] || n="$2-$n"
   printf '%s\n' "$n"
 }
@@ -1034,7 +1094,7 @@ cmd_push() {
   [[ -n $branch ]] || die "HEAD is not on a branch: check out the branch the release commits are on"
   git push origin "$branch"
   remote_tags=$(git ls-remote --tags origin 2>/dev/null || true)
-  for t in $(git tag --merged HEAD --list '*-v[0-9]*'); do
+  for t in $(git tag --merged HEAD --list '*-v[0-9]*' '*-v[A-Z]' '*-v[A-Z][A-Z]' '*-v[A-Z]-*' '*-v[A-Z][A-Z]-*'); do
     mine=$(git rev-parse "refs/tags/$t^{commit}")
     theirs=$(printf '%s\n' "$remote_tags" | awk -v r="refs/tags/$t^{}" '$2 == r && !f { print $1; f = 1 }')
     [[ -n $theirs ]] || theirs=$(printf '%s\n' "$remote_tags" | awk -v r="refs/tags/$t" '$2 == r && !f { print $1; f = 1 }')
@@ -1062,6 +1122,7 @@ cmd_latest() {
   best=$(printf '%s\n' "$rows" | awk -F '\t' -v want="$OPT_PART" '
     NF >= 3 {
       p = $1; sub(/-v[0-9][^-]*.*$/, "", p)
+      if (p == $1) sub(/-v[A-Z][A-Z]?(-.*)?$/, "", p)
       if (p == $1 || (want != "" && p != want)) next
       if (!(p in d) || $3 > d[p]) { d[p] = $3; line[p] = p "\t" $1 "\t" $2 "\t" $3 }
     }

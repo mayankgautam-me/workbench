@@ -347,6 +347,9 @@ needs: [instructions, detect, bootstrap]
 - [x] 1.12: stamp records image sha256; std_fw_env_check verifies env and image for project OTA targets {#std-1-12-check}
 - [x] 1.12: bats tests (empty defines, concurrent builds, stale lock, check helper) {#std-1-12-tests}
 - [x] 1.12: version, docs, full bats suite, publish ci-templates v1.12 tag {#std-1-12-publish}
+- [x] 1.14: board kinds accept letter revisions (A, B, ... AA) in VERSION, bump, gate, push, latest; plain bump of a board is the next revision {#std-1-14-letter-revs}
+- [x] 1.14: bats tests for letter revisions {#std-1-14-tests}
+- [~] 1.14: version, docs, full bats suite, publish ci-templates v1.14 tag {#std-1-14-publish}
 
 ## Workbench {#workbench}
 tech: zsh, Brewfile, defaults, symlinks

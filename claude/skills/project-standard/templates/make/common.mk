@@ -1,4 +1,4 @@
-# project-standard v1.13 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
+# project-standard v1.14 (managed: refresh with the project-standard skill, put project changes in make/local.mk)
 #
 # The stage commands, the same in every project. GNU make 3.81 compatible (macOS /usr/bin/make):
 # no .ONESHELL, .SHELLFLAGS, $(file), .RECIPEPREFIX, undefine, != or ::=.
@@ -343,7 +343,9 @@ STD_R2_FLAG = $(if $(filter command line,$(origin R2_UNBACKED)),$(if $(filter 1,
 # Every kind with a version calls $(call std_release,part,kind,dir,assets-helper,pre-steps) in its template. It
 # registers <part>-bump and <part>-github-release (verbs) and <part>-release-assets (extra):
 #   <part>-bump            LEVEL=patch|minor|major or VERSION=x.y.z: the kind's version file, the CHANGELOG, a commit
-#                          and the tag <part>-v<version> (release.sh bump); nothing is pushed
+#                          and the tag <part>-v<version> (release.sh bump); nothing is pushed. A board (hardware, altium,
+#                          mechanical) needs no LEVEL: its bump is the next revision, by number (2 -> 3) or, since 1.14,
+#                          by letter (B -> C, Z -> AA); VERSION=B sets a letter revision (tag <part>-vB)
 #   <part>-release-assets  runs <part>-<step> for each pre-step (unless NOBUILD=1), then the kind's assets helper, which
 #                          fills <dir>/release/<version>/ and writes SHA256SUMS (std_rel_begin ... std_rel_end). A kind
 #                          with no assets helper (cloud-worker, web-pages: what they release is the deploy) has no
@@ -394,7 +396,7 @@ std_github_release = set -euo pipefail; \
 
 # std_release part,kind,dir,assets-helper,pre-steps
 define std_release
-$(call std_verb,$(1),bump,release,Set the version with LEVEL=patch or minor or major or VERSION=x.y.z then move the CHANGELOG Unreleased notes under it and commit and tag $(1)-v<version> without pushing)
+$(call std_verb,$(1),bump,release,$(if $(filter hardware altium mechanical,$(2)),Set the next board revision (B to C or 2 to 3) or VERSION=<rev> such as B,Set the version with LEVEL=patch or minor or major or VERSION=x.y.z) then move the CHANGELOG Unreleased notes under it and commit and tag $(1)-v<version> without pushing)
 $(call std_extra,$(1),release-assets,release,Collect the release files into $(3)/release/<version> with SHA256SUMS and build first unless NOBUILD=1)
 $(call std_verb,$(1),github-release,release,In the release workflow of a $(1)-v tag: release-assets then the GitHub Release (FORCE=1 from a Mac))
 $(call std_extra,$(1),release-latest,release,Copy the files of the $(1) Release (VERSION=x.y.z or the current version) into the Release latest that holds every part)

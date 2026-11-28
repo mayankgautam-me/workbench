@@ -1,5 +1,5 @@
-# project-standard ci-templates v1.13: silabs (Silicon Labs slc projects on the Simplicity SDK and WiseConnect 3, SiWx917).
-# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/silabs.yml@v1.13.
+# project-standard ci-templates v1.14: silabs (Silicon Labs slc projects on the Simplicity SDK and WiseConnect 3, SiWx917).
+# Called by a project's .github/workflows/checks.yml and release.yml as uses: mayankgautam-me/ci-templates/.github/workflows/silabs.yml@v1.14.
 # build: ENV=production when the run releases (run_release, or confirm production), else local, so the image has that
 # ENV's <part>_ENV_DEFINES (1.8); a release or publish of a build made for other defines (its std-env stamp) refuses.
 #

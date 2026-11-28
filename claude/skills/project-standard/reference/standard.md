@@ -749,7 +749,8 @@ Homebrew cask `freecad`). Git matches `.gitattributes` patterns with case on Lin
 1.x may not recompute the same there; such a project runs the check on its own runner (`STD_RUNNER`).
 
 The revision of an altium or mechanical part is `<dir>/VERSION`, as a hardware part's: a first bump starts at a plain
-number, and each major revision keeps its own files in the Release `latest`.
+number, and each major revision keeps its own files in the Release `latest`. A board may be named by letter instead
+(since 1.14, `B`, tag `<part>-vB`; 4.12).
 
 ### 4.11 Apps, containers, versions, housekeeping
 
@@ -777,6 +778,15 @@ make <part>-bump LEVEL=patch          # or minor, major; or VERSION=1.4.0 (also 
 make release-push                    # the branch, then each new release tag in its own push
 ```
 
+A board (hardware, altium, mechanical) needs no `LEVEL`: `make <part>-bump` is its next revision. Its revision is a
+plain number (`2`, then `3`) or, since 1.14, a letter: `A` to `Z`, then `AA` to `ZZ`, uppercase, with an optional
+pre-release (`C-proto1`). `make <part>-bump VERSION=B` sets a letter (from a number too, to move a board to letters),
+and from a letter every bump is the next one (`B` is `C`, `Z` is `AA`; patch on `C-proto1` releases `C`). The tag is
+`<part>-v<letter>` (`hardware-vB`), the Release `<part> B`, the files `<dir>/release/B/`, and the group in the Release
+`latest` `<part>-vB`. A board whose revision is a letter but was never released just has it in `<dir>/VERSION`
+(`make <part>-version` prints it); write it there by hand, no bump needed, and release it later with
+`make <part>-bump VERSION=B`, which tags the version the file already has. A part of any other kind refuses a letter.
+
 The push starts `release.yml` on the tag (section 6). For a cloud-worker or web-pages part the tag push is also the
 production deploy: the tag's job checks, builds, runs `make <part>-deploy ENV=production CONFIRM=production`, and only
 after that deploy succeeds makes the Release, which then means "this version is live". Push release tags with `make release-push`, not one `git push` of
@@ -788,7 +798,9 @@ GitHub marks one Release of a repository **Latest**. Since v20 that is the Relea
 Its files keep their names from one version to the next, so `.../releases/download/latest/<file>` always gets the
 newest: the version is taken out of the name and the part put in front (`app-1.0.0-linux-amd64.deb` is
 `app-linux-amd64.deb`, `rev4-firmware.bin` is `firmware-rev4-firmware.bin`). A hardware, altium or mechanical part keeps one group per major
-version, so every board revision has its files (`hardware-v3-...`, `hardware-v4-...`). Each group has its own
+version, so every board revision has its files (`hardware-v3-...`, `hardware-v4-...`, by letter `hardware-vB-...`;
+a letter is taken out of a file name only after `v` or `rev`: `Board_vB.zip` is `hardware-vB-Board.zip`, and
+`Board-BOM.csv` keeps its name). Each group has its own
 `<group>-SHA256SUMS`; the part's own checksum files are left out. Its notes are a table of each group's version and
 Release.
 
@@ -801,12 +813,13 @@ Release.
 
 | Command | Does |
 |---|---|
-| `<part>-bump LEVEL=\|VERSION=` | Sets the version in the kind's own source (below), moves the Unreleased notes under `## [<version>] - <date>` and leaves a fresh empty Unreleased (Added, Changed, Fixed), commits only those files (`<part>: release <version>`) and makes the annotated tag `<part>-v<version>`. Prints the push command; never pushes. Refuses an empty Unreleased (`FORCE=1` releases without notes), an existing tag and the version it already has. Root `make bump PART=<part>` (needs `PART` when several parts have it). |
+| `<part>-bump LEVEL=\|VERSION=` | (A board: no `LEVEL` is the next revision; `VERSION=B` sets a letter.) Sets the version in the kind's own source (below), moves the Unreleased notes under `## [<version>] - <date>` and leaves a fresh empty Unreleased (Added, Changed, Fixed), commits only those files (`<part>: release <version>`) and makes the annotated tag `<part>-v<version>`. Prints the push command; never pushes. Refuses an empty Unreleased (`FORCE=1` releases without notes) and an existing tag; `VERSION=` the version the source already has releases it when it has no tag yet (since 1.14: a board's `B` written by hand). Root `make bump PART=<part>` (needs `PART` when several parts have it). |
 | `<part>-release-assets` | Builds (unless `NOBUILD=1`), then collects the release files into `<dir>/release/<version>/` with `SHA256SUMS`. `<dir>/release/` is in `.gitignore`. cloud-worker and web-pages have no release files: it says so and builds nothing. |
 | `<part>-github-release` | Release assets, then creates the GitHub Release `<part> <version>` with the CHANGELOG section as its notes and the files attached (or updates it when it exists: safe to re-run); cloud-worker and web-pages: the notes only (`release.sh create --notes-only`). Runs in the release job of the tag `<part>-v<version>` (`release.yml`) and does nothing on another part's tag; it refuses a tag that does not match the version, a run without a tag, and a Mac unless `FORCE=1` is on the command line. No `CONFIRM`: it publishes to the project's own repository, not to production. |
 
 LEVEL keeps the number of components: `1.4.2` patch is `1.4.3`, minor `1.5.0`, major `2.0.0`; `1.2` minor is `1.3`;
-a board revision `2` is `3` whatever the level; patch on a pre-release `1.5.0-rc1` releases `1.5.0`.
+a board revision `2` is `3` and `B` is `C` whatever the level (or none); patch on a pre-release `1.5.0-rc1` releases
+`1.5.0`.
 
 **Version sources**
 
@@ -814,8 +827,8 @@ a board revision `2` is `3` whatever the level; patch on a pre-release `1.5.0-rc
 |---|---|---|
 | zephyr | `<dir>/VERSION`, Zephyr format (`VERSION_MAJOR`, `VERSION_MINOR`, `PATCHLEVEL`, `EXTRAVERSION` for a pre-release), or plain | creates it in Zephyr format when missing |
 | espidf, pio, arm-gcc, circuitpython, silabs | `<dir>/VERSION` (Zephyr format or plain), else `<dir>/version.txt` | creates a plain `VERSION` when missing |
-| hardware | `<dir>/VERSION`, else the `rev` of the board's title block | writes `VERSION` (the title block is left as it is; say so in the board) |
-| altium, mechanical | `<dir>/VERSION` (a revision, as hardware) | creates it on the first bump |
+| hardware | `<dir>/VERSION`, else the `rev` of the board's title block (`Rev B` is `B`) | writes `VERSION` (the title block is left as it is; say so in the board) |
+| altium, mechanical | `<dir>/VERSION` (a revision, number or letter, as hardware) | creates it on the first bump |
 | go, docker, cloud-worker, web-pages | `<dir>/VERSION` (plain) | creates it on the first bump |
 | app-flutter | `pubspec.yaml` `version: x.y.z+build` | counts the build number up |
 | app-tauri | `src-tauri/tauri.conf.json` `"version"` (or the `package.json` it points to) | sets the same version in the `[package]` table of `src-tauri/Cargo.toml` (not a dependency's), the top-level `"version"` of `package.json` and, when it is tracked, the app's own entry in `src-tauri/Cargo.lock`, each when it exists |
@@ -1122,7 +1135,7 @@ The shared workflows live in one GitHub repository, `CI_TEMPLATES_REPO` (`owner/
 `mayankgautam-me/ci-templates`), tagged `v1.12` (`v1.11`, `v1.10`, `v1.9`, `v1.8`, `v1.7`, `v1.6`, `v1.5`, `v1.4`, `v1.3`, `v1.2`, `v1.1` and `v1.0` stay for projects not updated yet). It is a setting of its
 own, independent of the project's `GITHUB_OWNER`: projects of every owner call the same repository. It is read from `make/project.mk`, else the user config (section 9),
 else the default. Each file is one kind, at `.github/workflows/<kind>.yml`, and a project calls it with
-`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.13`. The steps only call `make`. The default repository is
+`uses: <CI_TEMPLATES_REPO>/.github/workflows/<kind>.yml@v1.14`. The steps only call `make`. The default repository is
 public, so any repository can call it with no setting. Only a private `CI_TEMPLATES_REPO` needs, on that repository,
 Settings > Actions > General > Access to allow the callers' repositories (`make ci-setup` warns when it is not public).
 The audit reports a `uses:` line on another repository (such as the pre-1.7 `<owner>/ci-templates`) as outdated.
@@ -1440,6 +1453,21 @@ the project's owner's, 5.1), `STD_CONFIG` (default `~/.config/project-standard`)
 Each version is a tag of `CI_TEMPLATES_REPO` (`mayankgautam-me/ci-templates`) and the number in a project's `make/VERSION`, its managed
 headers and the `@v<n>` of its workflows' `uses:` lines. A published tag is never moved; a change ships as the next version, and
 the skill's update mode brings a project to it.
+
+- **1.14** (2026-11-29): a board's revision can be a letter. `make/VERSION`, the managed headers and the workflows'
+  `@v1.14` say 1.14; `mayankgautam-me/ci-templates` gets the tag `v1.14` (its workflows change only in the version)
+  and keeps `v1.13` to `v1.0`.
+  - Why: a board named Rev B in its schematic could only be released as `1`, `2`, ...: `release.sh` refused a letter
+    in `VERSION=` and in `<dir>/VERSION`.
+  - hardware, altium and mechanical parts take `A` to `Z`, then `AA` to `ZZ` (uppercase, optional `-prerelease`) in
+    `<dir>/VERSION` and `VERSION=`; the tag is `<part>-v<letter>`. A board's `make <part>-bump` needs no `LEVEL`: the
+    next revision, a number or a letter (`B` -> `C`, `Z` -> `AA`). Numbers work as before. Other kinds refuse a letter.
+  - `release.sh gate`, `push`, `latest` and `latest-sync` know letter tags; `latest-sync` groups a letter revision as
+    `<part>-v<letter>` and takes a letter out of a file name only after `v` or `rev` (`Board-BOM.csv` keeps its name).
+    `make help` describes a board's bump. `make <part>-bump VERSION=<v>` with the version the source already has, and
+    no tag `<part>-v<v>` yet, releases it (it used to refuse).
+  - Update from 1.13: refresh the managed files and move the `uses:` lines to `@v1.14`. A board moving to letters
+    writes its revision (`B`) to `<dir>/VERSION`, or sets it with `make <part>-bump VERSION=B` when that is a release.
 
 - **1.13** (2026-11-26): espidf images are signed whenever their signature does not verify with the project's key.
   `make/VERSION`, the managed headers and the workflows' `@v1.13` say 1.13; `mayankgautam-me/ci-templates` gets the tag

@@ -1284,3 +1284,180 @@ lfiles() { (cd "$GHS/latest/files" && LC_ALL=C /bin/ls | tr '\n' ' '); }
   [ "$status" -eq 0 ]
   [[ "$output" == *"create --part go --kind go --project \"demo\" --version"* ]]
 }
+
+# --- letter revisions of a board (1.14) ---------------------------------------------------------
+
+@test "board letter revisions: VERSION=B sets one and tags hw-vB; a plain bump is the next letter; Z -> AA; none after ZZ" {
+  allproject
+  mkversions
+  # a numeric board: a plain bump (no LEVEL) is the next revision, from the title block's 2
+  run make hw-bump
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ "$(cat hw/VERSION)" = 3 ]
+  git rev-parse -q --verify refs/tags/hw-v3
+  # to letters
+  run make hw-bump VERSION=B FORCE=1
+  [ "$status" -eq 0 ]
+  [ "$(cat hw/VERSION)" = B ]
+  git rev-parse -q --verify refs/tags/hw-vB
+  [ "$(git log -1 --format=%s)" = "hw: release B" ]
+  grep -q '^## \[B\] - ' hw/CHANGELOG.md
+  run make hw-version
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"hw B"* ]]
+  run make hw-bump FORCE=1
+  [ "$status" -eq 0 ]
+  [ "$(cat hw/VERSION)" = C ]
+  # every level is the next letter
+  run make hw-bump LEVEL=minor FORCE=1
+  [ "$(cat hw/VERSION)" = D ]
+  # a pre-release letter is released by patch, moved on by major
+  run make hw-bump VERSION=E-proto1 FORCE=1
+  [ "$status" -eq 0 ]
+  git rev-parse -q --verify refs/tags/hw-vE-proto1
+  run make hw-bump LEVEL=patch FORCE=1
+  [ "$(cat hw/VERSION)" = E ]
+  run make hw-bump VERSION=Z FORCE=1
+  run make hw-bump FORCE=1
+  [ "$(cat hw/VERSION)" = AA ]
+  run make hw-bump VERSION=ZZ FORCE=1
+  run make hw-bump FORCE=1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"no revision after ZZ"* ]]
+  [ "$(cat hw/VERSION)" = ZZ ]
+  [ -z "$(git status --porcelain)" ]
+  # lowercase and three letters are not revisions
+  run make hw-bump VERSION=b FORCE=1
+  [ "$status" -ne 0 ]
+  run make hw-bump VERSION=ABC FORCE=1
+  [ "$status" -ne 0 ]
+}
+
+@test "board letter revisions: a non-board part refuses a letter, as VERSION= and as its current version" {
+  allproject
+  mkversions
+  run make go-bump VERSION=B
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"a revision letter is for a board"* ]]
+  run make go-bump
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"LEVEL=patch, minor or major"* ]]
+  printf 'B\n' >svc/go/VERSION
+  git commit -qam letter
+  run make go-bump LEVEL=patch
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"only a board takes"* ]]
+}
+
+@test "board letter revisions: altium and mechanical bump by letter too, and their help says so" {
+  allproject
+  mkdir -p alt mech
+  printf 'B\n' >alt/VERSION
+  printf 'A\n' >mech/VERSION
+  changelog alt
+  changelog mech
+  git add -A && git commit -qm boards
+  run bash make/bin/release.sh bump --part alt --kind altium --part-dir alt
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ "$(cat alt/VERSION)" = C ]
+  git rev-parse -q --verify refs/tags/alt-vC
+  run bash make/bin/release.sh bump --part mech --kind mechanical --part-dir mech --level major
+  [ "$status" -eq 0 ]
+  [ "$(cat mech/VERSION)" = B ]
+  run make help
+  [[ "$output" == *"hw-bump"*"next board revision"* ]]
+  [[ "$output" == *"go-bump"*"LEVEL=patch"* ]]
+}
+
+@test "board letter revisions: gate takes hw-vB, refuses hw-vC for B, and leaves another part's or a non-release tag" {
+  allproject
+  rel() { bash make/bin/release.sh "$@"; }
+  GITHUB_ACTIONS=true GITHUB_REF_TYPE=tag GITHUB_REF_NAME=hw-vB run rel gate --part hw --version B
+  [ "$status" -eq 0 ]
+  GITHUB_ACTIONS=true GITHUB_REF_TYPE=tag GITHUB_REF_NAME=hw-vAA-proto1 run rel gate --part hw --version AA-proto1
+  [ "$status" -eq 0 ]
+  GITHUB_ACTIONS=true GITHUB_REF_TYPE=tag GITHUB_REF_NAME=hw-vC run rel gate --part hw --version B
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"does not match"* ]]
+  GITHUB_ACTIONS=true GITHUB_REF_TYPE=tag GITHUB_REF_NAME=hw-x-vB run rel gate --part hw --version B
+  [ "$status" -eq 3 ]
+  GITHUB_ACTIONS=true GITHUB_REF_TYPE=tag GITHUB_REF_NAME=hw-vNext run rel gate --part hw --version B
+  [ "$status" -eq 3 ]
+}
+
+@test "board letter revisions: release-push pushes hw-vB and hw-vC-proto1, not hw-vNext" {
+  allproject
+  echo 1 >f1 && git add f1 && git commit -qm c1
+  git tag -a hw-vB -m b HEAD
+  git tag -a hw-vC-proto1 -m c HEAD
+  git tag -a hw-vNext -m n HEAD
+  run make release-push
+  echo "$output"
+  [ "$status" -eq 0 ]
+  git ls-remote --tags origin | grep -q 'refs/tags/hw-vB$'
+  git ls-remote --tags origin | grep -q 'refs/tags/hw-vC-proto1$'
+  [ -z "$(git ls-remote --tags origin | grep hw-vNext)" ]
+}
+
+@test "board letter revisions: make latest names the part of hw-vC; latest-sync groups hw-vB, keeps Board-BOM.csv whole" {
+  allproject
+  mkdir -p "$R/fakegh"
+  cat >"$R/fakegh/gh" <<'GH'
+#!/bin/sh
+case "$1 $2" in
+  "release list") printf 'hw-vC\thw C\t2026-11-20T08:00:00Z\nhw-vB\thw B\t2026-11-12T08:00:00Z\n' ;;
+  "release view") echo "https://example.invalid/releases/tag/$3" ;;
+esac
+GH
+  chmod +x "$R/fakegh/gh"
+  PATH="$R/fakegh:$PATH" run make latest PART=hw
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ $output == *"hw C"*"hw-vC"* ]]
+  [[ $output != *"hw B"* ]]
+
+  stateful_gh
+  mkrel hw-vB Board_vB.zip Board-BOM.csv Board-revB-pos.csv SHA256SUMS
+  run lsync hw hardware B
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ "$(lfiles)" = "hw-vB-Board-BOM.csv hw-vB-Board-pos.csv hw-vB-Board.zip hw-vB-SHA256SUMS " ]
+  (cd "$GHS/latest/files" && shasum -a 256 -c hw-vB-SHA256SUMS)
+  grep -Fq '<!-- latest hw-vB B ' "$GHS/latest/body"
+  # a numeric revision and the next letter keep their own groups
+  mkrel hw-v3 Board_v3.zip
+  mkrel hw-vC Board_vC.zip
+  run lsync hw hardware 3
+  [ "$status" -eq 0 ]
+  run lsync hw hardware C
+  [ "$status" -eq 0 ]
+  [ -e "$GHS/latest/files/hw-v3-Board.zip" ]
+  [ -e "$GHS/latest/files/hw-vB-Board.zip" ]
+  [ -e "$GHS/latest/files/hw-vC-Board.zip" ]
+  # the same letter again is a re-run, accepted
+  run lsync hw hardware B
+  [ "$status" -eq 0 ]
+}
+
+@test "bump VERSION= the version already in the file, never tagged, releases it; once tagged, it refuses" {
+  allproject
+  mkversions
+  printf 'B\n' >hw/VERSION
+  git add hw/VERSION && git commit -qm "rev B by hand"
+  run make hw-bump VERSION=B
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"releasing it as it is"* ]]
+  git rev-parse -q --verify refs/tags/hw-vB
+  [ "$(cat hw/VERSION)" = B ]
+  grep -q '^## \[B\] - ' hw/CHANGELOG.md
+  [ "$(git log -1 --format=%s)" = "hw: release B" ]
+  run make hw-bump VERSION=B FORCE=1
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"tag hw-vB exists already"* ]]
+  run make go-bump VERSION=1.2
+  [ "$status" -eq 0 ]
+  git rev-parse -q --verify refs/tags/go-v1.2
+}
